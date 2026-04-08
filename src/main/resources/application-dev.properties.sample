@@ -1,0 +1,61 @@
+# Application
+spring.application.name=Monomat-BE
+spring.profiles.active=dev
+
+# Virtual Threads (Java 21)
+spring.threads.virtual.enabled=true
+
+# MySQL 8.x Database Configuration
+# ⚠️ 주의: 실제 환경에 맞게 아래 값들을 수정하세요
+spring.datasource.url=jdbc:mysql://localhost:3306/monomat_dev?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=UTF-8
+spring.datasource.username=root
+spring.datasource.password=your_secure_password_here
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+# Connection Pool Settings
+spring.datasource.hikari.maximum-pool-size=20
+spring.datasource.hikari.minimum-idle=5
+spring.datasource.hikari.idle-timeout=600000
+spring.datasource.hikari.max-lifetime=1800000
+
+# JPA/Hibernate Configuration
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.database-platform=org.hibernate.dialect.MySQL8Dialect
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+spring.jpa.properties.hibernate.use_sql_comments=true
+spring.jpa.properties.hibernate.jdbc.batch_size=20
+spring.jpa.properties.hibernate.jdbc.fetch_size=50
+spring.jpa.open-in-view=false
+
+# Redis Configuration
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+spring.data.redis.password=
+spring.data.redis.timeout=60000
+spring.data.redis.connect-timeout=2000
+
+# Redis Connection Pool (Jedis)
+spring.data.redis.jedis.pool.max-active=8
+spring.data.redis.jedis.pool.max-idle=8
+spring.data.redis.jedis.pool.min-idle=0
+spring.data.redis.jedis.pool.max-wait=-1
+
+# Cache Configuration
+spring.cache.type=redis
+spring.cache.redis.time-to-live=3600000
+
+# Logging Configuration
+logging.level.root=INFO
+logging.level.org.springframework.web=DEBUG
+logging.level.org.springframework.security=DEBUG
+logging.level.org.hibernate.SQL=DEBUG
+logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %msg%n
+
+# Server Configuration
+server.port=8080
+server.servlet.context-path=/api
+server.compression.enabled=true
+server.compression.min-response-size=1024
+

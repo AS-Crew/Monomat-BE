@@ -35,3 +35,16 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Environment & Configuration ###
+.env
+.env.local
+.env.*.local
+application-dev.properties
+application-prod.properties
+
+### Docker ###
+mysql_data/
+redis_data/
+
+

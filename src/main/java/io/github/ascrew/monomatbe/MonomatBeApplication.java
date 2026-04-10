@@ -1,4 +1,4 @@
-package org.example.monomatbe;
+package io.github.ascrew.monomatbe;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

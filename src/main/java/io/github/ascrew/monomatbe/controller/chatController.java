@@ -1,0 +1,39 @@
+/*
+전체 채팅 라우팅
+로비 채팅 라우팅
+밑에 주석 참조
+ */
+package io.github.ascrew.monomatbe.controller;
+
+import org.springframework.messaging.handler.annotation.DestinationVariable;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.stereotype.Controller;
+
+@Controller
+public class chatController {
+
+    /*
+     * 1. 전체 채팅 라우팅
+     * 클라이언트 송신: /app/chat/global
+     * 클라이언트 수신(구독): /topic/global
+     */
+    @MessageMapping("/chat/global")
+    @SendTo("/topic/global")
+    public String broadcastGlobal(String message){
+
+        return message;
+    }
+
+    /*
+     * 2. 로비 전용 채팅 라우팅
+     * 클라이언트 송신: /app/chat/lobby/{id} (ex: /app/chat/lobby/123)
+     * 클라이언트 수신(구독): /topic/lobby/{id}
+     */
+    @MessageMapping("/chat/lobby/{id}")
+    @SendTo("/topic/lobby/{id}")
+    public String broadcastLobby(@DestinationVariable("id")Long id, String message){
+
+        return message;
+    }
+}

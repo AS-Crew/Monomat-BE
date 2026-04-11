@@ -39,10 +39,9 @@ public class ChatController {
      * 클라이언트 수신(구독): /topic/global
      */
     @MessageMapping("/chat/global")
-    @SendTo("/topic/chat/global")
-    public String broadcastGlobal(String message){
+    public void broadcastGlobal(ChatMessageDto message){
+        messagingTemplate.convertAndSend("/topic/chat/global", message);
 
-        return message;
     }
 
     /*

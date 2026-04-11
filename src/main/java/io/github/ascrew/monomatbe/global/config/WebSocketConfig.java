@@ -12,13 +12,6 @@
     - SockJS: 웹소켓 연결이 실패할 경우, 폴링 등의 대체 통신 방법을 사용하여 연결을 유지할 수 있도록 지원
  */
 
-
-
-
-
-
-
-
 package io.github.ascrew.monomatbe.global.config;
 
 import org.springframework.context.annotation.Configuration;

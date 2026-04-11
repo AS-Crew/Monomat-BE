@@ -8,10 +8,17 @@ package io.github.ascrew.monomatbe.controller;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
 @Controller
 public class ChatController {
+
+    private final SimpMessagingTemplate messagingTemplate;
+
+    public ChatController(SimpMessagingTemplate messagingTemplate) {
+        this.messagingTemplate = messagingTemplate;
+    }
 
     // 메시지 타입 정의
     public enum MessageType {
@@ -45,8 +52,8 @@ public class ChatController {
      */
     @MessageMapping("/chat/lobby/{code}")
     @SendTo("/topic/chat/lobby/{code}")
-    public String broadcastLobby(@DestinationVariable("code")String code, String message){
+    public void broadcastLobby(@DestinationVariable("code")String code, String message){
+        messagingTemplate.convertAndSend("/topic/lobby/" + code, message);
 
-        return message;
     }
 }

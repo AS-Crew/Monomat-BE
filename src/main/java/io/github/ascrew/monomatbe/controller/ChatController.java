@@ -11,7 +11,20 @@ import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.stereotype.Controller;
 
 @Controller
-public class chatController {
+public class ChatController {
+
+    // 메시지 타입 정의
+    public enum MessageType {
+        CHAT, ANSWER, ENTER, LEAVE
+    }
+
+    // DTO 레코드 생성
+    public record ChatMessageDto(
+            MessageType type,
+            String sender,
+            String content,
+            String timestamp
+    ) {}
 
     /*
      * 1. 전체 채팅 라우팅
@@ -19,7 +32,7 @@ public class chatController {
      * 클라이언트 수신(구독): /topic/global
      */
     @MessageMapping("/chat/global")
-    @SendTo("/topic/global")
+    @SendTo("/topic/chat/global")
     public String broadcastGlobal(String message){
 
         return message;
@@ -27,12 +40,12 @@ public class chatController {
 
     /*
      * 2. 로비 전용 채팅 라우팅
-     * 클라이언트 송신: /app/chat/lobby/{id} (ex: /app/chat/lobby/123)
-     * 클라이언트 수신(구독): /topic/lobby/{id}
+     * 클라이언트 송신: /app/chat/lobby/{code} (ex: /app/chat/lobby/난수+문자 6자리)
+     * 클라이언트 수신(구독): /topic/lobby/{code}
      */
-    @MessageMapping("/chat/lobby/{id}")
-    @SendTo("/topic/lobby/{id}")
-    public String broadcastLobby(@DestinationVariable("id")Long id, String message){
+    @MessageMapping("/chat/lobby/{code}")
+    @SendTo("/topic/chat/lobby/{code}")
+    public String broadcastLobby(@DestinationVariable("code")String code, String message){
 
         return message;
     }

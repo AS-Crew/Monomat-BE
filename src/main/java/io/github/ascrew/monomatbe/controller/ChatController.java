@@ -5,9 +5,9 @@
  */
 package io.github.ascrew.monomatbe.controller;
 
+import io.github.ascrew.monomatbe.dto.ChatMessageDto;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
@@ -20,18 +20,6 @@ public class ChatController {
         this.messagingTemplate = messagingTemplate;
     }
 
-    // 메시지 타입 정의
-    public enum MessageType {
-        CHAT, ANSWER, ENTER, LEAVE
-    }
-
-    // DTO 레코드 생성
-    public record ChatMessageDto(
-            MessageType type,
-            String sender,
-            String content,
-            String timestamp
-    ) {}
 
     /*
      * 1. 전체 채팅 라우팅

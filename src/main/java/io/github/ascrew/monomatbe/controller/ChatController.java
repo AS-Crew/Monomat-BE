@@ -50,7 +50,7 @@ public class ChatController {
      * 클라이언트 수신(구독): /topic/lobby/{code}
      */
     @MessageMapping("/chat/lobby/{code}")
-    public void broadcastLobby(@DestinationVariable("code")String code, String message){
+    public void broadcastLobby(@DestinationVariable("code")String code, ChatMessageDto message){
         messagingTemplate.convertAndSend("/topic/lobby/" + code, message);
 
     }

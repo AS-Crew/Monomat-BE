@@ -10,7 +10,6 @@ package io.github.ascrew.monomatbe.controller;
 
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
@@ -27,9 +26,8 @@ public class LobbyEventController {
   // 차후 유저의 수가 증가할 경우 많은 요청이 발생할 수 있으므로
   // 일정시간(예: 5초) 동안 1건 이상 로비 생성 이벤트가 발생할 경우에만 로비 리스트 새로고침 메시지를 보내도록 개선할 수 있음
   @MessageMapping("/lobby/create")
-  @SendTo("/topic/lobby/refresh")
-  public String notifyLobbyListRefresh() {
-    return "REFRESH_LOBBY_LIST";
+  public void notifyLobbyListRefresh() {
+    messagingTemplate.convertAndSend("/topic/lobby/refresh", "REFRESH_LOBBY_LIST");
   }
 
   // 로비 내부 정보가 변경될 때 해당 로비에 참여한 클라이언트들에게 로비 정보를 새로고침하라는 메시지를 보냄

@@ -1,6 +1,6 @@
 package io.github.ascrew.monomatbe.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import io.github.ascrew.monomatbe.dto.ChatMessageDto;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -10,16 +10,16 @@ import org.springframework.stereotype.Service;
 public class RedisPublisher {
 
     private final RedisTemplate<String, Object> redisTemplate;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
 
-    public RedisPublisher(RedisTemplate<String , Object> redisTemplate) {
-        this.objectMapper = new ObjectMapper();
+    public RedisPublisher(RedisTemplate<String , Object> redisTemplate, JsonMapper jsonMapper) {
+        this.jsonMapper = jsonMapper;
         this.redisTemplate = redisTemplate;
     }
 
     public void publish(String topic, ChatMessageDto messageDto) {
         try {
-            String JsonMessage = objectMapper.writeValueAsString(messageDto);  //ChatMessageDto 객체를 JSON 문자열로 직렬화
+            String JsonMessage = jsonMapper.writeValueAsString(messageDto);    //ChatMessageDto 객체를 JSON 문자열로 직렬화
 
             // Redis의 특정 채널(topic)에 메시지를 발행
             redisTemplate.convertAndSend(topic, JsonMessage);

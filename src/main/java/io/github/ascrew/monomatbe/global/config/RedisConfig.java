@@ -18,6 +18,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import java.util.concurrent.Executors;
 
 @Configuration
 public class RedisConfig {
@@ -48,8 +49,12 @@ public class RedisConfig {
             RedisConnectionFactory connectionFactory,
             RedisSubscriber redisSubscriber) {
         // RedisMessageListenerContainer를 생성하여 Redis 메시지 리스너 설정
+
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
+
+        // 비동기 처리를 위해 가상 스레드 기반의 TaskExecutor 설정 (Java 19 이상에서 사용 가능)
+        container.setTaskExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         container.addMessageListener(redisSubscriber, new PatternTopic("/topic/chat/global")); // 전체 채팅 구독
         container.addMessageListener(redisSubscriber, new PatternTopic("/topic/lobby/*")); // 로비 채팅 구독

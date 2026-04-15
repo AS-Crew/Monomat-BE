@@ -6,6 +6,7 @@
 package io.github.ascrew.monomatbe.controller;
 
 import io.github.ascrew.monomatbe.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.service.RedisPublisher;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -14,10 +15,10 @@ import org.springframework.stereotype.Controller;
 @Controller
 public class ChatController {
 
-    private final SimpMessagingTemplate messagingTemplate;
+    private final RedisPublisher redisPublisher;
 
-    public ChatController(SimpMessagingTemplate messagingTemplate) {
-        this.messagingTemplate = messagingTemplate;
+    public ChatController(RedisPublisher redisPublisher) {
+        this.redisPublisher = redisPublisher;
     }
 
 
@@ -28,7 +29,7 @@ public class ChatController {
      */
     @MessageMapping("/chat/global")
     public void broadcastGlobal(ChatMessageDto message){
-        messagingTemplate.convertAndSend("/topic/chat/global", message);
+        redisPublisher.publish("/topic/chat/global", message);
 
     }
 
@@ -39,7 +40,7 @@ public class ChatController {
      */
     @MessageMapping("/chat/lobby/{code}")
     public void broadcastLobby(@DestinationVariable("code")String code, ChatMessageDto message){
-        messagingTemplate.convertAndSend("/topic/lobby/" + code, message);
+        redisPublisher.publish("/topic/lobby/" + code, message);
 
     }
 }

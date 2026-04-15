@@ -1,6 +1,6 @@
 package io.github.ascrew.monomatbe.repository;
 
 public interface LobbyRepository {
-  boolean existsById(String id);
+  boolean existsByCode(String code);
   boolean isParticipant(String code, String userId);
 }

@@ -11,10 +11,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private final StringRedisTemplate redisTemplate;
 
   @Override
-  public boolean existsById(String id) {
+  public boolean existsByCode(String code) {
     // 구현 예정
-    // Redis key 예시: lobby:{id}
-    // return Boolean.TRUE.equals(redisTemplate.hasKey("lobby:" + id));
+    // Redis key 예시: lobby:{code}
+    // return Boolean.TRUE.equals(redisTemplate.hasKey("lobby:" + code));
 
     return true;
   }
@@ -22,7 +22,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public boolean isParticipant(String code, String userId) {
     // 구현 예정
-    // Redis Set key 예시: lobby:{id}:participants
+    // Redis Set key 예시: lobby:{code}:participants
     /**
     Boolean isMember =
         redisTemplate.opsForSet().isMember("lobby:" + code + ":participants", userId);

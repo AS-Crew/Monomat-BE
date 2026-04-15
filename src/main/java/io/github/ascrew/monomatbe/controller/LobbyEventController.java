@@ -31,8 +31,8 @@ public class LobbyEventController {
 
   // 로비 내부 정보가 변경될 때 해당 로비에 참여한 클라이언트들에게 로비 정보를 새로고침하라는 메시지를 보냄
   // 로비 내부 정보 변경의 기준: 유저 입장, 유저 퇴장, 유저 준비, 유저 준비 해제 등
-  @MessageMapping("/lobby/{id}/update")
-  public void notifyLobbyInfoRefresh(@DestinationVariable String id, Principal principal) {
-    lobbyEventService.notifyLobbyInfoRefresh(id, principal);
+  @MessageMapping("/lobby/{code}/update")
+  public void notifyLobbyInfoRefresh(@DestinationVariable String code, Principal principal) {
+    lobbyEventService.notifyLobbyInfoRefresh(code, principal);
   }
 }

@@ -7,20 +7,17 @@ package io.github.ascrew.monomatbe.controller;
 
 import io.github.ascrew.monomatbe.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.service.RedisPublisher;
+import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
 @Controller
+@RequiredArgsConstructor
 public class ChatController {
 
     private final RedisPublisher redisPublisher;
-
-    public ChatController(RedisPublisher redisPublisher) {
-        this.redisPublisher = redisPublisher;
-    }
-
 
     /*
      * 1. 전체 채팅 라우팅

@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.service;
 
 import io.github.ascrew.monomatbe.dto.ChatMessageDto;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -12,17 +13,12 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class RedisSubscriber implements MessageListener {
 
     private final JsonMapper jsonMapper;                            // JSON 직렬화/역직렬화를 위한 JsonMapper
     private final RedisTemplate<String, Object> redisTemplate;      // RedisTemplate을 사용하여 Redis와 상호작용
     private final SimpMessagingTemplate simpMessagingTemplate;      // WebSocket을 통해 클라이언트에게 메시지를 전송하기 위한 SimpMessagingTemplate
-
-    public RedisSubscriber(JsonMapper jsonMapper, RedisTemplate<String , Object> redisTemplate, SimpMessagingTemplate simpMessagingTemplate) {
-        this.jsonMapper = jsonMapper;
-        this.redisTemplate = redisTemplate;
-        this.simpMessagingTemplate = simpMessagingTemplate;
-    }
 
     @Override
     public void onMessage(Message message, byte[] pattern){

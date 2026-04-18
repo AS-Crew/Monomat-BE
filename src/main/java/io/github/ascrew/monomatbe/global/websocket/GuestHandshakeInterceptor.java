@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.global.websocket;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 import org.springframework.http.server.ServerHttpRequest;
@@ -19,10 +20,22 @@ public class GuestHandshakeInterceptor  implements HandshakeInterceptor {
                                    ServerHttpResponse response,
                                    WebSocketHandler wsHandler,
                                    Map<String, Object> attributes) throws Exception {
-        log.info("WebSocket Handshake Intercepted: {}", request.getURI());
-        // 여기에 인증 로직을 추가할 수 있습니다. 예를 들어, JWT 토큰 검증 등을 수행할 수 있습니다.
-        // 현재는 모든 요청을 허용하도록 설정되어 있습니다.
+
+
+        if (request instanceof ServletServerHttpRequest) {
+            log.info("WebSocket Handshake Intercepted: {}", request.getURI()); // 핸드쉐이크 요청이 들어올 때마다 로그에 URI를 기록하여 디버깅에 도움을 줌
+
+            String uuid = ((ServletServerHttpRequest) request).getServletRequest().getParameter("uuid");
+
+            if (uuid == null || uuid.trim().isEmpty()) {
+                return false; // uuid가 없거나 빈 문자열인 경우, 핸드쉐이크를 거부하여 연결을 차단
+            }
+
+            attributes.put("uuid", uuid);   // WebSocket 세션에서 uuid를 사용할 수 있도록 attributes에 저장
+        }
+
         return true;
+
     }
 
     @Override

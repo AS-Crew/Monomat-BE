@@ -14,7 +14,6 @@
 
 package io.github.ascrew.monomatbe.global.config;
 
-import io.github.ascrew.monomatbe.global.websocket.GuestHandshakeInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.WebSocketHandler;
@@ -29,14 +28,13 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
-    private final GuestHandshakeInterceptor guestHandshakeInterceptor;
+
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry
                 .addEndpoint("/ws") //최초로 웹소켓 연결을 하기위해 url /ws 지정
                 .setAllowedOriginPatterns("*") //모든 도메인에서 접속을 허용
-                .addInterceptors(guestHandshakeInterceptor) //핸드쉐이크 인터셉터 등록하여 웹소켓 연결 시 UUID 검증
                 .withSockJS(); //웹소켓 연결 실패시 일반 HTTP통신으로 연결
 
     }

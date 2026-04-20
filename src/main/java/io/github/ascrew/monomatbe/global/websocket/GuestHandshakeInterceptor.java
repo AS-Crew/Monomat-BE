@@ -1,3 +1,6 @@
+/*
+Query String방식을 예상하고 만들었는데 필요없어짐
+
 package io.github.ascrew.monomatbe.global.websocket;
 
 import lombok.RequiredArgsConstructor;
@@ -46,3 +49,4 @@ public class GuestHandshakeInterceptor  implements HandshakeInterceptor {
         log.info("WebSocket Handshake Completed: {}", request.getURI());
     }
 }
+*/

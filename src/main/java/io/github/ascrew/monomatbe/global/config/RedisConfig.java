@@ -17,7 +17,10 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.util.concurrent.Executors;
 
 @Configuration
@@ -40,7 +43,10 @@ public class RedisConfig {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);           // Redis 연결 팩토리 설정
         template.setKeySerializer(new StringRedisSerializer());     // 키 직렬화 방식 설정
-        template.setValueSerializer(new StringRedisSerializer());   // 값 직렬화 방식 설정
+        GenericJacksonJsonRedisSerializer serializer = GenericJacksonJsonRedisSerializer.builder()
+                .enableUnsafeDefaultTyping()
+                .build();
+        template.setValueSerializer(serializer);   // 값 직렬화 방식 설정
         return template;
     }
 

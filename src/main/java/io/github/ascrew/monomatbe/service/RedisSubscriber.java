@@ -23,13 +23,14 @@ public class RedisSubscriber implements MessageListener {
         try{
             byte[] body =message.getBody();
             ChatMessageDto chatMessageDto = (ChatMessageDto) redisTemplate.getValueSerializer().deserialize(body); //메시지 바디를 역직렬화하여 ChatMessageDto 객체로 변환
+
             if(chatMessageDto != null){
-                String destination = "/topic/lobby/" + chatMessageDto.getRoomId();
+                String destination = new String(message.getChannel());
                 simpMessagingTemplate.convertAndSend(destination, chatMessageDto);
             }
 
         }catch (Exception e){
-            log.error("Redis 메시지 파싱 및 브로드캐스트 실패. 채널: {}",new String(message.getChannel()));                                                          //예외 발생 시 스택 트레이스 출력
+            log.error("Redis 메시지 파싱 및 브로드캐스트 실패. 채널: {}",new String(message.getChannel()));               //예외 발생 시 스택 트레이스 출력
         }
     }
 }

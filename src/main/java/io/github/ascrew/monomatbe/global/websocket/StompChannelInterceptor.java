@@ -10,11 +10,14 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Slf4j
 @RequiredArgsConstructor
 @Component
 public class StompChannelInterceptor implements ChannelInterceptor {
+    // 표준 uuid 형식을 검사하는 정규식 (8-4-4-4-12 포멧)
+    private static final Pattern UUID_PATTERN = Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -37,6 +40,12 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         log.warn("STOMP CONNECT 올바르지 않은 접근 시도: uuid :{}, 목적지: {}", uuid, accessor.getDestination());
                         throw new IllegalArgumentException("STOMP CONNECT: uuid가 없거나 빈 문자열입니다. 연결이 거부되었습니다.");
                     }
+                    // 값이 있긴 한데 이상한 문자열(hacked 등)을 보낸 경우 차단
+                    if (!UUID_PATTERN.matcher(uuid).matches()) {
+                        log.warn("STOMP CONNECT 악의적인 접근 시도 (형식 위반): 전달된 UUID = {}", uuid);
+                        throw new IllegalArgumentException("STOMP CONNECT: 유효하지 않은 UUID 형식입니다. 연결이 거부되었습니다.");
+                    }
+
                     // 검증 이후 sub나 send에 꺼내 쓸 수 있도록 세션에 uuid 저장
                     if (sessionAttributes != null){
                         sessionAttributes.put("uuid", uuid); // 세션 속성에 uuid 저장

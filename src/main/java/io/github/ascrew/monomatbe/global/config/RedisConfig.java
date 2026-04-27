@@ -15,9 +15,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
+import tools.jackson.databind.DefaultTyping;
 import java.util.concurrent.Executors;
 
 @Configuration
@@ -40,7 +46,20 @@ public class RedisConfig {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(connectionFactory);           // Redis 연결 팩토리 설정
         template.setKeySerializer(new StringRedisSerializer());     // 키 직렬화 방식 설정
-        template.setValueSerializer(new StringRedisSerializer());   // 값 직렬화 방식 설정
+
+        // 화이트 리스트 방식의 검증기
+        PolymorphicTypeValidator ptv = BasicPolymorphicTypeValidator.builder()
+                .allowIfSubType("io.github.ascrew.monomatbe.") //우리 프로젝트의 모든 DTO 허용
+                .allowIfSubType("java.util.")                  //List, Map 등 자바 컬렉션 허용
+                .allowIfSubType("java.lang.")                  //String, Integer 등 자바 기본 타입 허용
+                .build();
+
+        JsonMapper jsonMapper = JsonMapper.builder()
+                .activateDefaultTyping(ptv, DefaultTyping.NON_FINAL) //비 final 클래스에 대한 타입 정보 포함
+                .build();
+
+        GenericJacksonJsonRedisSerializer serializer = new GenericJacksonJsonRedisSerializer(jsonMapper);
+        template.setValueSerializer(serializer);   // 값 직렬화 방식 설정
         return template;
     }
 
@@ -56,7 +75,7 @@ public class RedisConfig {
         // 비동기 처리를 위해 가상 스레드 기반의 TaskExecutor 설정 (Java 19 이상에서 사용 가능)
         container.setTaskExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
-        container.addMessageListener(redisSubscriber, new PatternTopic("/topic/chat/global")); // 전체 채팅 구독
+        container.addMessageListener(redisSubscriber, new ChannelTopic("/topic/chat/global")); // 전체 채팅 구독
         container.addMessageListener(redisSubscriber, new PatternTopic("/topic/lobby/*")); // 로비 채팅 구독
         return container;
     }

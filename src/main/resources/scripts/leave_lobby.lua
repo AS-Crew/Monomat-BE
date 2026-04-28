@@ -33,13 +33,26 @@ else
     local currentHost = redis.call('HGET', lobbyKey, 'host_user_id')
 
     if currentHost == userId then
-        -- 나간 유저가 방장(Host)이었다면, List의 0번 인덱스(가장 먼저 들어온 다음 사람)에게 방장 이양
         local nextHost = redis.call('LINDEX', orderKey, 0)
         if nextHost then
+            -- 정상 케이스 : orderKey에서 다음 방장 선정
             redis.call('HSET', lobbyKey, 'host_user_id', nextHost)
             return "DELEGATED:" .. nextHost
+        else
+            -- 폴백 : orderKey와 participantsKey 불일치 시 Set에서 랜덤 선정
+            local fallbackHost = redis.call('SRANDMEMBER', participantsKey)
+            if fallbackHost then
+                redis.call('HSET', lobbyKey, 'host_user_id', fallbackHost)
+                return "DELEGATED:" .. fallbackHost
+            else
+                -- 실질적으로 참여자가 없는 상태 -> 로비 폭파
+                redis.call('DEL', lobbyKey, participantsKey, orderKey)
+                redis.call('SREM', publicListKey, lobbyCode)
+                return "DESTROYED"
+            end
         end
     end
     -- 나간 사람이 일반 유저였거나, 위임 로직을 타지 않은 경우
+    -- 즉, 나간 유저가 방장이 아닌 일반 유저인 경우
     return "LEFT"
 end

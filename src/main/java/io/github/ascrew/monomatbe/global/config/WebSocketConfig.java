@@ -14,23 +14,38 @@
 
 package io.github.ascrew.monomatbe.global.config;
 
+import io.github.ascrew.monomatbe.global.websocket.CustomStompErrorHandler;
+import io.github.ascrew.monomatbe.global.websocket.StompChannelInterceptor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.messaging.simp.config.ChannelRegistration;
+
 
 @Configuration
 @EnableWebSocketMessageBroker
+@RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+
+    private final CustomStompErrorHandler customStompErrorHandler;
+    private final StompChannelInterceptor stompChannelInterceptor;
+
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry
                 .addEndpoint("/ws") //최초로 웹소켓 연결을 하기위해 url /ws 지정
                 .setAllowedOriginPatterns("*") //모든 도메인에서 접속을 허용
                 .withSockJS(); //웹소켓 연결 실패시 일반 HTTP통신으로 연결
+
+        registry.setErrorHandler(customStompErrorHandler);
+
     }
+
+
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
@@ -45,6 +60,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .setHeartbeatValue(new long[]{10000,10000}); //클라이언트와 서버가 10000ms(10초)마다 하트비트를 주고받도록 설정
 
         registry.setApplicationDestinationPrefixes("/app");  //송신용(발행)
+    }
+
+    @Override
+    public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.interceptors(stompChannelInterceptor);
     }
 
 }

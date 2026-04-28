@@ -10,6 +10,7 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
+import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -84,7 +85,7 @@ public class WebSocketEventListener {
 
     // 유저가 채널을 구독 했을 때 redis set에 참여자 정보 추가
     @EventListener
-    public void handleWebsocketSubscribeListener(SessionConnectedEvent event) {
+    public void handleWebsocketSubscribeListener(SessionSubscribeEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
 

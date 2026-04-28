@@ -30,7 +30,7 @@ public class RedisSubscriber implements MessageListener {
             }
 
         }catch (Exception e){
-            log.error("Redis 메시지 파싱 및 브로드캐스트 실패. 채널: {}",new String(message.getChannel()));               //예외 발생 시 스택 트레이스 출력
+            log.error("Redis 메시지 파싱 및 브로드캐스트 실패. 채널: {}",new String(message.getChannel()),e);               //예외 발생 시 스택 트레이스 출력
         }
     }
 }

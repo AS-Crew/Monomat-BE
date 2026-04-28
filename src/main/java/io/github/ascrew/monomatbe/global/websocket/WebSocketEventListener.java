@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
+import io.github.ascrew.monomatbe.service.LobbyEventService;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -24,6 +25,7 @@ public class WebSocketEventListener {
     private final RedisPublisher redisPublisher;
     private final RedisTemplate<String, Object> redisTemplate;
     private final WebSocketMetric webSocketMetric; // WebSocketMetric을 주입받아 세션 수를 관리
+    private final LobbyEventService lobbyEventService; // 비즈니스 로직(방장 위임 등) 서비스 주입
 
     private static final String USER_STATUS_KEY_PREFIX = "user_status:"; // Redis에서 사용자 상태를 저장할 때 사용할 키 접두사
     private static final String USER_ROOM_KEY_PREFIX = "user_room:"; // Redis에서 사용자가 참여한 방 정보를 저장할 때 사용할 키 접두사
@@ -62,11 +64,17 @@ public class WebSocketEventListener {
 
             if(uuid != null && !"UNKNOWN".equals(uuid)){
                 log.info("WebSocket 연결 끊김: uuid={}, roomId={}", uuid, roomId);
+
+                // 공통 인프라 정리(Redis 상태, 지표 관리)
                 redisTemplate.delete(USER_STATUS_KEY_PREFIX + uuid); // Redis에서 사용자 상태 제거
                 webSocketMetric.decrement(); //유저 접속 끊김시 감소
+
                 if(roomId != null){
                     log.info("퇴장 알림 방송 - 방번호: {}",roomId);
+                    // 로비 이벤트 서비스의 퇴장 처리 로직을 트리거한다. (방장 위임, 인원 변동 등)
+                    lobbyEventService.handlePlayerLeave(roomId, uuid);
 
+                    // 퇴장 알림 발송 및 참여자 명단 정리
                     String leaveMessage = uuid + "님이 퇴장하셨습니다.";
                     ChatMessageDto chatMessageDto = ChatMessageDto.builder()
                             .type(ChatMessageDto.MessageType.LEAVE)
@@ -74,10 +82,10 @@ public class WebSocketEventListener {
                             .sender(uuid)
                             .content(leaveMessage)
                             .build();
-                    String topicUrl = "/topic/lobby/"+roomId;
-                    redisPublisher.publish(topicUrl, chatMessageDto);
-                    // redis에서 해당 유저가 참여한 방 정보 제거 로직 추가 필요
-                    redisTemplate.opsForSet().remove(USER_ROOM_KEY_PREFIX + roomId, uuid); // Redis에서 사용자가 참여한 방 정보 제거
+
+                    // Redis에서 사용자가 참여한 방 정보 제거
+                    redisPublisher.publish(LOBBY_DESTINATION_PREFIX+roomId, chatMessageDto);
+                    redisTemplate.opsForSet().remove(USER_ROOM_KEY_PREFIX + roomId, uuid);
                 }
             }
         }

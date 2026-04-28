@@ -55,11 +55,11 @@ public class ChatController {
 
     private ChatMessageDto createSecureMessage(ChatMessageDto message, String secureRoomId, String secureSenderUuid){
         return ChatMessageDto.builder()
-                .type(message.getType())
+                .type(message.type())
                 .roomId(secureRoomId)
                 .sender(secureSenderUuid)
-                .content(message.getContent())
-                .timestamp(message.getTimestamp())
+                .content(message.content())
+                .timestamp(message.timestamp())
                 .build();
     }
 }

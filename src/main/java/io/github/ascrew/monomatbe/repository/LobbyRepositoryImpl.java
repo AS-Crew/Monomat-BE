@@ -5,7 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
-
+import io.github.ascrew.monomatbe.global.constant.RedisKey;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,13 +25,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   @Override
   public boolean existsByCode(String code) {
-    return Boolean.TRUE.equals(redisTemplate.hasKey("lobby:" + code));
+    return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKey.LOBBY_INFO.of(code)));
   }
 
   @Override
   public boolean isParticipant(String code, String userId) {
     // Lua 스크립트의 KEYS 파라미터에 매핑될 키 목록
-    return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember("lobby:" + code + ":participants", userId));
+    return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(RedisKey.LOBBY_PARTICIPANTS.of(code), userId));
   }
 
   /**
@@ -43,10 +43,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   public String executeLeaveLobbyProcess(String code, String userId) {
     // Lua 스크립트의 KEYS 파라미터에 매핑될 키 목록
     List<String> keys = List.of(
-            "lobby:" + code,
-            "lobby:" + code + ":participants",
-            "lobby:" + code + ":order",
-            "lobby:public"
+            RedisKey.LOBBY_INFO.of(code),         // 로비 정보 해시
+            RedisKey.LOBBY_PARTICIPANTS.of(code), // 참가자 집합
+            RedisKey.LOBBY_ORDER.of(code),        // 참가자 순서 리스트
+            RedisKey.PUBLIC_LOBBIES.of()          // 공개 로비 집합
     );
     // 스크립트, 키 목록, ARGV에 들어갈 인자 (userId, code) 순으로 실행
     return redisTemplate.execute(leaveLobbyScript, keys, userId, code);
@@ -56,7 +56,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   // DB를 조회하지 않고 Redis 메모리에서 직접 공개 방 목록을 필터링한다.
   @Override
   public List<LobbyRedisDto> getPublicLobbies() {
-    Set<String> publicLobbyCodes = redisTemplate.opsForSet().members("lobby:public");
+    Set<String> publicLobbyCodes = redisTemplate.opsForSet().members(RedisKey.PUBLIC_LOBBIES.of());
     if (publicLobbyCodes == null || publicLobbyCodes.isEmpty()) {
       return new ArrayList<>();
     }
@@ -64,7 +64,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     List<LobbyRedisDto> result = new ArrayList<>();
     // TODO: 방 개수가 매우 많아질 경우, 반복문 순회(N+1) 대신 Redis Pipeline이나 MGET으로 최적화 필요
     for (String code : publicLobbyCodes) {
-      Map<Object, Object> data = redisTemplate.opsForHash().entries("lobby:" + code);
+      Map<Object, Object> data = redisTemplate.opsForHash().entries(RedisKey.LOBBY_INFO.of(code));
       if (!data.isEmpty()) {
         result.add(LobbyRedisDto.builder()
                 .code((String) data.get("code"))

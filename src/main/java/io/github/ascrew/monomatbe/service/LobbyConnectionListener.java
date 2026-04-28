@@ -1,3 +1,10 @@
+/*
+
+
+WebsocketEventListener에 통합
+함수가 중복되어서 호출 되어서 클래스 다이어드&흐름의 명확화
+삭제 예정
+
 package io.github.ascrew.monomatbe.service;
 
 import lombok.RequiredArgsConstructor;
@@ -19,11 +26,11 @@ public class LobbyConnectionListener {
     private final StringRedisTemplate redisTemplate;
     private final LobbyEventService lobbyEventService;
 
-    /**
+
      * 웹소켓 연결 해제 이벤트 리스너
      * Spring WebSocket이 발행하는 SessionDisconnectEvent를 감지하여
      * Redis에 저장된 세션 매핑 정보를 바탕으로 자동 퇴장 비즈니스 로직을 실행한다.
-     */
+
     @EventListener
     public void handleWebSocketDisconnectListener(SessionDisconnectEvent event) {
         // 이벤트에서 세션 ID를 추출한다.
@@ -50,13 +57,13 @@ public class LobbyConnectionListener {
         }
     }
 
-    /**
+
      * 세션 매핑 정보 등록
      * 유저가 방에 입장하여 웹소켓 연결이 성공했을 때 호출한다.
      * * @param sessionId 웹소켓 고유 세션 ID
      * @param userId 유저 고유 ID
      * @param lobbyCode 진입한 로비의 초대 코드
-     */
+
     public void saveConnectionInfo(String sessionId, String userId, String lobbyCode) {
         String key = "ws:connection:" + sessionId;
         Map<String, String> data = Map.of(
@@ -69,3 +76,4 @@ public class LobbyConnectionListener {
         redisTemplate.expire(key, Duration.ofDays(1));
     }
 }
+*/

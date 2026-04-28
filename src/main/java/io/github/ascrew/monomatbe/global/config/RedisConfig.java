@@ -8,6 +8,7 @@ Pub/Sub: 실시간 채팅 및 상태 동기화를 위한 MessageListenerContaine
  */
 package io.github.ascrew.monomatbe.global.config;
 
+import tools.jackson.databind.json.JsonMapper;
 import io.github.ascrew.monomatbe.service.RedisSubscriber;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +23,7 @@ import java.util.concurrent.Executors;
 
 @Configuration
 public class RedisConfig {
+
     @Value("${spring.data.redis.host}")
     private String redisHost;
 
@@ -32,6 +34,16 @@ public class RedisConfig {
     public RedisConnectionFactory redisConnectionFactory() {
         // LettuceConnectionFactory를 사용하여 Redis 연결 설정
         return new LettuceConnectionFactory(redisHost, redisPort);
+    }
+
+    // ObjectMapper 대신 불변 객체인 JsonMapper를 빌더 패턴으로 생성하여 빈으로 등록한다.
+    // Jackson 3.x부터 이 방식이 표준이다.
+
+    @Bean
+    public JsonMapper jsonMapper() {
+        return JsonMapper.builder()
+                // 필요 시 .findAndAddModules() 등을 통해 JSR310 (시간 관련) 모듈 추가 가
+                .build();
     }
 
     @Bean
@@ -49,13 +61,14 @@ public class RedisConfig {
             RedisConnectionFactory connectionFactory,
             RedisSubscriber redisSubscriber) {
         // RedisMessageListenerContainer를 생성하여 Redis 메시지 리스너 설정
-
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
 
         // 비동기 처리를 위해 가상 스레드 기반의 TaskExecutor 설정 (Java 19 이상에서 사용 가능)
+        // Java 21+ 가상 스레드를 활용하여 메시지 처리 성능 최적화
         container.setTaskExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
+        // 구독 채널 설정
         container.addMessageListener(redisSubscriber, new PatternTopic("/topic/chat/global")); // 전체 채팅 구독
         container.addMessageListener(redisSubscriber, new PatternTopic("/topic/lobby/*")); // 로비 채팅 구독
         return container;

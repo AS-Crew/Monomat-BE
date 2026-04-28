@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 public class StompChannelInterceptor implements ChannelInterceptor {
     // 표준 uuid 형식을 검사하는 정규식 (8-4-4-4-12 포멧)
     private static final Pattern UUID_PATTERN = Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+    private static final String LOBBY_DESTINATION_PREFIX = "/topic/lobby/";
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -42,7 +43,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                     }
                     // 값이 있긴 한데 이상한 문자열(hacked 등)을 보낸 경우 차단
                     if (!UUID_PATTERN.matcher(uuid).matches()) {
-                        log.warn("STOMP CONNECT 악의적인 접근 시도 (형식 위반): 전달된 UUID = {}", uuid);
+                        log.warn("STOMP CONNECT 악의적인 접근 시도 (형식 위반): 전달된 UUID = {}", sanitizeForLog(uuid));
                         throw new IllegalArgumentException("STOMP CONNECT: 유효하지 않은 UUID 형식입니다. 연결이 거부되었습니다.");
                     }
 
@@ -85,7 +86,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         if (accessor.getCommand() == StompCommand.SUBSCRIBE) {
             String destination = accessor.getDestination();
             if (destination != null && destination.startsWith("/topic/lobby/")) {
-                String roomId = destination.replace("/topic/lobby/", "");
+                String roomId = destination.substring(LOBBY_DESTINATION_PREFIX.length());
 
                 if (sessionAttributes != null) {
                     sessionAttributes.put("roomId", roomId); // 세션 속성에 roomId 저장
@@ -102,6 +103,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
     }
 
+    private String sanitizeForLog(String uuid) {
+        if (uuid == null) {
+            return "null";
+        }
+        String sanitized = uuid.replaceAll("[\r\n\t]", "");
+
+        return sanitized.length() > 50 ? sanitized.substring(0, 50) + "..." : sanitized; // 로그에 너무 긴 UUID는 일부만 표시
+    }
 }
 
 

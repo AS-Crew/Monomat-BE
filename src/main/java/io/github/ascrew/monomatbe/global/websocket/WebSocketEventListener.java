@@ -26,6 +26,7 @@ public class WebSocketEventListener {
 
     private static final String USER_STATUS_KEY_PREFIX = "user_status:"; // Redis에서 사용자 상태를 저장할 때 사용할 키 접두사
     private static final String USER_ROOM_KEY_PREFIX = "user_room:"; // Redis에서 사용자가 참여한 방 정보를 저장할 때 사용할 키 접두사
+    private static final String LOBBY_DESTINATION_PREFIX = "/topic/lobby/"; // 로비 채팅방의 목적지 접두사
 
     @EventListener
     public void handleWebSocketConnectListener(SessionConnectedEvent event) {
@@ -93,7 +94,7 @@ public class WebSocketEventListener {
 
             // 목적지가 로비 채팅방인 경우에만 동작
             if(destination != null && destination.startsWith("/topic/lobby")){
-                String roomId = destination.replace("/topic/lobby", "");
+                String roomId = destination.substring(LOBBY_DESTINATION_PREFIX.length()); // "/topic/lobby/" 접두사 제거하여 roomId 추출
 
                 // 정상적으로 인증 된 유저만 redis 참여자 set에 추가
                 if (uuid != null && !"UNKNOWN".equals(uuid)) {

@@ -31,12 +31,16 @@ dependencies {
     // 3. Security
     implementation 'org.springframework.boot:spring-boot-starter-security'
 
-    // 4. Utility (.env & Lombok)
+    // 4. Validation (입력값 검증)
+    // @NotBlank, @Min, @Max 등 Bean Validation 어노테이션 사용을 위해 추가
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // 5. Utility (.env & Lombok)
     implementation 'me.paulschwarz:spring-dotenv:4.0.0'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
-    // 5. Test (Spring Boot 4.x 모듈화된 전용 테스트 스타터)
+    // 6. Test (Spring Boot 4.x 모듈화된 전용 테스트 스타터)
     testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-data-redis-test' // Redis 테스트 추가
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'

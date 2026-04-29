@@ -20,7 +20,6 @@ import io.github.ascrew.monomatbe.repository.LobbyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -95,7 +94,7 @@ public class LobbyService {
         }
 
         // 5. 로비 목록 화면을 보고 있는 클라이언트들에게 새로고침 신호 전송
-        lobbyEventService.notifyLobbyInfoRefresh();
+        lobbyEventService.notifyLobbyListRefresh();
 
         // 6. 응답 DTO 반환 (딥링크 포함)
         return LobbyCreateResponseDto.builder()

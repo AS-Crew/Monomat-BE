@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.repository;
 
+import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.dto.LobbyRedisDto;
 import java.util.List;
 
@@ -8,6 +9,6 @@ public interface LobbyRepository {
   boolean isParticipant(String code, String userId);
 
   // [이슈 #19] 추가된 메서드들
-  String executeLeaveLobbyProcess(String code, String userId);
+  LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId);
   List<LobbyRedisDto> getPublicLobbies();
 }

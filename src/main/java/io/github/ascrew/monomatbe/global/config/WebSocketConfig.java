@@ -14,8 +14,11 @@
 
 package io.github.ascrew.monomatbe.global.config;
 
+import java.util.List;
+import org.springframework.messaging.handler.invocation.HandlerMethodArgumentResolver;
 import io.github.ascrew.monomatbe.global.websocket.CustomStompErrorHandler;
 import io.github.ascrew.monomatbe.global.websocket.StompChannelInterceptor;
+import io.github.ascrew.monomatbe.global.websocket.resolver.SessionUuidArgumentResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
@@ -33,6 +36,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final CustomStompErrorHandler customStompErrorHandler;
     private final StompChannelInterceptor stompChannelInterceptor;
+    private final SessionUuidArgumentResolver sessionUuidArgumentResolver;
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
@@ -44,8 +48,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.setErrorHandler(customStompErrorHandler);
 
     }
-
-
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
@@ -65,6 +67,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.interceptors(stompChannelInterceptor);
+    }
+
+    @Override
+    public void addArgumentResolvers(List<HandlerMethodArgumentResolver> argumentResolvers) {
+        argumentResolvers.add(sessionUuidArgumentResolver);
     }
 
 }

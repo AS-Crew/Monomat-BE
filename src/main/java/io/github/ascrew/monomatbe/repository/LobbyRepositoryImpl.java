@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.repository;
 
+import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.dto.LobbyRedisDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -40,7 +41,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    * 여러 개의 키를 조작하는 로직을 단일 Lua 스크립트로 묶어 서버로 전송
    */
   @Override
-  public String executeLeaveLobbyProcess(String code, String userId) {
+  public LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId) {
     // Lua 스크립트의 KEYS 파라미터에 매핑될 키 목록
     List<String> keys = List.of(
             RedisKey.LOBBY_INFO.of(code),         // 로비 정보 해시
@@ -48,8 +49,22 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             RedisKey.LOBBY_ORDER.of(code),        // 참가자 순서 리스트
             RedisKey.PUBLIC_LOBBIES.of()          // 공개 로비 집합
     );
-    // 스크립트, 키 목록, ARGV에 들어갈 인자 (userId, code) 순으로 실행
-    return redisTemplate.execute(leaveLobbyScript, keys, userId, code);
+
+    try {
+      String result = redisTemplate.execute(leaveLobbyScript, keys, userId, code);
+
+      // 파싱 로직 여기서 처리하고 순수한 도메인 객체로 변환
+      if (result == null) return new LeaveLobbyResult.Error("Lua 반환값이 null");
+      if ("DESTROYED".equals(result)) return new LeaveLobbyResult.Destroyed(code);
+      if ("LEFT".equals(result)) return new LeaveLobbyResult.Left(code, userId);
+      if (result.startsWith("DELEGATED:")) {
+        return new LeaveLobbyResult.Delegated(code, result.substring(10));
+      }
+      return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
+
+    } catch (Exception e) {
+      return new LeaveLobbyResult.Error(e.getMessage());
+    }
   }
 
   // 고속 로비 리스트 조회 (공개 로비만 필터링)

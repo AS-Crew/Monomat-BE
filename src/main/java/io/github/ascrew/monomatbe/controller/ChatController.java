@@ -7,6 +7,7 @@ package io.github.ascrew.monomatbe.controller;
 
 import io.github.ascrew.monomatbe.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.annotation.SessionUuid;
+import io.github.ascrew.monomatbe.global.constant.WebSocketConstants;
 import io.github.ascrew.monomatbe.service.RedisPublisher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -24,10 +25,10 @@ public class ChatController {
      * 클라이언트 송신: /app/chat/global
      * 클라이언트 수신(구독): /topic/global
      */
-    @MessageMapping("/chat/global")
+    @MessageMapping(WebSocketConstants.CHAT_GLOBAL_MAPPING)
     public void broadcastGlobal(ChatMessageDto message, @SessionUuid String uuid) {
         ChatMessageDto secureMessage = createSecureMessage(message, "global", uuid);
-        redisPublisher.publish("/topic/chat/global", secureMessage);
+        redisPublisher.publish(WebSocketConstants.CHAT_GLOBAL_TOPIC, secureMessage);
 
     }
 
@@ -36,10 +37,10 @@ public class ChatController {
      * 클라이언트 송신: /app/chat/lobby/{code} (ex: /app/chat/lobby/난수+문자 6자리)
      * 클라이언트 수신(구독): /topic/lobby/{code}
      */
-    @MessageMapping("/chat/lobby/{code}")
+    @MessageMapping(WebSocketConstants.CHAT_LOBBY_MAPPING)
     public void broadcastLobby(@DestinationVariable("code")String code, ChatMessageDto message, @SessionUuid String uuid) {
         ChatMessageDto secureMessage = createSecureMessage(message, code, uuid);
-        redisPublisher.publish("/topic/lobby/" + code, secureMessage);
+        redisPublisher.publish(WebSocketConstants.LOBBY_TOPIC_PREFIX + code, secureMessage);
 
     }
 

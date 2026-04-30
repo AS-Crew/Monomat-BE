@@ -5,6 +5,7 @@ public interface LobbyEventBroadcaster {
     void broadcastLobbyDestroyed(String lobbyCode);
     void broadcastHostDelegated(String lobbyCode, String newHostId);
     void broadcastUserLeft(String lobbyCode, String userId);
-
+    void broadcastLobbyListRefresh();
+    void broadcastLobbyInfoRefresh(String lobbyCode);
 
 }

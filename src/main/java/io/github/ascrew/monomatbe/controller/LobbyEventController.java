@@ -2,6 +2,8 @@ package io.github.ascrew.monomatbe.controller;
 
 import io.github.ascrew.monomatbe.service.LobbyEventService;
 import java.security.Principal;
+
+import io.github.ascrew.monomatbe.service.port.LobbyEventBroadcaster;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -11,15 +13,16 @@ import org.springframework.stereotype.Controller;
 @RequiredArgsConstructor
 public class LobbyEventController {
 
-  private final LobbyEventService lobbyEventService;
+
+  private final LobbyEventBroadcaster lobbyBroadcaster;
 
   // 로비가 생성될 때 로비 리스트을 보고있는 모든 클라이언트에게 로비 리스트를 새로고침하라는 메시지를 보냄
   // 차후 유저의 수가 증가할 경우 많은 요청이 발생할 수 있으므로
   // 일정시간(예: 5초) 동안 1건 이상 로비 생성 이벤트가 발생할 경우에만 로비 리스트 새로고침 메시지를 보내도록 개선할 수 있음
   // 클라이언트 송신 경로 : /app/lobby/create
   @MessageMapping("/lobby/create")
-  public void notifyLobbyListRefresh(Principal principal) {
-    lobbyEventService.notifyLobbyListRefresh();
+  public void notifyLobbyListRefresh() {
+    lobbyBroadcaster.broadcastLobbyListRefresh();
   }
 
   // 로비 내부 정보가 변경될 때 해당 로비에 참여한 클라이언트들에게 로비 정보를 새로고침하라는 메시지를 보냄
@@ -27,6 +30,6 @@ public class LobbyEventController {
   // 클라이언트 송신 경로 : /app/lobby/{code}/update
   @MessageMapping("/lobby/{code}/update")
   public void notifyLobbyInfoRefresh(@DestinationVariable String code, Principal principal) {
-    lobbyEventService.notifyLobbyInfoRefresh(code, principal);
+    lobbyBroadcaster.broadcastLobbyInfoRefresh(code);
   }
 }

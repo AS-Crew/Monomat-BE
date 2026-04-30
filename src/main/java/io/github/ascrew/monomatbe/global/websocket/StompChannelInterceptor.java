@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.global.websocket;
 
+import io.github.ascrew.monomatbe.global.constant.WebSocketConstants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
@@ -20,7 +21,6 @@ import java.util.regex.Pattern;
 public class StompChannelInterceptor implements ChannelInterceptor {
     // 표준 uuid 형식을 검사하는 정규식 (8-4-4-4-12 포멧)
     private static final Pattern UUID_PATTERN = Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
-    private static final String LOBBY_DESTINATION_PREFIX = "/topic/lobby/";
 
     @Override
     public Message<?> preSend(@NonNull Message<?> message, @NonNull MessageChannel channel) {
@@ -45,20 +45,20 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
     private void validateSession(StompHeaderAccessor accessor, Map<String, Object> sessionAttributes) {
 
-        if (sessionAttributes == null || sessionAttributes.get("uuid") == null) {
+        if (sessionAttributes == null || sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID) == null) {
             log.warn("[{} 차단] 인증되지 않은 세션 접근", accessor.getCommand());
             throw new IllegalStateException("세션 인증 정보가 존재하지 않습니다.");
         }
 
-        String uuid = (String) sessionAttributes.get("uuid");
+        String uuid = (String) sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID);
 
         // 정상 로직 수행 (로그 기록 등)
         switch (Objects.requireNonNull(accessor.getCommand())) {
             case SUBSCRIBE -> {
                 String destination = accessor.getDestination();
-                if (destination != null && destination.startsWith(LOBBY_DESTINATION_PREFIX)) {
-                    String roomId = destination.substring(LOBBY_DESTINATION_PREFIX.length());
-                    sessionAttributes.put("roomId", roomId);
+                if (destination != null && destination.startsWith(WebSocketConstants.LOBBY_TOPIC_PREFIX)) {
+                    String roomId = destination.substring(WebSocketConstants.LOBBY_TOPIC_PREFIX.length());
+                    sessionAttributes.put(WebSocketConstants.SESSION_ATTR_ROOM_ID, roomId);
                 }
                 log.info("[SUBSCRIBE] 방 입장 - UUID: {}, Destination: {}", uuid, destination);
             }
@@ -78,7 +78,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     }
 
     private void handleConnect(StompHeaderAccessor accessor, Map<String, Object> sessionAttributes) {
-        String uuid = accessor.getFirstNativeHeader("uuid");
+        String uuid = accessor.getFirstNativeHeader(WebSocketConstants.HEADER_UUID);
 
         if (uuid == null || uuid.trim().isEmpty()) {
             log.warn("STOMP CONNECT 올바르지 않은 접근 시도: uuid :{}, 목적지: {}", uuid, accessor.getDestination());
@@ -94,14 +94,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             throw new IllegalStateException("세션 속성 맵이 존재하지 않습니다. 연결이 거부되었습니다.");
         }
 
-        sessionAttributes.put("uuid", uuid);
+        sessionAttributes.put(WebSocketConstants.SESSION_ATTR_UUID, uuid);
         log.info("STOMP CONNECT: {} 연결됨", uuid);
     }
 
     private void handleDisconnect(Map<String, Object> sessionAttributes) {
-        String disconnectUuid = (sessionAttributes != null && sessionAttributes.get("uuid") != null)
-                ? (String) sessionAttributes.get("uuid")
-                : "UNKNOWN";
+        String disconnectUuid = (sessionAttributes != null && sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID) != null)
+                ? (String) sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID)
+                : WebSocketConstants.UNKNOWN_USER;
         log.info("STOMP DISCONNECTED: {}", disconnectUuid);
     }
 }

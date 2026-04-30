@@ -21,11 +21,11 @@ import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
-import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 import tools.jackson.databind.DefaultTyping;
 import java.util.concurrent.Executors;
+import io.github.ascrew.monomatbe.global.constant.WebSocketConstants;
 
 @Configuration
 public class RedisConfig {
@@ -87,11 +87,10 @@ public class RedisConfig {
         // Java 21+ 가상 스레드를 활용하여 메시지 처리 성능 최적화
         container.setTaskExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
-        container.addMessageListener(redisSubscriber, new ChannelTopic("/topic/chat/global")); // 전체 채팅 구독
-        container.addMessageListener(redisSubscriber, new PatternTopic("/topic/lobby/*")); // 로비 채팅 구독
+        container.addMessageListener(redisSubscriber, new ChannelTopic(WebSocketConstants.CHAT_GLOBAL_TOPIC)); // 전체 채팅 구독
+        container.addMessageListener(redisSubscriber, new PatternTopic(WebSocketConstants.LOBBY_TOPIC_PATTERN)); // 로비 채팅 구독
         return container;
     }
 
 
 }
-

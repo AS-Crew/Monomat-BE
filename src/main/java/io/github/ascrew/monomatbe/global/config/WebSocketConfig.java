@@ -27,6 +27,7 @@ import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.messaging.simp.config.ChannelRegistration;
+import io.github.ascrew.monomatbe.global.constant.WebSocketConstants;
 
 
 @Configuration
@@ -41,7 +42,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry
-                .addEndpoint("/ws") //최초로 웹소켓 연결을 하기위해 url /ws 지정
+                .addEndpoint(WebSocketConstants.WS_ENDPOINT) //최초로 웹소켓 연결을 하기위해 url /ws 지정
                 .setAllowedOriginPatterns("*") //모든 도메인에서 접속을 허용
                 .withSockJS(); //웹소켓 연결 실패시 일반 HTTP통신으로 연결
 
@@ -57,11 +58,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         taskScheduler.setThreadNamePrefix("wss-heartbeat-thread-");             //스레드 이름 접두사 설정
         taskScheduler.initialize();
 
-        registry.enableSimpleBroker("/topic")                   //수신용
+        registry.enableSimpleBroker(WebSocketConstants.TOPIC_DESTINATION_PREFIX)                   //수신용
                 .setTaskScheduler(taskScheduler)
                 .setHeartbeatValue(new long[]{10000,10000}); //클라이언트와 서버가 10000ms(10초)마다 하트비트를 주고받도록 설정
 
-        registry.setApplicationDestinationPrefixes("/app");  //송신용(발행)
+        registry.setApplicationDestinationPrefixes(WebSocketConstants.APP_DESTINATION_PREFIX);  //송신용(발행)
     }
 
     @Override

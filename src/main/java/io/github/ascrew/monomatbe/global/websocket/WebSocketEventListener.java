@@ -12,6 +12,7 @@ import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import io.github.ascrew.monomatbe.service.LobbyEventService;
+import io.github.ascrew.monomatbe.global.constant.WebSocketConstants;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -29,17 +30,16 @@ public class WebSocketEventListener {
 
     private static final String USER_STATUS_KEY_PREFIX = "user_status:"; // Redis에서 사용자 상태를 저장할 때 사용할 키 접두사
     private static final String USER_ROOM_KEY_PREFIX = "user_room:"; // Redis에서 사용자가 참여한 방 정보를 저장할 때 사용할 키 접두사
-    private static final String LOBBY_DESTINATION_PREFIX = "/topic/lobby/"; // 로비 채팅방의 목적지 접두사
 
     @EventListener
     public void handleWebSocketConnectListener(SessionConnectedEvent event) {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
 
-        String uuid = (sessionAttributes != null && sessionAttributes.get("uuid") != null)
-                ? (String) sessionAttributes.get("uuid") : "UNKNOWN";
+        String uuid = (sessionAttributes != null && sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID) != null)
+                ? (String) sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID) : WebSocketConstants.UNKNOWN_USER;
 
-        if (!"UNKNOWN".equals(uuid)) {
+        if (!WebSocketConstants.UNKNOWN_USER.equals(uuid)) {
             // Redis에 사용자 상태를 온라인으로 저장
             String userStatusKey = USER_STATUS_KEY_PREFIX + uuid;
             redisTemplate.opsForValue().set(userStatusKey, "ONLINE",2, TimeUnit.HOURS); // 2시간 동안 온라인 상태 유지, 필요에 따라 조정 가능
@@ -59,10 +59,10 @@ public class WebSocketEventListener {
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
 
         if(sessionAttributes != null){
-            String uuid = (String) sessionAttributes.get("uuid");
-            String roomId = (String) sessionAttributes.get("roomId");
+            String uuid = (String) sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID);
+            String roomId = (String) sessionAttributes.get(WebSocketConstants.SESSION_ATTR_ROOM_ID);
 
-            if(uuid != null && !"UNKNOWN".equals(uuid)){
+            if(uuid != null && !WebSocketConstants.UNKNOWN_USER.equals(uuid)){
                 log.info("WebSocket 연결 끊김: uuid={}, roomId={}", uuid, roomId);
 
                 // 공통 인프라 정리(Redis 상태, 지표 관리)
@@ -84,7 +84,7 @@ public class WebSocketEventListener {
                             .build();
 
                     // Redis에서 사용자가 참여한 방 정보 제거
-                    redisPublisher.publish(LOBBY_DESTINATION_PREFIX+roomId, chatMessageDto);
+                    redisPublisher.publish(WebSocketConstants.LOBBY_TOPIC_PREFIX + roomId, chatMessageDto);
                     redisTemplate.opsForSet().remove(USER_ROOM_KEY_PREFIX + roomId, uuid);
                 }
             }
@@ -98,15 +98,15 @@ public class WebSocketEventListener {
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
 
         if(sessionAttributes != null){
-            String uuid = (String) sessionAttributes.get("uuid");
+            String uuid = (String) sessionAttributes.get(WebSocketConstants.SESSION_ATTR_UUID);
             String destination = accessor.getDestination();
 
             // 목적지가 로비 채팅방인 경우에만 동작
-            if(destination != null && destination.startsWith("/topic/lobby")){
-                String roomId = destination.substring(LOBBY_DESTINATION_PREFIX.length()); // "/topic/lobby/" 접두사 제거하여 roomId 추출
+            if(destination != null && destination.startsWith(WebSocketConstants.LOBBY_TOPIC_PREFIX)){
+                String roomId = destination.substring(WebSocketConstants.LOBBY_TOPIC_PREFIX.length()); // "/topic/lobby/" 접두사 제거하여 roomId 추출
 
                 // 정상적으로 인증 된 유저만 redis 참여자 set에 추가
-                if (uuid != null && !"UNKNOWN".equals(uuid)) {
+                if (uuid != null && !WebSocketConstants.UNKNOWN_USER.equals(uuid)) {
                     redisTemplate.opsForSet().add(USER_ROOM_KEY_PREFIX + roomId, uuid); // Redis에서 사용자가 참여한 방 정보 추가
                     log.info("Redis에 참여자 정보 추가: {} -> {}", roomId, uuid);
                 }

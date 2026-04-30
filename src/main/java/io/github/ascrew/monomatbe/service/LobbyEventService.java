@@ -16,14 +16,12 @@ import org.springframework.stereotype.Service;
 public class LobbyEventService {
 
   private final LobbyRepository lobbyRepository;
-  private final LobbyEventBroadcaster lobbyBroadcaster; // ⭐️ RedisPublisher 대신 인터페이스(Port)에 의존
+  private final LobbyEventBroadcaster lobbyBroadcaster; // RedisPublisher 대신 인터페이스(Port)에 의존
 
   public void handlePlayerLeave(String code, String userId) {
-    // 1. 인프라에 명령을 내리고 순수한 도메인 결과(Result)를 받음
+    // 인프라에 명령을 내리고 순수한 도메인 결과(Result)를 받음
     LeaveLobbyResult result = lobbyRepository.executeLeaveLobbyProcess(code, userId);
 
-    // 2. ⭐️ Java 21 Pattern Matching을 활용한 우아한 분기 처리
-    // 컴파일러가 모든 케이스(4가지)를 검사하므로, 누락될 위험이 0%입니다!
     switch (result) {
       case LeaveLobbyResult.Destroyed d -> {
         log.info("[퇴장] 방장 퇴장으로 인한 로비 폭파 - 로비: {}", d.lobbyCode());

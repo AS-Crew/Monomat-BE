@@ -52,39 +52,36 @@ public class LobbyEventService {
       return;
     }
 
+    // principal.getName()이 사용자 식별자임을 명확히 변수명으로 표현
+    String userIdentifier = principal.getName();
+
     if (!lobbyRepository.existsByCode(code)) {
       return;
     }
 
-    if (!lobbyRepository.isParticipant(code, principal.getName())) {
+    if (!lobbyRepository.isParticipant(code, userIdentifier)) {
       return;
     }
 
-    messagingTemplate.convertAndSend(StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
+    messagingTemplate.convertAndSend(
+            StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
   }
 
-  /**
-   * 유저 퇴장 시나리오를 분기 처리합니다.
-   * Lua 스크립트 실행 결과에 따라 브로드캐스트 범위를 결정합니다.
-   *
-   * [반환값에 따른 분기]
-   * - "DESTROYED"        : 로비 폭파 → 전역 로비 리스트 새로고침
-   * - "DELEGATED:{id}"   : 방장 위임 → 해당 로비 내부 새로고침
-   * - "LEFT"             : 일반 퇴장 → 해당 로비 내부 새로고침
-   */
-  public void handlePlayerLeave(String code, String userId) {
-    if (!StringUtils.hasText(code) || !StringUtils.hasText(userId)) return;
+  public void handlePlayerLeave(String code, String userIdentifier) {
+    if (!StringUtils.hasText(code) || !StringUtils.hasText(userIdentifier)) return;
 
     String result;
     try {
-      result = lobbyRepository.executeLeaveLobbyProcess(code, userId);
+      result = lobbyRepository.executeLeaveLobbyProcess(code, userIdentifier);
     } catch (Exception e) {
-      log.error("[handlePlayerLeave] Lua 스크립트 실행 실패 - 로비: {}, 유저: {}", code, userId, e);
+      log.error("[handlePlayerLeave] Lua 스크립트 실행 실패 - 로비: {}, 식별자: {}",
+              code, userIdentifier, e);
       return;
     }
 
     if (result == null) {
-      log.warn("[handlePlayerLeave] Lua 스크립트 반환값 null - 로비: {}, 유저: {}", code, userId);
+      log.warn("[handlePlayerLeave] Lua 스크립트 반환값 null - 로비: {}, 식별자: {}",
+              code, userIdentifier);
       return;
     }
 
@@ -93,16 +90,19 @@ public class LobbyEventService {
       notifyLobbyListRefresh();
 
     } else if (result.startsWith("DELEGATED:")) {
-      String newHost = result.substring("DELEGATED:".length());
-      log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}", code, newHost);
-      messagingTemplate.convertAndSend(StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
+      String newHostIdentifier = result.substring("DELEGATED:".length());
+      log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}", code, newHostIdentifier);
+      messagingTemplate.convertAndSend(
+              StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
 
     } else if ("LEFT".equals(result)) {
-      log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 유저: {}", code, userId);
-      messagingTemplate.convertAndSend(StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
+      log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 식별자: {}", code, userIdentifier);
+      messagingTemplate.convertAndSend(
+              StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
 
     } else {
-      log.warn("[handlePlayerLeave] 알 수 없는 Lua 반환값: {} - 로비: {}, 유저: {}", result, code, userId);
+      log.warn("[handlePlayerLeave] 알 수 없는 Lua 반환값: {} - 로비: {}, 식별자: {}",
+              result, code, userIdentifier);
     }
   }
 }

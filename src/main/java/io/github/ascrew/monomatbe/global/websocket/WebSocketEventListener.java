@@ -1,7 +1,7 @@
 package io.github.ascrew.monomatbe.global.websocket;
 
-import io.github.ascrew.monomatbe.dto.ChatMessageDto;
-import io.github.ascrew.monomatbe.service.RedisPublisher;
+import io.github.ascrew.monomatbe.domain.chat.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;

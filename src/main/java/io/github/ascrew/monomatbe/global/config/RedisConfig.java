@@ -9,7 +9,7 @@
 package io.github.ascrew.monomatbe.global.config;
 
 import tools.jackson.databind.json.JsonMapper;
-import io.github.ascrew.monomatbe.service.RedisSubscriber;
+import io.github.ascrew.monomatbe.global.redis.RedisSubscriber;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;

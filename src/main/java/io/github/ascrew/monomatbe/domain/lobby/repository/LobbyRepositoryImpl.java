@@ -1,6 +1,21 @@
-package io.github.ascrew.monomatbe.repository;
+/*
+ * LobbyRepository의 Redis 구현체.
+ *
+ * [설계 결정]
+ * - StringRedisTemplate을 사용하는 이유:
+ *   로비 데이터는 Redis Hash로 저장되며 Key/Value 모두 String입니다.
+ *   RedisTemplate<String, Object>보다 가볍고 직렬화 오버헤드가 없습니다.
+ *
+ * - Lua 스크립트를 사용하는 이유:
+ *   퇴장 처리 시 여러 Redis 키를 조작해야 하는데,
+ *   Java 레벨에서 순차 처리하면 Race Condition이 발생할 수 있습니다.
+ *   Lua 스크립트는 Redis 서버에서 원자적으로 실행되므로 이를 방지합니다.
+ *
+ * TODO: Commit #2에서 하드코딩된 Redis 키 문자열을 RedisKeys 상수로 교체 예정
+ */
+package io.github.ascrew.monomatbe.domain.lobby.repository;
 
-import io.github.ascrew.monomatbe.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -11,17 +26,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 실시간 게임 데이터 처리를 위해 Redis와 직접 통신하는 구현체.
- * RDBMS(MySQL)의 트랜잭션 부하를 피하고, Lettuce + Virtual Threads 기반의 I/O를 담당
- */
-
 @Repository
 @RequiredArgsConstructor
 public class LobbyRepositoryImpl implements LobbyRepository {
 
   private final StringRedisTemplate redisTemplate;
-  private final RedisScript<String> leaveLobbyScript; // 등록해둔 Lua 스크립트 빈 주입
+  private final RedisScript<String> leaveLobbyScript;
 
   @Override
   public boolean existsByCode(String code) {
@@ -30,51 +40,62 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   @Override
   public boolean isParticipant(String code, String userId) {
-    // Lua 스크립트의 KEYS 파라미터에 매핑될 키 목록
-    return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember("lobby:" + code + ":participants", userId));
+    return Boolean.TRUE.equals(
+            redisTemplate.opsForSet().isMember("lobby:" + code + ":participants", userId)
+    );
   }
 
   /**
-   * 방장 위임 및 로비 폭파를 포함한 퇴장 처리 (Atomic)
-   * Java 레벨에서 순차적으로 처리할 때 발생할 수 있는 Race Condition(경쟁 상태)을 방지하기 위해
-   * 여러 개의 키를 조작하는 로직을 단일 Lua 스크립트로 묶어 서버로 전송
+   * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행합니다.
+   *
+   * KEYS[1] = lobby:{code}              — 로비 메타 정보 Hash
+   * KEYS[2] = lobby:{code}:participants — 참여자 Set
+   * KEYS[3] = lobby:{code}:order        — 입장 순서 List
+   * KEYS[4] = lobby:public              — 전역 공개 로비 Set
+   * ARGV[1] = userId                    — 퇴장하는 유저 ID
+   * ARGV[2] = code                      — 로비 코드
    */
   @Override
   public String executeLeaveLobbyProcess(String code, String userId) {
-    // Lua 스크립트의 KEYS 파라미터에 매핑될 키 목록
     List<String> keys = List.of(
             "lobby:" + code,
             "lobby:" + code + ":participants",
             "lobby:" + code + ":order",
             "lobby:public"
     );
-    // 스크립트, 키 목록, ARGV에 들어갈 인자 (userId, code) 순으로 실행
     return redisTemplate.execute(leaveLobbyScript, keys, userId, code);
   }
 
-  // 고속 로비 리스트 조회 (공개 로비만 필터링)
-  // DB를 조회하지 않고 Redis 메모리에서 직접 공개 방 목록을 필터링한다.
+  /**
+   * 공개 로비 목록을 Redis에서 직접 필터링하여 반환합니다.
+   *
+   * [성능 고려사항]
+   * 현재 로비 수만큼 반복하여 Redis를 조회하는 N+1 구조입니다.
+   * TODO: 로비 수가 증가할 경우 Redis Pipeline 또는 MGET으로 최적화 필요
+   */
   @Override
   public List<LobbyRedisDto> getPublicLobbies() {
     Set<String> publicLobbyCodes = redisTemplate.opsForSet().members("lobby:public");
+
     if (publicLobbyCodes == null || publicLobbyCodes.isEmpty()) {
       return new ArrayList<>();
     }
 
     List<LobbyRedisDto> result = new ArrayList<>();
-    // TODO: 방 개수가 매우 많아질 경우, 반복문 순회(N+1) 대신 Redis Pipeline이나 MGET으로 최적화 필요
+
     for (String code : publicLobbyCodes) {
       Map<Object, Object> data = redisTemplate.opsForHash().entries("lobby:" + code);
+
       if (!data.isEmpty()) {
         result.add(LobbyRedisDto.builder()
                 .code((String) data.get("code"))
                 .hostId((String) data.get("host_user_id"))
                 .title((String) data.get("title"))
                 .status((String) data.get("status"))
-                // 필요한 필드들 매핑
                 .build());
       }
     }
+
     return result;
   }
 }

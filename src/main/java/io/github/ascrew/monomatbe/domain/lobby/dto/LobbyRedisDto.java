@@ -1,0 +1,25 @@
+/*
+ * Redis에 저장된 로비 정보를 클라이언트에 반환하기 위한 DTO.
+ * Redis Hash 구조의 데이터를 Java 객체로 매핑한다.
+ */
+package io.github.ascrew.monomatbe.domain.lobby.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+@Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class LobbyRedisDto {
+
+    private String code;          // 로비 초대 코드 (6자리 고유 코드)
+    private String hostId;        // 현재 방장의 사용자 식별자
+    private String title;         // 로비 제목
+    private Long mapId;           // 선택된 맵 세트 ID
+    private Integer maxPlayers;   // 최대 참여 가능 인원
+    private Boolean isPrivate;    // 공개(false) / 비공개(true) 여부
+    private String status;        // 로비 상태 (WAITING, PLAYING)
+}

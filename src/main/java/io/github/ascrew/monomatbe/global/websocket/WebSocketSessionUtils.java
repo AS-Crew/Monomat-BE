@@ -33,9 +33,10 @@ public final class WebSocketSessionUtils {
      * @return 사용자 식별자 (게스트 UUID 또는 회원 ID), 없으면 UNKNOWN_IDENTIFIER
      */
     public static String extractUserIdentifier(SimpMessageHeaderAccessor accessor) {
-        // 세션 속성 자체가 null인 경우 방어 처리
-        Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
-        return extractFromAttributes(sessionAttributes);
+        if (accessor == null) {
+            return WebSocketHeaders.UNKNOWN_IDENTIFIER;
+        }
+        return extractFromAttributes(accessor.getSessionAttributes());
     }
 
     /**

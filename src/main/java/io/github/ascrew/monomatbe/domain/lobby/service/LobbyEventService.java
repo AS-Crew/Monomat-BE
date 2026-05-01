@@ -10,6 +10,11 @@
  *          Spring이 이 메서드로 자동 전달
  *       → global은 domain을 전혀 알 필요 없어짐
  *
+ * [리팩토링 변경 사항 — 하드코딩 제거]
+ * saveConnectionInfo()에서 Redis Hash 필드 키로 사용하던
+ * "userId", "lobbyCode" 문자열 리터럴을
+ * WebSocketHeaders.SESSION_USER_ID, SESSION_LOBBY_CODE 상수로 교체
+ *
  * [LeaveLobbyResult sealed interface 도입 이유]
  * 기존 String 반환값 방식은 서비스 레이어에서 "DELEGATED:" 같은
  * Redis 내부 포맷 문자열을 직접 파싱해야 했습니다.
@@ -22,6 +27,7 @@ import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -119,7 +125,6 @@ public class LobbyEventService {
    */
   @EventListener
   public void handlePlayerLeave(PlayerLeaveEvent event) {
-    // 이벤트 객체에서 필요한 값 추출
     String code = event.lobbyCode();
     String userIdentifier = event.userIdentifier();
 
@@ -169,14 +174,20 @@ public class LobbyEventService {
    * WebSocketEventListener의 handleDisconnectEvent에서
    * wsSessionId만으로 lobbyCode와 userIdentifier를 역추적하는 데 사용됩니다.
    *
+   * [수정 — 하드코딩 제거]
+   * "userId", "lobbyCode" 문자열 리터럴
+   * → WebSocketHeaders.SESSION_USER_ID, SESSION_LOBBY_CODE 상수로 교체
+   * WebSocketEventListener의 조회 키와 반드시 일치해야 하므로 상수로 통일합니다.
+   *
    * @param wsSessionId    WebSocket 고유 세션 ID
    * @param userIdentifier 사용자 식별자 (게스트 UUID 또는 회원 ID)
    * @param lobbyCode      입장한 로비의 초대 코드
    */
   public void saveConnectionInfo(String wsSessionId, String userIdentifier, String lobbyCode) {
+    // [수정] 문자열 리터럴 → WebSocketHeaders 상수로 교체
     Map<String, String> data = Map.of(
-            "userId", userIdentifier,
-            "lobbyCode", lobbyCode
+            WebSocketHeaders.SESSION_USER_ID, userIdentifier,
+            WebSocketHeaders.SESSION_LOBBY_CODE, lobbyCode
     );
 
     // TTL 설정으로 비정상 종료 시 좀비 세션 데이터 자동 만료 처리

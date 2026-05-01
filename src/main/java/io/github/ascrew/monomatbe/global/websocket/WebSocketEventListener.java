@@ -10,6 +10,11 @@
  *       LobbyEventService(domain)가 @EventListener로 이벤트 수신
  *       global은 domain을 전혀 알 필요 없어짐
  *
+ * [리팩토링 변경 사항 — 하드코딩 제거]
+ * handleDisconnectEvent()에서 Redis Hash 조회 시 사용하던
+ * "lobbyCode" 문자열 리터럴을
+ * WebSocketHeaders.SESSION_LOBBY_CODE 상수로 교체
+ *
  * [의존 방향]
  * global/websocket/WebSocketEventListener
  *         ↓ publishEvent(PlayerLeaveEvent)
@@ -19,11 +24,11 @@
  */
 package io.github.ascrew.monomatbe.global.websocket;
 
-import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,16 +57,13 @@ public class WebSocketEventListener {
     private final RedisPublisher redisPublisher;
     private final RedisTemplate<String, Object> redisTemplate;
     private final WebSocketMetric webSocketMetric;
-
-    // [수정] LobbyEventService 직접 참조 제거
-    //        → ApplicationEventPublisher로 교체하여 domain 의존성 완전 제거
     private final ApplicationEventPublisher eventPublisher;
 
     /**
      * WebSocket 연결 성공 이벤트 처리.
      *
      * [처리 내용]
-     * 1. 세션에서 사용자 식별자 추출
+     * 1. 세션에서 사용자 식별자 추출 (WebSocketSessionUtils 위임)
      * 2. Redis에 온라인 상태 저장 (TTL 2시간)
      * 3. 활성 세션 카운터 증가 (Prometheus 메트릭)
      */
@@ -70,7 +72,6 @@ public class WebSocketEventListener {
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
 
-        // WebSocketSessionUtils 정적 메서드로 식별자 추출 (중복 로직 제거)
         String userIdentifier = WebSocketSessionUtils.extractUserIdentifier(sessionAttributes);
 
         if (WebSocketHeaders.UNKNOWN_IDENTIFIER.equals(userIdentifier)) {
@@ -96,17 +97,15 @@ public class WebSocketEventListener {
      *
      * [처리 순서]
      * 1. wsSessionId로 Redis에서 lobbyCode 역추적
-     * 2. PlayerLeaveEvent 발행 → LobbyEventService가 수신하여 퇴장 처리
+     * 2. PlayerLeaveEvent 발행 → LobbyEventService가 @EventListener로 수신하여 퇴장 처리
      * 3. LEAVE 메시지 브로드캐스트
      * 4. Redis 키 정리 (user_status, ws:connection)
      *
-     * [수정 — 의존 방향 역전 해결]
-     * 기존: lobbyEventService.handlePlayerLeave(lobbyCode, userIdentifier) 직접 호출
-     *       → global이 domain을 직접 참조하는 의존 방향 역전
-     *
-     * 변경: eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier))
-     *       → global은 이벤트 발행만 담당, domain이 수신하여 처리
-     *       → WebSocketEventListener가 LobbyEventService를 전혀 알 필요 없어짐
+     * [수정 — 하드코딩 제거]
+     * Redis Hash 조회 시 사용하던 "lobbyCode" 문자열 리터럴
+     * → WebSocketHeaders.SESSION_LOBBY_CODE 상수로 교체
+     * LobbyEventService.saveConnectionInfo()의 저장 키와 상수로 통일하여
+     * 오타 시 컴파일 타임에 감지되도록 합니다.
      */
     @EventListener
     public void handleDisconnectEvent(SessionDisconnectEvent event) {
@@ -129,23 +128,22 @@ public class WebSocketEventListener {
             Map<Object, Object> connectionInfo = redisTemplate.opsForHash()
                     .entries(RedisKeys.wsConnectionKey(wsSessionId));
             if (!connectionInfo.isEmpty()) {
-                lobbyCode = (String) connectionInfo.get("lobbyCode");
+                // [수정] "lobbyCode" 문자열 리터럴 → WebSocketHeaders.SESSION_LOBBY_CODE 상수로 교체
+                lobbyCode = (String) connectionInfo.get(WebSocketHeaders.SESSION_LOBBY_CODE);
             }
         }
 
         log.info("WebSocket 연결 해제 - 식별자: {}, 로비: {}", userIdentifier, lobbyCode);
 
-        // 2. [수정] 직접 호출 → 이벤트 발행으로 교체
-        //    PlayerLeaveEvent를 발행하면 Spring이 @EventListener를 가진
-        //    LobbyEventService.handlePlayerLeave(PlayerLeaveEvent)로 전달합니다.
-        //    WebSocketEventListener는 LobbyEventService를 전혀 알 필요가 없습니다.
+        // 2. PlayerLeaveEvent 발행
+        //    Spring이 @EventListener를 가진 LobbyEventService.handlePlayerLeave()로 전달
+        //    WebSocketEventListener는 LobbyEventService를 전혀 알 필요 없음
         if (lobbyCode != null) {
             eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
         }
 
         // 3. LEAVE 메시지 브로드캐스트
-        //    채팅 알림은 로비 도메인 로직이 아닌 WebSocket 인프라 책임이므로
-        //    이 클래스에서 직접 처리합니다.
+        //    채팅 알림은 WebSocket 인프라 책임이므로 이 클래스에서 직접 처리
         if (lobbyCode != null) {
             redisPublisher.publish(
                     StompDestinations.subscribeLobbyChat(lobbyCode),

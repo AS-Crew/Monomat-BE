@@ -1,0 +1,18 @@
+package io.github.ascrew.monomatbe.global.websocket.event;
+
+/**
+ * 플레이어가 WebSocket 연결을 해제했을 때 발행되는 이벤트.
+ *
+ * [위치 선정 이유 — global/websocket/event]
+ * 이 이벤트는 WebSocket 연결 해제라는 인프라 이벤트입니다.
+ * domain/lobby의 LobbyEventService가 이 이벤트를 수신하는 구조이므로,
+ * 이벤트 객체가 domain에 있으면 의존 방향이 역전됩니다.
+ * global에 위치시켜 domain → global 단방향 의존 방향을 유지합니다.
+ *
+ * @param lobbyCode      퇴장이 발생한 로비 코드
+ * @param userIdentifier 퇴장한 사용자 식별자 (게스트 UUID 또는 회원 ID)
+ */
+public record PlayerLeaveEvent(
+        String lobbyCode,
+        String userIdentifier
+) {}

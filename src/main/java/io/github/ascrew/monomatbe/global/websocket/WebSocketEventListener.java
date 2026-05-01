@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.global.websocket;
 
 import io.github.ascrew.monomatbe.domain.chat.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyEventService;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
@@ -29,6 +30,7 @@ public class WebSocketEventListener {
     private final RedisPublisher redisPublisher;
     private final RedisTemplate<String, Object> redisTemplate;
     private final WebSocketMetric webSocketMetric;
+    private final LobbyEventService lobbyEventService;
 
     /**
      * WebSocket 연결 성공 이벤트 처리.
@@ -46,7 +48,6 @@ public class WebSocketEventListener {
             return;
         }
 
-        // RedisKeys 상수로 키 생성
         redisTemplate.opsForValue().set(
                 RedisKeys.userStatusKey(userIdentifier),
                 WebSocketHeaders.STATUS_ONLINE,
@@ -59,10 +60,15 @@ public class WebSocketEventListener {
     }
 
     /**
-     * WebSocket 연결 해제 이벤트 처리.
-     * Redis에서 사용자 상태를 제거하고, 참여 중인 로비에 퇴장 메시지를 브로드캐스트합니다.
+     * WebSocket 연결 해제 이벤트 처리 (단일 진입점).
+     * 기존에 WebSocketEventListener와 LobbyConnectionListener로 분산되어 있던
+     * 퇴장 처리 로직을 단일 진입점으로 통합하여 처리 순서를 보장합니다.
      *
-     * TODO: 이슈 #5(이중 리스너 통합)에서 LobbyConnectionListener 로직을 이곳으로 통합 예정
+     * [처리 순서]
+     * 1. wsSessionId로 Redis에서 userIdentifier, lobbyCode 조회
+     * 2. Lua 스크립트 기반 원자적 퇴장 처리 (LobbyEventService 위임)
+     * 3. LEAVE 메시지 브로드캐스트
+     * 4. Redis 키 정리 (user_status, ws:connection, user_room)
      */
     @EventListener
     public void handleDisconnectEvent(SessionDisconnectEvent event) {
@@ -72,31 +78,52 @@ public class WebSocketEventListener {
         if (sessionAttributes == null) return;
 
         String userIdentifier = (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER);
-        String roomId = (String) sessionAttributes.get(WebSocketHeaders.ROOM_ID);
+        String wsSessionId = accessor.getSessionId();
 
-        if (userIdentifier == null || WebSocketHeaders.UNKNOWN_IDENTIFIER.equals(userIdentifier)) return;
+        if (userIdentifier == null
+                || WebSocketHeaders.UNKNOWN_IDENTIFIER.equals(userIdentifier)) return;
 
-        // Redis에서 사용자 온라인 상태 제거
-        redisTemplate.delete(RedisKeys.userStatusKey(userIdentifier));
-        webSocketMetric.decrement();
+        // 1. Redis에서 세션 매핑 정보 조회 (wsSessionId → lobbyCode)
+        String lobbyCode = null;
+        if (wsSessionId != null) {
+            Map<Object, Object> connectionInfo = redisTemplate.opsForHash()
+                    .entries(RedisKeys.wsConnectionKey(wsSessionId));
+            if (!connectionInfo.isEmpty()) {
+                lobbyCode = (String) connectionInfo.get("lobbyCode");
+            }
+        }
 
-        log.info("WebSocket 연결 해제 - 식별자: {}, 로비: {}", userIdentifier, roomId);
+        log.info("WebSocket 연결 해제 - 식별자: {}, 로비: {}", userIdentifier, lobbyCode);
 
-        if (roomId != null) {
-            // StompDestinations 상수로 경로 생성
+        // 2. Lua 스크립트 기반 원자적 퇴장 처리
+        if (lobbyCode != null) {
+            lobbyEventService.handlePlayerLeave(lobbyCode, userIdentifier);
+        }
+
+        // 3. LEAVE 메시지 브로드캐스트
+        if (lobbyCode != null) {
             redisPublisher.publish(
-                    StompDestinations.subscribeLobbyChat(roomId),
+                    StompDestinations.subscribeLobbyChat(lobbyCode),
                     ChatMessageDto.builder()
                             .type(ChatMessageDto.MessageType.LEAVE)
-                            .roomId(roomId)
+                            .roomId(lobbyCode)
                             .sender(userIdentifier)
                             .content(userIdentifier + "님이 퇴장하셨습니다.")
                             .build()
             );
-
-            // RedisKeys 상수로 키 생성
-            redisTemplate.opsForSet().remove(RedisKeys.userRoomKey(roomId), userIdentifier);
         }
+
+        // 4. Redis 키 정리
+        redisTemplate.delete(RedisKeys.userStatusKey(userIdentifier));
+        if (wsSessionId != null) {
+            redisTemplate.delete(RedisKeys.wsConnectionKey(wsSessionId));
+        }
+        if (lobbyCode != null) {
+            redisTemplate.opsForSet().remove(
+                    RedisKeys.userRoomKey(lobbyCode), userIdentifier);
+        }
+
+        webSocketMetric.decrement();
     }
 
     /**
@@ -113,13 +140,11 @@ public class WebSocketEventListener {
         String userIdentifier = (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER);
         String destination = accessor.getDestination();
 
-        // 로비 채팅 채널 구독 시에만 참여자 Set에 추가
         if (StompDestinations.isLobbySubscription(destination)
                 && userIdentifier != null
                 && !WebSocketHeaders.UNKNOWN_IDENTIFIER.equals(userIdentifier)) {
 
             String roomId = StompDestinations.extractLobbyCode(destination);
-
             redisTemplate.opsForSet().add(RedisKeys.userRoomKey(roomId), userIdentifier);
             log.info("로비 참여자 추가 - 로비: {}, 식별자: {}", roomId, userIdentifier);
         }
@@ -132,6 +157,8 @@ public class WebSocketEventListener {
     private String extractUserIdentifier(Map<String, Object> sessionAttributes) {
         if (sessionAttributes == null) return WebSocketHeaders.UNKNOWN_IDENTIFIER;
         Object identifier = sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER);
-        return identifier != null ? (String) identifier : WebSocketHeaders.UNKNOWN_IDENTIFIER;
+        return identifier != null
+                ? (String) identifier
+                : WebSocketHeaders.UNKNOWN_IDENTIFIER;
     }
 }

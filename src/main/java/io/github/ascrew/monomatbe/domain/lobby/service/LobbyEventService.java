@@ -1,17 +1,22 @@
 /*
  * 로비 이벤트 비즈니스 로직 및 실시간 상태 동기화(STOMP 브로드캐스트)를 담당하는 서비스.
  */
+
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
-import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 
 import java.security.Principal;
+import java.time.Duration;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -24,18 +29,19 @@ public class LobbyEventService {
 
   private final SimpMessagingTemplate messagingTemplate;
   private final LobbyRepository lobbyRepository;
+  private final StringRedisTemplate redisTemplate;
 
   /**
    * 전역 로비 리스트를 보고 있는 클라이언트들에게 새로고침 신호를 전송합니다.
    * 로비 생성 또는 삭제(폭파) 이벤트 발생 시 호출됩니다.
    */
   public void notifyLobbyListRefresh() {
-    messagingTemplate.convertAndSend(StompDestinations.SUBSCRIBE_LOBBY_LIST_REFRESH, "REFRESH_LOBBY_LIST");
+    messagingTemplate.convertAndSend(
+            StompDestinations.SUBSCRIBE_LOBBY_LIST_REFRESH, "REFRESH_LOBBY_LIST");
   }
 
   /**
    * 특정 로비 내부의 클라이언트들에게 새로고침 신호를 전송합니다.
-   * 로비 설정 변경, 인원 변동 등의 이벤트 발생 시 호출됩니다.
    *
    * [검증 순서]
    * 1. 로비 코드 형식 검증
@@ -52,7 +58,6 @@ public class LobbyEventService {
       return;
     }
 
-    // principal.getName()이 사용자 식별자임을 명확히 변수명으로 표현
     String userIdentifier = principal.getName();
 
     if (!lobbyRepository.existsByCode(code)) {
@@ -67,6 +72,15 @@ public class LobbyEventService {
             StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
   }
 
+  /**
+   * 유저 퇴장 시나리오를 분기 처리합니다.
+   * Lua 스크립트 실행 결과에 따라 브로드캐스트 범위를 결정합니다.
+   *
+   * [반환값에 따른 분기]
+   * - "DESTROYED"      : 로비 폭파 → 전역 로비 리스트 새로고침
+   * - "DELEGATED:{id}" : 방장 위임 → 해당 로비 내부 새로고침
+   * - "LEFT"           : 일반 퇴장 → 해당 로비 내부 새로고침
+   */
   public void handlePlayerLeave(String code, String userIdentifier) {
     if (!StringUtils.hasText(code) || !StringUtils.hasText(userIdentifier)) return;
 
@@ -91,12 +105,14 @@ public class LobbyEventService {
 
     } else if (result.startsWith("DELEGATED:")) {
       String newHostIdentifier = result.substring("DELEGATED:".length());
-      log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}", code, newHostIdentifier);
+      log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}",
+              code, newHostIdentifier);
       messagingTemplate.convertAndSend(
               StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
 
     } else if ("LEFT".equals(result)) {
-      log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 식별자: {}", code, userIdentifier);
+      log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 식별자: {}",
+              code, userIdentifier);
       messagingTemplate.convertAndSend(
               StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
 
@@ -104,5 +120,28 @@ public class LobbyEventService {
       log.warn("[handlePlayerLeave] 알 수 없는 Lua 반환값: {} - 로비: {}, 식별자: {}",
               result, code, userIdentifier);
     }
+  }
+
+  /**
+   * WebSocket 세션과 사용자/로비 정보를 Redis에 매핑하여 저장합니다.
+   * 유저가 로비에 입장하여 WebSocket 연결이 성공했을 때 호출합니다.
+   *
+   * [LobbyConnectionListener에서 이전된 이유]
+   * 세션 저장은 WebSocket 인프라 관심사가 아닌 로비 비즈니스 로직의 일부입니다.
+   * 서비스 레이어에서 관리하는 것이 레이어 책임 원칙에 부합합니다.
+   *
+   * @param wsSessionId    WebSocket 고유 세션 ID
+   * @param userIdentifier 사용자 식별자 (게스트 UUID or 회원 ID)
+   * @param lobbyCode      입장한 로비의 초대 코드
+   */
+  public void saveConnectionInfo(String wsSessionId, String userIdentifier, String lobbyCode) {
+    Map<String, String> data = Map.of(
+            "userId", userIdentifier,
+            "lobbyCode", lobbyCode
+    );
+
+    // TTL 설정으로 좀비 세션 데이터 방지
+    redisTemplate.opsForHash().putAll(RedisKeys.wsConnectionKey(wsSessionId), data);
+    redisTemplate.expire(RedisKeys.wsConnectionKey(wsSessionId), Duration.ofDays(1));
   }
 }

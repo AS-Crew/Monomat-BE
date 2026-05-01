@@ -1,9 +1,15 @@
 /*
  * 로비 이벤트 비즈니스 로직 및 실시간 상태 동기화(STOMP 브로드캐스트)를 담당하는 서비스.
+ *
+ * [LeaveLobbyResult sealed interface 도입 이유]
+ * 기존 String 반환값 방식은 서비스 레이어에서 "DELEGATED:" 같은
+ * Redis 내부 포맷 문자열을 직접 파싱해야 했습니다.
+ * sealed interface + switch 패턴 매칭으로 변경하여
+ * 컴파일러가 모든 케이스 처리를 검증하도록 개선합니다.
  */
-
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
+import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
@@ -74,51 +80,50 @@ public class LobbyEventService {
 
   /**
    * 유저 퇴장 시나리오를 분기 처리합니다.
-   * Lua 스크립트 실행 결과에 따라 브로드캐스트 범위를 결정합니다.
    *
-   * [반환값에 따른 분기]
-   * - "DESTROYED"      : 로비 폭파 → 전역 로비 리스트 새로고침
-   * - "DELEGATED:{id}" : 방장 위임 → 해당 로비 내부 새로고침
-   * - "LEFT"           : 일반 퇴장 → 해당 로비 내부 새로고침
+   * [기존 방식과의 차이]
+   * 기존: "DESTROYED".equals(result), result.startsWith("DELEGATED:") 등 문자열 비교
+   *       → 서비스가 Redis 반환 포맷을 직접 알아야 하며 오타 위험 존재
+   * 변경: switch 패턴 매칭으로 타입 안전하게 처리
+   *       → 새로운 LeaveLobbyResult 구현체 추가 시 컴파일 오류로 누락 방지
+   *
+   * [처리 분기]
+   * - Destroyed : 로비 폭파 → 전역 로비 리스트 새로고침
+   * - Delegated : 방장 위임 → 해당 로비 내부 새로고침
+   * - Left      : 일반 퇴장 → 해당 로비 내부 새로고침
+   * - Error     : 처리 실패 → 브로드캐스트 없이 에러 로그만 기록
    */
   public void handlePlayerLeave(String code, String userIdentifier) {
     if (!StringUtils.hasText(code) || !StringUtils.hasText(userIdentifier)) return;
 
-    String result;
-    try {
-      result = lobbyRepository.executeLeaveLobbyProcess(code, userIdentifier);
-    } catch (Exception e) {
-      log.error("[handlePlayerLeave] Lua 스크립트 실행 실패 - 로비: {}, 식별자: {}",
-              code, userIdentifier, e);
-      return;
-    }
+    LeaveLobbyResult result = lobbyRepository.executeLeaveLobbyProcess(code, userIdentifier);
 
-    if (result == null) {
-      log.warn("[handlePlayerLeave] Lua 스크립트 반환값 null - 로비: {}, 식별자: {}",
-              code, userIdentifier);
-      return;
-    }
-
-    if ("DESTROYED".equals(result)) {
-      log.info("[handlePlayerLeave] 로비 폭파 - 로비: {}", code);
-      notifyLobbyListRefresh();
-
-    } else if (result.startsWith("DELEGATED:")) {
-      String newHostIdentifier = result.substring("DELEGATED:".length());
-      log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}",
-              code, newHostIdentifier);
-      messagingTemplate.convertAndSend(
-              StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
-
-    } else if ("LEFT".equals(result)) {
-      log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 식별자: {}",
-              code, userIdentifier);
-      messagingTemplate.convertAndSend(
-              StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
-
-    } else {
-      log.warn("[handlePlayerLeave] 알 수 없는 Lua 반환값: {} - 로비: {}, 식별자: {}",
-              result, code, userIdentifier);
+    // sealed interface + switch 패턴 매칭
+    // 컴파일러가 모든 permits 구현체(Destroyed, Delegated, Left, Error)의
+    // 처리 여부를 검증합니다. 케이스 누락 시 컴파일 오류 발생.
+    switch (result) {
+      case LeaveLobbyResult.Destroyed d -> {
+        log.info("[handlePlayerLeave] 로비 폭파 - 로비: {}", d.lobbyCode());
+        notifyLobbyListRefresh();
+      }
+      case LeaveLobbyResult.Delegated d -> {
+        log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}",
+                d.lobbyCode(), d.newHostId());
+        messagingTemplate.convertAndSend(
+                StompDestinations.subscribeLobbyRefresh(d.lobbyCode()),
+                "REFRESH_LOBBY_INFO");
+      }
+      case LeaveLobbyResult.Left l -> {
+        log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 식별자: {}",
+                l.lobbyCode(), l.userId());
+        messagingTemplate.convertAndSend(
+                StompDestinations.subscribeLobbyRefresh(l.lobbyCode()),
+                "REFRESH_LOBBY_INFO");
+      }
+      case LeaveLobbyResult.Error e -> {
+        // Error는 정상 흐름이 아니므로 브로드캐스트 없이 로그만 남깁니다.
+        log.error("[handlePlayerLeave] 퇴장 처리 실패 - 사유: {}", e.reason());
+      }
     }
   }
 

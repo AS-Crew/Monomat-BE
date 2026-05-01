@@ -4,6 +4,7 @@
  */
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
+import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 
 import java.util.List;
@@ -18,9 +19,15 @@ public interface LobbyRepository {
 
   /**
    * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행합니다.
-   * 반환값: "DESTROYED" | "DELEGATED:{newHostId}" | "LEFT"
+   *
+   * [반환 타입 변경 이유]
+   * 기존 String 반환 방식은 서비스 레이어에서 문자열 파싱을 해야 했습니다.
+   * LeaveLobbyResult sealed interface로 변경하여 파싱 책임을 Repository로 캡슐화하고
+   * 서비스 레이어는 순수한 도메인 결과만 받도록 개선합니다.
+   *
+   * @return LeaveLobbyResult (Destroyed | Delegated | Left | Error)
    */
-  String executeLeaveLobbyProcess(String code, String userId);
+  LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId);
 
   /** Redis에서 공개 로비 목록을 필터링하여 반환합니다. */
   List<LobbyRedisDto> getPublicLobbies();

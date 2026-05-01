@@ -72,7 +72,16 @@ public final class RedisKeys {
     /** 로비 Hash의 초대 코드 필드 */
     public static final String FIELD_CODE = "code";
 
-    /** 로비 Hash의 방장 사용자 ID 필드 */
+    /**
+     * 로비 Hash의 방장 사용자 ID 필드.
+     *
+     * [Lua 스크립트 동기화 필요]
+     * leave_lobby.lua에서 이 필드명을 문자열 리터럴로 직접 사용합니다.
+     * Lua 스크립트는 Java 상수를 참조할 수 없는 구조이므로,
+     * 이 값을 변경할 경우 leave_lobby.lua의 'host_user_id'도 반드시 함께 수정해야 합니다.
+     *   - HGET lobbyKey, 'host_user_id'
+     *   - HSET lobbyKey, 'host_user_id', nextHost
+     */
     public static final String FIELD_HOST_USER_ID = "host_user_id";
 
     /** 로비 Hash의 로비 제목 필드 */

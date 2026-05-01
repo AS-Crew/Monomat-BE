@@ -154,6 +154,8 @@ leave_lobby.lua
 | `user_status:{userIdentifier}` | String | 사용자 온라인 상태 (`ONLINE`, TTL 2시간) |
 | `ws:connection:{wsSessionId}` | Hash | WebSocket 세션 → userId, lobbyCode 매핑 |
 
+> ⚠️ `host_user_id` 필드명은 `leave_lobby.lua`에 하드코딩되어 있습니다. 변경 시 Lua 스크립트도 함께 수정해야 합니다.
+
 ### Redis Hash 필드 상수 (`RedisKeys.FIELD_*`)
 
 로비 Hash(`lobby:{code}`) 내부 필드명은 `RedisKeys` 클래스의 `FIELD_*` 상수로 중앙 관리합니다.

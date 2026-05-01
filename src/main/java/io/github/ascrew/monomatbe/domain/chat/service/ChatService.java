@@ -13,7 +13,7 @@
  */
 package io.github.ascrew.monomatbe.domain.chat.service;
 
-import io.github.ascrew.monomatbe.domain.chat.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.WebSocketSessionUtils;

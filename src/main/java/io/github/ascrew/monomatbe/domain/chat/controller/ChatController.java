@@ -7,7 +7,7 @@
  */
 package io.github.ascrew.monomatbe.domain.chat.controller;
 
-import io.github.ascrew.monomatbe.domain.chat.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.domain.chat.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;

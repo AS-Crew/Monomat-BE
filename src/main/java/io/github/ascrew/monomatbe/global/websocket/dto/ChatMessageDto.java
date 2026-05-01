@@ -2,7 +2,7 @@
 WebSocket 채팅 메시지 전송에 사용되는 DTO
 Redis Pub/Sub을 통해 직렬화/역직렬화되므로 @NoArgsConstructor가 필수적이다.
  */
-package io.github.ascrew.monomatbe.domain.chat.dto;
+package io.github.ascrew.monomatbe.global.websocket.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

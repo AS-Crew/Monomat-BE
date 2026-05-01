@@ -9,7 +9,7 @@
  */
 package io.github.ascrew.monomatbe.global.redis;
 
-import io.github.ascrew.monomatbe.domain.chat.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.Message;

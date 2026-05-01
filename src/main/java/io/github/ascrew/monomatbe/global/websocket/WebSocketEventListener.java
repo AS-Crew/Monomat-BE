@@ -19,7 +19,7 @@
  */
 package io.github.ascrew.monomatbe.global.websocket;
 
-import io.github.ascrew.monomatbe.domain.chat.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;

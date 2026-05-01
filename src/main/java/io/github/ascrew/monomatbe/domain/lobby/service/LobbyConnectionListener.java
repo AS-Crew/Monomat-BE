@@ -13,6 +13,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 
 import java.time.Duration;
 import java.util.Map;
@@ -39,7 +40,7 @@ public class LobbyConnectionListener {
         if (wsSessionId == null) return;
 
         // Redis에서 세션에 매핑된 유저 식별자와 로비 코드를 조회
-        String key = "ws:connection:" + wsSessionId;
+        String key = RedisKeys.wsConnectionKey(wsSessionId);
         Map<Object, Object> connectionInfo = redisTemplate.opsForHash().entries(key);
 
         if (!connectionInfo.isEmpty()) {
@@ -66,7 +67,7 @@ public class LobbyConnectionListener {
      * @param lobbyCode   입장한 로비의 초대 코드
      */
     public void saveConnectionInfo(String wsSessionId, String userId, String lobbyCode) {
-        String key = "ws:connection:" + wsSessionId;
+        String key = RedisKeys.wsConnectionKey(wsSessionId);
         Map<String, String> data = Map.of(
                 "userId", userId,
                 "lobbyCode", lobbyCode

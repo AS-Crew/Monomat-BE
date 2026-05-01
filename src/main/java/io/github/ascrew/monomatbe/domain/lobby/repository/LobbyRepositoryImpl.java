@@ -10,8 +10,6 @@
  *   퇴장 처리 시 여러 Redis 키를 조작해야 하는데,
  *   Java 레벨에서 순차 처리하면 Race Condition이 발생할 수 있습니다.
  *   Lua 스크립트는 Redis 서버에서 원자적으로 실행되므로 이를 방지합니다.
- *
- * TODO: Commit #2에서 하드코딩된 Redis 키 문자열을 RedisKeys 상수로 교체 예정
  */
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
@@ -20,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,13 +34,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   @Override
   public boolean existsByCode(String code) {
-    return Boolean.TRUE.equals(redisTemplate.hasKey("lobby:" + code));
+    return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.lobbyKey(code)));
   }
 
   @Override
   public boolean isParticipant(String code, String userId) {
     return Boolean.TRUE.equals(
-            redisTemplate.opsForSet().isMember("lobby:" + code + ":participants", userId)
+            redisTemplate.opsForSet().isMember(RedisKeys.lobbyParticipantsKey(code), userId)
     );
   }
 
@@ -58,8 +57,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public String executeLeaveLobbyProcess(String code, String userId) {
     List<String> keys = List.of(
-            "lobby:" + code,
-            "lobby:" + code + ":participants",
+            RedisKeys.lobbyKey(code),
+            RedisKeys.lobbyParticipantsKey(code),
             "lobby:" + code + ":order",
             "lobby:public"
     );
@@ -75,7 +74,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    */
   @Override
   public List<LobbyRedisDto> getPublicLobbies() {
-    Set<String> publicLobbyCodes = redisTemplate.opsForSet().members("lobby:public");
+    Set<String> publicLobbyCodes = redisTemplate.opsForSet().members(RedisKeys.LOBBY_PUBLIC);
 
     if (publicLobbyCodes == null || publicLobbyCodes.isEmpty()) {
       return new ArrayList<>();
@@ -84,7 +83,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     List<LobbyRedisDto> result = new ArrayList<>();
 
     for (String code : publicLobbyCodes) {
-      Map<Object, Object> data = redisTemplate.opsForHash().entries("lobby:" + code);
+      Map<Object, Object> data = redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(code));
 
       if (!data.isEmpty()) {
         result.add(LobbyRedisDto.builder()

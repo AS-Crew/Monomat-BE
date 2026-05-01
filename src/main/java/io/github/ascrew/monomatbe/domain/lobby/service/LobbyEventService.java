@@ -1,7 +1,5 @@
 /*
  * 로비 이벤트 비즈니스 로직 및 실시간 상태 동기화(STOMP 브로드캐스트)를 담당하는 서비스.
- *
- * TODO: Commit #2에서 하드코딩된 STOMP 경로를 StompDestinations 상수로 교체 예정
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -11,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 
 import java.security.Principal;
 import java.util.regex.Pattern;
@@ -29,11 +28,9 @@ public class LobbyEventService {
   /**
    * 전역 로비 리스트를 보고 있는 클라이언트들에게 새로고침 신호를 전송합니다.
    * 로비 생성 또는 삭제(폭파) 이벤트 발생 시 호출됩니다.
-   *
-   * TODO: Commit #2에서 "/topic/lobby/refresh"를 StompDestinations 상수로 교체 예정
    */
   public void notifyLobbyListRefresh() {
-    messagingTemplate.convertAndSend("/topic/lobby/refresh", "REFRESH_LOBBY_LIST");
+    messagingTemplate.convertAndSend(StompDestinations.SUBSCRIBE_LOBBY_LIST_REFRESH, "REFRESH_LOBBY_LIST");
   }
 
   /**
@@ -63,7 +60,7 @@ public class LobbyEventService {
       return;
     }
 
-    messagingTemplate.convertAndSend("/topic/lobby/" + code + "/refresh", "REFRESH_LOBBY_INFO");
+    messagingTemplate.convertAndSend(StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
   }
 
   /**
@@ -98,11 +95,11 @@ public class LobbyEventService {
     } else if (result.startsWith("DELEGATED:")) {
       String newHost = result.substring("DELEGATED:".length());
       log.info("[handlePlayerLeave] 방장 위임 - 로비: {}, 새 방장: {}", code, newHost);
-      messagingTemplate.convertAndSend("/topic/lobby/" + code + "/refresh", "REFRESH_LOBBY_INFO");
+      messagingTemplate.convertAndSend(StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
 
     } else if ("LEFT".equals(result)) {
       log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 유저: {}", code, userId);
-      messagingTemplate.convertAndSend("/topic/lobby/" + code + "/refresh", "REFRESH_LOBBY_INFO");
+      messagingTemplate.convertAndSend(StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
 
     } else {
       log.warn("[handlePlayerLeave] 알 수 없는 Lua 반환값: {} - 로비: {}, 유저: {}", result, code, userId);

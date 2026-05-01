@@ -30,8 +30,6 @@ public class ChatController {
      * 전체 채팅 라우팅
      * 클라이언트 송신: /app/chat/global
      * 클라이언트 수신(구독): /topic/chat/global
-     *
-     * TODO: Commit #2에서 경로를 StompDestinations 상수로 교체 예정
      */
     @MessageMapping("/chat/global")
     public void broadcastGlobal(ChatMessageDto message, SimpMessageHeaderAccessor accessor) {
@@ -44,8 +42,6 @@ public class ChatController {
      * 로비 전용 채팅 라우팅
      * 클라이언트 송신: /app/chat/lobby/{code}
      * 클라이언트 수신(구독): /topic/lobby/{code}
-     *
-     * TODO: Commit #2에서 경로를 StompDestinations 상수로 교체 예정
      */
     @MessageMapping("/chat/lobby/{code}")
     public void broadcastLobby(

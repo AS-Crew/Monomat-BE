@@ -24,6 +24,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 import tools.jackson.databind.DefaultTyping;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 
 import java.util.concurrent.Executors;
 
@@ -99,8 +100,6 @@ public class RedisConfig {
      * [구독 채널 목록]
      * - ChannelTopic("/topic/chat/global") : 전체 채팅 채널 (정확한 채널명 일치)
      * - PatternTopic("/topic/lobby/*")     : 로비별 채팅 채널 (와일드카드 패턴 매칭)
-     * TODO: 채널 경로가 현재 하드코딩되어 있습니다.
-     *      Commit #2(상수 클래스 중앙화) 작업 시 StompDestinations 상수로 교체 예정
      */
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(
@@ -115,11 +114,11 @@ public class RedisConfig {
 
         // 전체 채팅 채널 구독 (정확한 채널명 매칭)
         container.addMessageListener(redisSubscriber,
-                new ChannelTopic("/topic/chat/global"));
+                new ChannelTopic(StompDestinations.SUBSCRIBE_GLOBAL_CHAT));
 
         // 로비 채팅 채널 구독 (패턴 매칭으로 모든 로비 채널을 단일 리스너로 처리)
         container.addMessageListener(redisSubscriber,
-                new PatternTopic("/topic/lobby/*"));
+                new PatternTopic(StompDestinations.SUBSCRIBE_LOBBY_PATTERN));
 
         return container;
     }

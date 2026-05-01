@@ -4,8 +4,6 @@
  * [책임]
  * - 로비 생성 및 로비 내부 정보 변경 이벤트를 수신하여 LobbyEventService에 위임
  * - 컨트롤러는 수신 경로 정의와 서비스 위임만 담당
- *
- * TODO: Commit #2에서 @MessageMapping 경로를 StompDestinations 상수로 교체 예정
  */
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 

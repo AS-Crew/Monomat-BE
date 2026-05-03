@@ -23,9 +23,12 @@ public class SecurityConfigDev {
                     .requestMatchers(
                             "/ws/**",
                             "/v3/api-docs",
+                            "/v3/api-docs/**",
                             "/swagger-ui/**",
                             "/swagger-ui.html",
-                            "/v3/api-docs/**"
+                            "/api/auth/guest", 
+                            "/api/auth/register", 
+                            "/api/auth/login"
                     ).permitAll()
                     .anyRequest().permitAll()
             ); // 모든 요청 허용 (개발 환경에서는 인증 없이 접근 허용)

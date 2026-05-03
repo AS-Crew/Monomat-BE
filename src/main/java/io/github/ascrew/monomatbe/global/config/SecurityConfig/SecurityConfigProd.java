@@ -8,7 +8,6 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 
-
 @Configuration
 @EnableWebSecurity
 @Profile("prod")
@@ -21,12 +20,16 @@ public class SecurityConfigProd {
             .formLogin(AbstractHttpConfigurer::disable) // 폼 로그인 비활성화
             .httpBasic(AbstractHttpConfigurer::disable) // HTTP Basic 인증 비활성화
             .authorizeHttpRequests(auth -> auth
+                    // 운영 환경이므로 Swagger 관련 URL은 접근 차단
                     .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").denyAll()
-                    // 향후 회원가입, 로그인 등 인증없이 들어와야 하는 URL이 생기면 추가
-                    // .requestMatchers("/api/auth/**").permitAll()
+                    
+                    // 인증 없이 접근해야 하는 웹소켓 및 Auth URL 허용
+                    .requestMatchers("/ws/**").permitAll()
+                    .requestMatchers("/api/auth/guest", "/api/auth/register", "/api/auth/login").permitAll()
+                    
+                    // 그 외 모든 요청에 대해 인증 필요 (운영 환경에서는 인증된 사용자만 접근 허용)
                     .anyRequest().authenticated()
-
-            ); // 모든 요청에 대해 인증 필요 (운영 환경에서는 인증된 사용자만 접근 허용)
+            ); 
 
         return http.build();
     }

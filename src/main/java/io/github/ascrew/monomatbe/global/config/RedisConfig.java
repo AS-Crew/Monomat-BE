@@ -21,6 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 import io.github.ascrew.monomatbe.global.redis.RedisSubscriber;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -144,6 +145,7 @@ public class RedisConfig {
      * 다수의 동시 메시지 처리 시 플랫폼 스레드 풀 고갈을 방지합니다.
      */
     @Bean
+    @Profile("!test")
     public RedisMessageListenerContainer redisMessageListenerContainer(
             RedisConnectionFactory connectionFactory,
             RedisSubscriber redisSubscriber

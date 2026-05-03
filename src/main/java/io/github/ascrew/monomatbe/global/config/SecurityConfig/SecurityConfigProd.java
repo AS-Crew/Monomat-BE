@@ -21,8 +21,8 @@ public class SecurityConfigProd {
             .formLogin(AbstractHttpConfigurer::disable) // 폼 로그인 비활성화
             .httpBasic(AbstractHttpConfigurer::disable) // HTTP Basic 인증 비활성화
             .authorizeHttpRequests(auth -> auth
-                    // 향후 회원가입, 로그인 등 인증없이 들어와야 하는 URL이 생기면 추가
-                    // .requestMatchers("/api/auth/**").permitAll()
+                    .requestMatchers("/ws/**").permitAll()
+                    .requestMatchers("/api/auth/guest", "/api/auth/register", "/api/auth/login").permitAll()
                     .anyRequest().authenticated()
 
             ); // 모든 요청에 대해 인증 필요 (운영 환경에서는 인증된 사용자만 접근 허용)

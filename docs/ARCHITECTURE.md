@@ -7,6 +7,25 @@ src/main/java/io/github/ascrew/monomatbe/
 ├── MonomatBeApplication.java
 │
 ├── domain/                                         # 비즈니스 도메인 레이어
+│   ├── auth/                                       # 인증 도메인
+│   │   ├── controller/
+│   │   │   └── AuthController.java                 # REST 인증 엔드포인트 (/api/auth/**)
+│   │   ├── dto/
+│   │   │   ├── GuestLoginRequest.java              # 게스트 로그인 요청 DTO
+│   │   │   └── GuestLoginResponse.java             # 게스트 로그인 응답 DTO (JWT 포함)
+│   │   ├── entity/
+│   │   │   ├── User.java                           # 사용자 엔티티 (게스트/회원 통합)
+│   │   │   ├── GuestSession.java                   # 게스트 세션 엔티티
+│   │   │   ├── UserCredential.java                 # 회원 인증정보 엔티티 (후속 이슈 대비)
+│   │   │   └── UserSession.java                    # 회원 세션 엔티티 (후속 이슈 대비)
+│   │   ├── repository/
+│   │   │   ├── UserRepository.java
+│   │   │   ├── GuestSessionRepository.java
+│   │   │   ├── UserCredentialRepository.java
+│   │   │   └── UserSessionRepository.java
+│   │   └── service/
+│   │       └── GuestAuthService.java               # 게스트 로그인/세션 발급 로직
+│   │
 │   ├── chat/                                       # 채팅 도메인
 │   │   ├── controller/
 │   │   │   └── ChatController.java                 # STOMP 채팅 메시지 수신 및 라우팅
@@ -45,7 +64,7 @@ src/main/java/io/github/ascrew/monomatbe/
     │   ├── RedisPublisher.java                     # Redis 채널 메시지 발행
     │   └── RedisSubscriber.java                    # Redis 채널 메시지 수신 → WebSocket 브로드캐스트
     │
-    └── websocket/                                  # WebSocket 인프라
+    ├── websocket/                                  # WebSocket 인프라
         ├── CustomStompErrorHandler.java            # STOMP ERROR 프레임 핸들러
         ├── StompChannelInterceptor.java            # CONNECT/SUBSCRIBE/SEND 인증 검증
         ├── WebSocketEventListener.java             # WebSocket 연결 생명주기 이벤트 처리
@@ -55,6 +74,10 @@ src/main/java/io/github/ascrew/monomatbe/
         │   └── ChatMessageDto.java                 # WebSocket 채팅 메시지 DTO
         └── event/
             └── PlayerLeaveEvent.java               # 플레이어 퇴장 Spring 이벤트 객체
+    └── security/
+        └── jwt/
+            ├── JwtTokenProvider.java               # JWT Access/Refresh 토큰 발급
+            └── TokenWithExpiry.java                # 토큰 + 만료시각 DTO
 ```
 
 ---

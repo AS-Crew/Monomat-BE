@@ -49,6 +49,12 @@ public final class RedisKeys {
     /** WebSocket 세션 매핑 Hash 키 접두사 */
     private static final String WS_CONNECTION_PREFIX = "ws:connection:";
 
+    /** 게스트 세션 저장 키 접두사 */
+    private static final String GUEST_SESSION_PREFIX = "auth:guest:session:";
+
+    /** Refresh Token 저장 키 접두사 */
+    private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
+
     // [삭제] USER_ROOM_PREFIX 및 userRoomKey() 제거
     // lobby:{code}:participants가 단일 진실의 원천으로 통일되었으므로
     // user_room:{lobbyCode} 관련 상수는 더 이상 필요하지 않습니다.
@@ -168,5 +174,25 @@ public final class RedisKeys {
      */
     public static String wsConnectionKey(String wsSessionId) {
         return WS_CONNECTION_PREFIX + wsSessionId;
+    }
+
+    /**
+     * 게스트 세션 정보를 저장하는 Redis Hash 키를 반환합니다.
+     *
+     * @param guestToken 게스트 UUID 토큰
+     * @return "auth:guest:session:{guestToken}"
+     */
+    public static String guestSessionKey(String guestToken) {
+        return GUEST_SESSION_PREFIX + guestToken;
+    }
+
+    /**
+     * Refresh Token 저장 키를 반환합니다.
+     *
+     * @param sessionId 세션 식별자(UUID)
+     * @return "auth:refresh:{sessionId}"
+     */
+    public static String refreshTokenKey(String sessionId) {
+        return REFRESH_TOKEN_PREFIX + sessionId;
     }
 }

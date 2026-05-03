@@ -11,6 +11,45 @@
 
 ## REST API
 
+### 인증 (Auth)
+
+#### 게스트 로그인
+
+```
+POST /api/auth/guest
+```
+
+닉네임 입력만으로 게스트 계정을 생성하고 `UUID(userIdentifier)` 기반 세션을 발급합니다.
+응답으로 Access/Refresh 토큰이 함께 반환되며, 게스트 세션 정보는 Redis에 30일 TTL로 저장됩니다.
+
+**Request**
+
+```json
+{
+  "nickname": "게스트닉네임"
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "userId": 1,
+  "nickname": "게스트닉네임",
+  "userType": "GUEST",
+  "userIdentifier": "f8f6aa1b-3dd8-4b20-8ec8-9f7c7e0dd0fc",
+  "accessToken": "eyJhbGciOi...",
+  "accessTokenExpiresAt": "2026-05-03T07:45:00Z",
+  "refreshToken": "eyJhbGciOi...",
+  "refreshTokenExpiresAt": "2026-06-02T07:30:00Z"
+}
+```
+
+**Error `409 CONFLICT`**
+
+- 정식 회원 닉네임과 충돌: `정식 회원이 이미 사용 중인 닉네임입니다.`
+- 기존 사용자 닉네임과 충돌: `이미 사용 중인 닉네임입니다.`
+
 ### 로비 (Lobby)
 
 #### 공개 로비 목록 조회
@@ -218,7 +257,6 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 |---|---|
 | 회원가입 | `POST /api/auth/register` |
 | 로그인 | `POST /api/auth/login` |
-| 게스트 로그인 | `POST /api/auth/guest` |
 | 로비 생성 | `POST /api/lobbies` |
 | 로비 초대 코드 입장 | `POST /api/lobbies/join` |
 | 맵 CRUD | `GET/POST/PUT/DELETE /api/maps` |

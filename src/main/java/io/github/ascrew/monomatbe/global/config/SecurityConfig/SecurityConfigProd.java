@@ -21,6 +21,7 @@ public class SecurityConfigProd {
             .formLogin(AbstractHttpConfigurer::disable) // 폼 로그인 비활성화
             .httpBasic(AbstractHttpConfigurer::disable) // HTTP Basic 인증 비활성화
             .authorizeHttpRequests(auth -> auth
+                    .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").denyAll()
                     // 향후 회원가입, 로그인 등 인증없이 들어와야 하는 URL이 생기면 추가
                     // .requestMatchers("/api/auth/**").permitAll()
                     .anyRequest().authenticated()

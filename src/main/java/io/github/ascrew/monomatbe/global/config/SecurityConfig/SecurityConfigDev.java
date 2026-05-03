@@ -20,9 +20,14 @@ public class SecurityConfigDev {
             .formLogin(AbstractHttpConfigurer::disable) // 폼 로그인 비활성화
             .httpBasic(AbstractHttpConfigurer::disable) // HTTP Basic 인증 비활성화
             .authorizeHttpRequests(auth -> auth
-                    .requestMatchers("/ws/**").permitAll()
-                    .anyRequest()
-                    .permitAll()
+                    .requestMatchers(
+                            "/ws/**",
+                            "/v3/api-docs",
+                            "/swagger-ui/**",
+                            "/swagger-ui.html",
+                            "/v3/api-docs/**"
+                    ).permitAll()
+                    .anyRequest().permitAll()
             ); // 모든 요청 허용 (개발 환경에서는 인증 없이 접근 허용)
 
         return http.build();

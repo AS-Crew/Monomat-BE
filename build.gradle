@@ -56,6 +56,9 @@ dependencies {
     // 6. Monitoring (Actuator & Prometheus)
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+    // 7. OpenAPI 및 Swagger UI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
 }
 
 tasks.named('test') {

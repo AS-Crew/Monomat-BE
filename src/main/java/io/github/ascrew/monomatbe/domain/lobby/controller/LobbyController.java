@@ -9,6 +9,8 @@ package io.github.ascrew.monomatbe.domain.lobby.controller;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @Slf4j
+@Tag(name = "Lobby", description = "로비 관련 REST API")
 @RestController
 @RequestMapping("/api/lobbies")
 @RequiredArgsConstructor
@@ -32,6 +35,7 @@ public class LobbyController {
      *
      * @return 현재 활성화된 공개 로비 목록
      */
+    @Operation(summary = "공개 로비 목록 조회", description = "Redis에서 공개 상태인 로비만 필터링하여 반환합니다.")
     @GetMapping
     public ResponseEntity<List<LobbyRedisDto>> getPublicLobbies() {
         log.info("요청 수신: 공개 로비 목록 조회 [GET /api/lobbies]");

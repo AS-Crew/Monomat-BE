@@ -55,6 +55,9 @@ public final class RedisKeys {
     /** Refresh Token 저장 키 접두사 */
     private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
 
+    // 초대 코드 SETNX 락 키 접두사
+    private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
+
     // [삭제] USER_ROOM_PREFIX 및 userRoomKey() 제거
     // lobby:{code}:participants가 단일 진실의 원천으로 통일되었으므로
     // user_room:{lobbyCode} 관련 상수는 더 이상 필요하지 않습니다.
@@ -194,5 +197,18 @@ public final class RedisKeys {
      */
     public static String refreshTokenKey(String sessionId) {
         return REFRESH_TOKEN_PREFIX + sessionId;
+    }
+
+    // 초대 코드 SETNX 락 키 팩토리 메서드
+    /**
+     * 초대 코드 중복 방지 SETNX 락 키를 반환한다.
+     *
+     * [SETNX 전략]
+     * Redis SET NX 명령으로 원자적으로 코드를 선점한다.
+     * 선점 성공 시 해당 코드를 사용하고, 실패 시 재생성한다.
+     * TTL은 LobbyDefaults.INVITE_CODE_LOCK_TTL을 따르며 생성 실패 시 자동 해제되어 코드 공간을 반환한다.
+     */
+    public static String lobbyCodeLockKey(String inviteCode) {
+        return LOBBY_CODE_LOCK_PREFIX + inviteCode;
     }
 }

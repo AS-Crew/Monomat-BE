@@ -5,6 +5,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 
 import java.util.List;
@@ -16,6 +17,15 @@ public interface LobbyRepository {
 
   /** 해당 유저가 해당 로비의 참여자인지 확인합니다. */
   boolean isParticipant(String code, String userId);
+
+  /**
+   * Redis에 로비 데이터를 저장하고 초대 코드를 반환한다.
+   *
+   * [SETNX 기반 초대 코드 중복 방지]
+   * 코드 생성 → SETNX 선점 → 실패 시 재시도 로직을 포함한다.
+   * 최대 재시도 횟수 초과 시 예외를 던진다.
+   */
+  String saveToRedis(CreateLobbyRequest request, String userIdentifier);
 
   /**
    * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행합니다.

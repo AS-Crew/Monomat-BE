@@ -1,35 +1,43 @@
 package io.github.ascrew.monomatbe.global.config.SecurityConfig;
 
+import io.github.ascrew.monomatbe.global.security.SecurityEndpoints;
+import io.github.ascrew.monomatbe.global.security.jwt.JwtAuthenticationFilter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
 @Profile("prod")
+@RequiredArgsConstructor
 public class SecurityConfigProd {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable)      // CSRF 보호 비활성화
-            .formLogin(AbstractHttpConfigurer::disable) // 폼 로그인 비활성화
-            .httpBasic(AbstractHttpConfigurer::disable) // HTTP Basic 인증 비활성화
-            .authorizeHttpRequests(auth -> auth
-                    // 운영 환경이므로 Swagger 관련 URL은 접근 차단
-                    .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html").denyAll()
-                    
-                    // 인증 없이 접근해야 하는 웹소켓 및 Auth URL 허용
-                    .requestMatchers("/ws/**").permitAll()
-                    .requestMatchers("/api/auth/guest", "/api/auth/register", "/api/auth/login").permitAll()
-                    
-                    // 그 외 모든 요청에 대해 인증 필요 (운영 환경에서는 인증된 사용자만 접근 허용)
-                    .anyRequest().authenticated()
-            ); 
+                .csrf(AbstractHttpConfigurer::disable)
+                .formLogin(AbstractHttpConfigurer::disable)
+                .httpBasic(AbstractHttpConfigurer::disable)
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        // Swagger는 prod 환경에서 전면 차단
+                        .requestMatchers(SecurityEndpoints.swaggerEndpoints()).denyAll()
+                        // 인증 불필요 공통 경로
+                        .requestMatchers(SecurityEndpoints.publicEndpoints()).permitAll()
+                        .anyRequest().authenticated()
+                )
+                .addFilterBefore(jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

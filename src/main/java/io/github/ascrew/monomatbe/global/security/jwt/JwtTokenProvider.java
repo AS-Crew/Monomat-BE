@@ -14,6 +14,9 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.Map;
 
+/**
+ * JWT Access/Refresh 토큰 발급 컴포넌트
+ */
 @Component
 public class JwtTokenProvider {
 
@@ -44,6 +47,10 @@ public class JwtTokenProvider {
     /**
      * API 인증에 사용하는 단기 Access Token을 발급합니다.
      * userIdentifier(게스트/회원 공통 UUID)를 claim으로 포함합니다.
+     * [클레임 구성]
+     * - subject        : userId (DB PK)
+     * - userIdentifier : UUID (Redis/WebSocket 식별자)
+     * - userType       : GUEST | REGISTERED
      */
     public TokenWithExpiry createAccessToken(Long userId, UserType userType, String userIdentifier) {
         Instant now = Instant.now();
@@ -51,9 +58,10 @@ public class JwtTokenProvider {
 
         String token = Jwts.builder()
                 .subject(String.valueOf(userId))
+                // JwtClaims 상수로 클레임 키 참조 (JwtAuthenticationFilter와 동일한 키)
                 .claims(Map.of(
-                        "userType", userType.name(),
-                        "userIdentifier", userIdentifier
+                        JwtClaims.USER_TYPE, userType.name(),
+                        JwtClaims.USER_IDENTIFIER, userIdentifier
                 ))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiresAt))
@@ -66,6 +74,11 @@ public class JwtTokenProvider {
     /**
      * 세션 갱신에 사용하는 장기 Refresh Token을 발급합니다.
      * sessionId는 Redis refresh key와 동일 식별자를 사용합니다.
+     *
+     * [클레임 구성]
+     * - subject   : userId (DB PK)
+     * - userType  : GUEST | REGISTERED
+     * - sessionId : UUID (Redis refresh key와 동일 식별자)
      */
     public TokenWithExpiry createRefreshToken(Long userId, UserType userType, String sessionId) {
         Instant now = Instant.now();
@@ -73,9 +86,10 @@ public class JwtTokenProvider {
 
         String token = Jwts.builder()
                 .subject(String.valueOf(userId))
+                // JwtClaims 상수로 클레임 키 참조
                 .claims(Map.of(
-                        "userType", userType.name(),
-                        "sessionId", sessionId
+                        JwtClaims.USER_TYPE, userType.name(),
+                        JwtClaims.SESSION_ID, sessionId
                 ))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiresAt))

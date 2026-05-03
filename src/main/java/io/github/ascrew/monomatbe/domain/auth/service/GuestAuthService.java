@@ -11,6 +11,7 @@ import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenWithExpiry;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
@@ -34,6 +35,7 @@ import java.util.UUID;
  * - JWT Access/Refresh 발급
  * - DB + Redis 세션 상태를 함께 저장
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class GuestAuthService {
@@ -98,7 +100,11 @@ public class GuestAuthService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                storeGuestSessionToRedis(savedUser, userIdentifier, refreshToken.token());
+                try {
+                    storeGuestSessionToRedis(savedUser, userIdentifier, refreshToken.token());
+                } catch (Exception e) {
+                    log.error("Redis 게스트 세션 저장 실패 - userId: {}", savedUser.getId(), e);
+                }
             }
         });
 

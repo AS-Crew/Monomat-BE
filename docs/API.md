@@ -52,6 +52,72 @@ POST /api/auth/guest
 
 ### 로비 (Lobby)
 
+### 로비 생성
+
+```
+POST /api/lobbies
+```
+
+로비를 생성하고 6자리 초대 코드를 발급합니다.
+JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 생성 가능합니다.
+
+**Request Header**
+
+| 헤더 | 필수 | 설명 |
+|---|---|---|
+| `Authorization` | ✅ | `Bearer {accessToken}` |
+
+**Request Body**
+
+```json
+{
+  "title": "K-POP 퀴즈방",
+  "maxPlayers": 8,
+  "isPrivate": false,
+  "roundCount": 5,
+  "timeLimitSeconds": 30
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `title` | String | ✅ | 로비 제목 (최대 255자) |
+| `maxPlayers` | Integer | ✅ | 최대 참여 인원 (2~8) |
+| `isPrivate` | Boolean | ✅ | 비공개 여부 |
+| `roundCount` | Integer | ❌ | 라운드 수 (1~20, 기본값 5) |
+| `timeLimitSeconds` | Integer | ❌ | 제한 시간 초 (10~120, 기본값 30) |
+
+**Response `201 Created`**
+
+```json
+{
+  "lobbyId": 1,
+  "inviteCode": "ABC123",
+  "title": "K-POP 퀴즈방",
+  "maxPlayers": 8,
+  "isPrivate": false,
+  "status": "WAITING"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `lobbyId` | Long | DB GAME_LOBBY.id (신고 참조용) |
+| `inviteCode` | String | 6자리 초대 코드 (딥링크: `/lobby/{inviteCode}`) |
+| `title` | String | 로비 제목 |
+| `maxPlayers` | Integer | 최대 참여 인원 |
+| `isPrivate` | Boolean | 비공개 여부 |
+| `status` | String | 로비 상태 (`WAITING`) |
+
+**Error**
+
+| 상태 코드 | 설명 |
+|---|---|
+| `401 Unauthorized` | JWT 토큰 없음 또는 만료 |
+| `503 Service Unavailable` | 초대 코드 생성 실패 (재시도 초과) |
+
+---
+
 #### 공개 로비 목록 조회
 
 ```
@@ -257,7 +323,6 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 |---|---|
 | 회원가입 | `POST /api/auth/register` |
 | 로그인 | `POST /api/auth/login` |
-| 로비 생성 | `POST /api/lobbies` |
 | 로비 초대 코드 입장 | `POST /api/lobbies/join` |
 | 맵 CRUD | `GET/POST/PUT/DELETE /api/maps` |
 | 맵 아이템(문제) CRUD | `GET/POST/PUT/DELETE /api/maps/{mapId}/items` |

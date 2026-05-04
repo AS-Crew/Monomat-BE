@@ -29,7 +29,8 @@ import java.util.List;
  * 1. Authorization 헤더에서 Bearer 토큰 추출
  * 2. JWT 파싱 및 서명 검증
  * 3. userId, userIdentifier, userType 클레임 추출 (JwtClaims 상수 사용)
- * 4. CustomPrincipal 생성 후 SecurityContext 저장
+ * 4. 클레임 null 검증 — 하나라도 누락 시 인증 실패 처리
+ * 5. CustomPrincipal 생성 후 SecurityContext 저장
  *
  * [토큰 없는 요청 처리]
  * permitAll 경로는 토큰 없이 통과시킨다.
@@ -39,30 +40,22 @@ import java.util.List;
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    // JWT가 포함된 HTTP 헤더의 이름과 토큰의 접두사 상수 정의
+    // Authorization 헤더에 들어가는 토큰의 접두사 (공백 포함)
     private static final String BEARER_PREFIX = "Bearer ";
+    // 헤더 키 값
     private static final String HEADER_AUTHORIZATION = "Authorization";
 
-    // JWT 서명 검증을 위한 암호화 키
+    // JWT 서명 검증에 사용할 암호화 키
     private final SecretKey secretKey;
 
     /**
      * 필터 생성자
-     * application.yml 등의 설정 파일에서 JWT 시크릿 키를 주입받아 SecretKey 객체로 초기화한다.
-     *
-     * @param secret 설정 파일에 정의된 auth.jwt.secret 값
-     */
+     * application.yml (또는 properties) 파일에서 'auth.jwt.secret' 값을 주입받아 SecretKey 객체로 초기화한다.     */
     public JwtAuthenticationFilter(@Value("${auth.jwt.secret}") String secret) {
-        // 주입받은 문자열 형태의 시크릿 키를 UTF-8 바이트 배열로 반환
         byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
-        // JJWT 라이브러리를 사용하여 HMAC SHA 알고리즘에 적합한 암호화 키 객체 (SecretKey) 생성
         this.secretKey = Keys.hmacShaKeyFor(keyBytes);
     }
 
-    /**
-     * 실제 필터링 로직이 수행되는 메서드
-     * HTTP 요청이 들어올 때마다 토큰의 유효성을 검사하고, 유효한 경우 인증 정보를 설정한다.
-     */
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -70,72 +63,103 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        // 1. 요청 헤더에서 JWT 토큰 문자열만 추출
+        // 1. 요청 헤더에서 JWT 토큰 문자열을 추출
         String token = extractToken(request);
 
-        // 토큰이 존재하는 경우에만 검증 로직 수행 (토큰이 없다면 바로 다음 필터로 이동)
+        // 2. 토큰이 존재할 경우에만 검증 로직 수행
+        // 토큰이 없으면 그냥 다음 필터로 넘어감 -> permitAll이면 통과, 아니면 인가 예외 발생
         if (token != null) {
             try {
-                // 2. 토큰 파싱 및 서명 (Signature) 검증
+                // 3. JWT 문자열을 파싱하고 서명을 검증하여 Payload (클레임)를 가져옴
                 Claims claims = Jwts.parser()
-                        .verifyWith(secretKey) // 서버가 가진 시크릿 키로 서명이 변조되지 않았는지 검증
+                        .verifyWith(secretKey) // 서버가 가진 secretKey로 서명 (Signature) 위변조 확인
                         .build()
-                        .parseSignedClaims(token) // 토큰을 파싱하여 클레임 (데이터) 객체 반환 (만료된 경우 여기서 예외 발생)
-                        .getPayload(); // 검증에 성공하면 토큰의 Payload (클레임 내용)를 가져옴
+                        .parseSignedClaims(token) // 토큰 유휴성 (만료 시간 등) 검사 및 파싱
+                        .getPayload(); // 파싱된 데이터 (Claims) 추출
 
-                // 3. Payload에서 비즈니스 로직에 필요한 사용자 정보 추출
-                // JWT의 Subject에는 주로 사용자의 식별자 (PK)를 저장하므로 Long 타입으로 변환하여 가져옴
+                // 4. 클레임 추출 후 필수 데이터 null 검증
+                // subject, userIdentifier, userType 중 하나라도 누락되면
+                // 위변조 또는 잘못된 토큰으로 간주하여 인증 실패 처리
+                if (!isValidClaims(claims)) {
+                    log.warn("JWT 클레임 누락 또는 유효하지 않음 - 인증 거부");
+                    SecurityContextHolder.clearContext(); // 비정상 토큰이므로 현재 스레드의 시큐리티 컨텍스트 초기화
+                    filterChain.doFilter(request, response); // 다음 필터로 넘김 (인증되지 않은 상태로 진행됨)
+                    return;
+                }
+
+                // 5. 토큰 클레임에서 사용자 정보 추출
                 Long userId = Long.valueOf(claims.getSubject());
-
-                // JwtClaims 상수로 클레임 키 참조 (JwtTokenProvider 발급 시와 동일한 키)
-                // JwtClaims 상수로 정의된 키를 사용하여 커스텀 클레임 추출 (토큰 발급 시 넣었던 데이터)
                 String userIdentifier = claims.get(JwtClaims.USER_IDENTIFIER, String.class);
-                UserType userType = UserType.valueOf(claims.get(JwtClaims.USER_TYPE, String.class));
+                UserType userType = UserType.valueOf(
+                        claims.get(JwtClaims.USER_TYPE, String.class));
 
-                // 4. 추출한 정보는 Spring Security 환경에서 사용할 인증 주체 (Principal) 객체 생성
+                // 6. 인증된 사용자를 표현하는 커스텀 Principal 객체 생성
                 CustomPrincipal principal = new CustomPrincipal(userId, userIdentifier, userType);
 
-                // 5. Spring Security의 인증 토큰 객체 생성
-                // Principal : 사용자 정보, Credentials : 비밀번호 (이미 인증되었으므로 null), Authorities : 권한 목록)
+                // 7. 스프링 시큐리티의 Authentication 객체 (UsernamePasswordAuthenticationToken) 생성
+                // 비밀번호 (Credentials)는 이미 JWT로 인증이 끝났으므로 null 처리
+                // 사용자의 권한 (Role) 목록을 SimpleGrantedAuthority로 감싸서 전달
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(
                                 principal,
                                 null,
-                                // Spring Security의 Role 기반 인가를 위해 "ROLE_" 접두사를 붙여 권한 부여
                                 List.of(new SimpleGrantedAuthority(
                                         JwtClaims.ROLE_PREFIX + userType.name()))
                         );
 
-                // 6. SecurityContext (보안 컨텍스트)에 생성한 인증 정보 객체 저장
+                // 8. 최종적으로 SecurityContext에 인증 객체를 저장하여 전역에서 사용 가능하게 함
                 SecurityContextHolder.getContext().setAuthentication(authentication);
 
             } catch (JwtException e) {
-                // 토큰 만료, 서명 불일치, 형식 오류 등의 JWT 예외 발생 시 처리
+                // 토큰 만료, 서명 불일치, 형식 오류
                 log.warn("JWT 검증 실패: {}", e.getMessage());
-                // 잘못된 토큰으로 인한 보안 위협을 막기 위해 Context를 완전히 초기화 (비움)
+                SecurityContextHolder.clearContext(); // 안전을 위해 컨텍스트 초기화
+
+                // JwtException 외 예외도 인증 실패로 동일 처리
+                // Long.valueOf(null)   → NumberFormatException (IllegalArgumentException 하위)
+                // UserType.valueOf(null) → IllegalArgumentException
+                // claims.get() null 참조 → NullPointerException
+            } catch (IllegalArgumentException | NullPointerException e) {
+                log.warn("JWT 클레임 파싱 실패 - 인증 거부: {}", e.getMessage());
                 SecurityContextHolder.clearContext();
             }
         }
 
-        // 7. 현재 필터의 작업이 끝났으므로 다음 필터 (혹은 서블릿)로 요청 전달
-        // 토큰이 없거나, 검증에 실패했더라도 permitAll로 설정된 엔드포인트일 수 있으므로 일단 다음으로 넘김
         filterChain.doFilter(request, response);
     }
 
     /**
-     * HTTP Request의 Authorization 헤더에서 Bearer 토큰 문자열만 잘라내어 추출하는 헬퍼 메서드
+     * 인증에 필요한 클레임이 모두 존재하고 유효한지 검증한다.
+     *
+     * [검증 항목]
+     * - subject        : userId (null 또는 빈 문자열이면 유효하지 않음)
+     * - userIdentifier : UUID 식별자 (null이면 유효하지 않음)
+     * - userType       : 사용자 유형 (null이면 유효하지 않음)
+     *
+     * @param claims JWT 파싱 후 추출된 클레임
+     * @return 모든 필수 클레임이 존재하면 true, 하나라도 누락이면 false
+     */
+    private boolean isValidClaims(Claims claims) {
+        String subject = claims.getSubject();
+        String userIdentifier = claims.get(JwtClaims.USER_IDENTIFIER, String.class);
+        String userType = claims.get(JwtClaims.USER_TYPE, String.class);
+
+        return subject != null && !subject.isBlank()
+                && userIdentifier != null
+                && userType != null;
+    }
+
+    /**
      * Authorization 헤더에서 Bearer 토큰을 추출한다.
      * 헤더가 없거나 형식이 맞지 않으면 null을 반환한다.
      */
     private String extractToken(HttpServletRequest request) {
-        // "Authorization" 헤더의 값을 가져옴
         String header = request.getHeader(HEADER_AUTHORIZATION);
-
-        // 헤더 값이 존재하고, "Bearer "로 시작하는지 확인 (대소문자/띄어쓰기 주의)
+        // 헤더에 값이 있고, "Bearer "로 시작하는지 확인
         if (header != null && header.startsWith(BEARER_PREFIX)) {
-            // "Bearer " 이후의 실제 토큰 값만 잘라서 반환
+            // "Bearer " 이후의 문자열 (실제 토큰)만 잘라서 반환
             return header.substring(BEARER_PREFIX.length());
         }
-        return null; // 조건에 맞지 않으면 토큰이 없는 것으로 간주
+        return null;
     }
 }

@@ -1,10 +1,5 @@
 /*
  * 로비 조회 관련 비즈니스 로직을 담당하는 서비스.
- *
- * [LobbyController에서 Repository 직접 참조를 제거한 이유]
- * 컨트롤러가 Repository를 직접 참조하면 레이어 경계가 무너집니다.
- * 서비스 레이어를 경유함으로써 향후 캐싱, 트랜잭션, 추가 비즈니스 로직을
- * 적용할 수 있는 확장 지점을 확보합니다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -31,10 +26,29 @@ import java.util.List;
 @RequiredArgsConstructor
 public class LobbyService {
 
-    private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
+    // =========================================================
+    // 에러 메시지 상수
+    // =========================================================
 
-    // DB Insert 실패 시 클라이언트에 반환할 에러 메시지
-    private static final String ERROR_CREATE_LOBBY_FAILED = "로비 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+    private static final String ERROR_INVALID_PRINCIPAL =
+            "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
+    private static final String ERROR_USER_NOT_FOUND =
+            "사용자를 찾을 수 없습니다.";
+    private static final String ERROR_CREATE_LOBBY_FAILED =
+            "로비 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+
+    // =========================================================
+    // 로그 메시지 상수
+    // =========================================================
+
+    private static final String LOG_INVALID_PRINCIPAL =
+            "로비 생성 요청 거부 - principal 또는 userId가 null. userIdentifier: {}";
+    private static final String LOG_DB_SAVE_FAILED =
+            "DB 로비 저장 실패 - Redis 보상 삭제 시작. 코드: {}";
+    private static final String LOG_COMPENSATION_SUCCESS =
+            "Redis 보상 삭제 완료 - 코드: {}";
+    private static final String LOG_COMPENSATION_FAILED =
+            "Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요. [모니터링 필요]";
 
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
@@ -44,15 +58,11 @@ public class LobbyService {
      * 로비를 생성한다.
      *
      * [처리 순서]
-     * 1. JWT에서 추출한 userId로 User 엔티티 조회
-     * 2. SETNX로 초대 코드 선점 및 Redis에 로비 데이터 저장
-     * 3. DB에 GAME_LOBBY 스냅샷 Insert
-     *
-     * [트랜잭션 설계]
-     * Redis 저장을 DB Insert보다 먼저 수행합니다.
-     * Redis 저장 실패 시 DB Insert가 실행되지 않아 고아 데이터가 발생하지 않습니다.
-     * DB Insert 실패 시 Redis 데이터는 남을 수 있으나,
-     * 로비 폭파(leave_lobby.lua) 시 Redis 키가 정리되므로 허용 가능한 수준입니다.
+     * 1. principal null 및 userId null 검증 → 401 반환
+     * 2. JWT에서 추출한 userId로 User 엔티티 조회
+     * 3. Lua 스크립트로 초대 코드 선점 및 Redis에 로비 데이터 원자적 저장
+     * 4. DB에 GAME_LOBBY 스냅샷 Insert
+     * 5. DB 실패 시 Redis 보상 삭제 및 성공/실패 여부를 구분하여 로그 기록
      *
      * @param request   로비 생성 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
@@ -60,6 +70,16 @@ public class LobbyService {
      */
     @Transactional
     public CreateLobbyResponse createLobby(CreateLobbyRequest request, CustomPrincipal principal) {
+
+        // principal 및 userId null 방어
+        // JwtAuthenticationFilter를 통과했더라도 토큰 파싱 이상으로
+        // userId가 null인 채로 진입할 수 있으므로 서비스 레이어에서 재검증한다.
+        if (principal == null || principal.userId() == null) {
+            log.warn(LOG_INVALID_PRINCIPAL,
+                    principal != null ? principal.userIdentifier() : "null");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+        }
+
         User host = userRepository.findById(principal.userId())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, ERROR_USER_NOT_FOUND));
@@ -89,17 +109,27 @@ public class LobbyService {
                     .build();
 
         } catch (Exception e) {
-            // DB Insert 실패 시 Redis에 저장된 로비 데이터 보상 삭제
-            log.error("DB 로비 저장 실패 - Redis 보상 삭제 시작. 코드: {}", inviteCode, e);
-            lobbyRepository.deleteFromRedis(inviteCode);
+            // 보상 삭제 성공/실패를 구분하여 모니터링 가능한 로그 기록
+            log.error(LOG_DB_SAVE_FAILED, inviteCode, e);
+
+            boolean compensationSuccess = lobbyRepository.deleteFromRedis(inviteCode);
+
+            if (compensationSuccess) {
+                // 보상 삭제 성공: 데이터 정합성 유지됨
+                log.info(LOG_COMPENSATION_SUCCESS, inviteCode);
+            } else {
+                // 보상 삭제 실패: Redis에 좀비 로비 데이터가 남아있을 수 있음
+                log.error(LOG_COMPENSATION_FAILED, inviteCode);
+            }
+
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR, ERROR_CREATE_LOBBY_FAILED);
         }
     }
 
     /**
-     * 공개 로비 목록을 조회합니다.
-     * Redis에서 직접 필터링하여 공개(isPrivate=false) 로비만 반환합니다.
+     * 공개 로비 목록을 조회한다.
+     * Redis에서 직접 필터링하여 공개(isPrivate=false) 로비만 반환
      *
      * @return 현재 활성화된 공개 로비 목록
      */

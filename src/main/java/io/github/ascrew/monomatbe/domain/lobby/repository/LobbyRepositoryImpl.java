@@ -45,6 +45,16 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RESULT_DELEGATED_PREFIX = "DELEGATED:";
 
   // =========================================================
+  // isPrivate 정규화 상수
+  // =========================================================
+
+  /** Lua 스크립트에 전달할 공개 로비 isPrivate 값 */
+  private static final String IS_PRIVATE_TRUE = "true";
+
+  /** Lua 스크립트에 전달할 비공개 로비 isPrivate 값 */
+  private static final String IS_PRIVATE_FALSE = "false";
+
+  // =========================================================
   // 초대 코드 생성 상수
   // =========================================================
 
@@ -54,6 +64,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   /** 초대 코드 생성 실패 시 반환할 에러 메시지 */
   private static final String ERROR_INVITE_CODE_EXHAUSTED =
           "초대 코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+
+  /** Lua 스크립트 null 반환 시 에러 메시지 */
+  private static final String ERROR_REDIS_SCRIPT_NULL =
+          "Redis 스크립트 실행 결과가 null입니다. Redis 연결 상태를 확인해주세요.";
 
   // =========================================================
   // 공개 메서드
@@ -81,8 +95,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    * - lobby:public              Set  — 공개 로비 목록 (isPrivate=false 시만)
    *
    * [재시도 전략]
-   * LOCK_FAILED 반환 시 새 코드를 생성하여 재시도
-   * LobbyDefaults.INVITE_CODE_MAX_RETRY 초과 시 503을 반환한다.
+   * - LOCK_FAILED : 코드 충돌 → 새 코드 생성 후 재시도
+   * - null        : Redis 오류 → 재시도하지 않고 즉시 503 반환
+   * - 최대 재시도 횟수 초과 시 503 반환
    */
   @Override
   public String saveToRedis(CreateLobbyRequest request, String userIdentifier) {
@@ -90,11 +105,19 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       String candidate = generateInviteCode();
       String result = executeCreateLobbyScript(candidate, request, userIdentifier);
 
+      // null 반환은 코드 충돌이 아닌 Redis 오류이므로 즉시 503 반환
+      if (result == null) {
+        log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. 코드: {}", candidate);
+        throw new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE, ERROR_REDIS_SCRIPT_NULL);
+      }
+
       if (RESULT_OK.equals(result)) {
         log.info("로비 Redis 저장 완료 - 코드: {}, 방장: {}", candidate, userIdentifier);
         return candidate;
       }
 
+      // LOCK_FAILED: 코드 충돌 → 새 코드로 재시도
       log.warn("초대 코드 충돌 - 재시도 {}/{}: {}",
               attempt + 1, LobbyDefaults.INVITE_CODE_MAX_RETRY, candidate);
     }
@@ -106,17 +129,14 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   /**
    * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
    *
-   * [보상 삭제 이유]
-   * saveToRedis() 성공 후 DB Insert가 실패하면 Redis에 잔존 데이터가 남아
-   * 실제로 입장 불가능한 로비가 공개 목록에 노출되는 데이터 불일치가 발생한다.
-   * 이를 방지하기 위해 DB 실패 시 Redis 데이터를 보상 삭제한다.
-   *
    * [삭제 실패 처리]
-   * 보상 삭제 자체가 실패하는 경우 ERROR 로그를 남긴다.
-   * 이 경우 수동 정리가 필요하며, 향후 cleanup 배치 작업으로 보완할 수 있다.
+   * 보상 삭제 실패 시 ERROR 로그를 남기고 false를 반환한다.
+   * 서비스 레이어에서 반환값을 확인하여 추가 알림 처리가 가능하다.
+   *
+   * @return 보상 삭제 성공 여부 (true: 성공, false: 실패)
    */
   @Override
-  public void deleteFromRedis(String inviteCode) {
+  public boolean deleteFromRedis(String inviteCode) {
     try {
       redisTemplate.delete(List.of(
               RedisKeys.lobbyKey(inviteCode),
@@ -128,8 +148,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
 
       log.info("Redis 보상 삭제 완료 - 코드: {}", inviteCode);
+      return true;
+
     } catch (Exception e) {
       log.error("Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요.", inviteCode, e);
+      return false;
     }
   }
 
@@ -186,9 +209,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   // =========================================================
 
   /**
-   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행
+   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행한다.
    *
-   * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌)
+   * [isPrivate 정규화]
+   * Lua 스크립트는 isPrivate 값을 == "false" 문자열 비교로 판단합니다.
+   * normalizeIsPrivate()로 반드시 소문자 "true"/"false"로 정규화하여 전달합니다.
+   *
+   * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌) | null (Redis 오류)
    */
   private String executeCreateLobbyScript(
           String inviteCode,
@@ -205,6 +232,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
     String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
 
+    // isPrivate 정규화
+    // Lua 스크립트의 문자열 비교(isPrivate == "false")와 일치하도록
+    // 반드시 소문자 "true"/"false"로 명시적 정규화하여 전달한다.
+    String isPrivateValue = normalizeIsPrivate(request.isPrivate());
+
     return redisTemplate.execute(
             createLobbyScript,
             keys,
@@ -213,13 +245,29 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             inviteCode,                             // ARGV[3]
             request.title(),                        // ARGV[4]
             String.valueOf(request.maxPlayers()),   // ARGV[5]
-            String.valueOf(request.isPrivate()),    // ARGV[6]
+            isPrivateValue,                         // ARGV[6] — 정규화된 isPrivate 값
             LobbyStatus.WAITING.name()              // ARGV[7]
     );
   }
 
   /**
-   * LobbyDefaults 상수 기반으로 6자리 초대 코드를 생성
+   * isPrivate 값을 Lua 스크립트와 일치하는 소문자 문자열로 정규화한다.
+   *
+   * [정규화 이유]
+   * Lua 스크립트(create_lobby.lua)에서 isPrivate 값을
+   * if isPrivate == "false" then 으로 비교합니다.
+   * IS_PRIVATE_TRUE / IS_PRIVATE_FALSE 상수를 사용하여
+   * 대소문자 불일치나 예상치 못한 값이 전달되는 것을 방지합니다.
+   *
+   * @param isPrivate 로비 비공개 여부
+   * @return "true" (비공개) 또는 "false" (공개)
+   */
+  private String normalizeIsPrivate(boolean isPrivate) {
+    return isPrivate ? IS_PRIVATE_TRUE : IS_PRIVATE_FALSE;
+  }
+
+  /**
+   * LobbyDefaults 상수 기반으로 6자리 초대 코드를 생성한다.
    *
    * [SecureRandom 사용 이유]
    * Random 대신 SecureRandom을 사용하여 코드 예측 가능성을 낮춘다.

@@ -48,6 +48,10 @@ redis.call('SADD', participantsKey, userIdentifier)
 redis.call('RPUSH', orderKey, userIdentifier)
 
 -- 5. 공개 로비인 경우 전역 공개 목록 Set에 코드 추가 (lobby:public)
+-- [isPrivate 값 보장]
+-- Java LobbyRepositoryImpl.normalizeIsPrivate()에서 반드시 소문자 "true"/"false"로
+-- 정규화하여 전달하므로, 이 비교는 항상 일관되게 동작한다.
+
 if isPrivate == "false" then
     redis.call('SADD', publicListKey, inviteCode)
 end

@@ -37,20 +37,25 @@ import java.time.LocalDateTime;
  * [host_user_id]
  * Redis의 host_user_id(UUID String)와 달리 DB에는 users.id(Long)를 FK로 저장한다.
  * 두 식별자의 역할 분리는 ARCHITECTURE.md 인증 구조를 따른다.
+ *
+ * [기본값 정책 — @PrePersist 단일 책임]
+ * status, isDeleted, createdAt의 기본값은 @PrePersist에서만 설정한다.
+ * 서비스 레이어(LobbyService)는 이 필드들을 Builder에서 명시하지 않으며,
+ * @PrePersist가 유일한 기본값 설정 지점이다.
+ * 이를 통해 기본값 로직이 분산되지 않고 엔티티에 캡슐화된다.
  */
 @Getter
 @Entity
-@Builder // 객체 생성 시 가독성과 유연성을 높이기 위해 빌더 패턴을 적용
-@Table(name = "GAME_LOBBY") // 데이터베이스에 생성될 테이블 이름
+@Builder
+@Table(name = "GAME_LOBBY")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class GameLobby {
 
-    @Id // 이 필드가 테이블의 기본 키 (Primary Key)
+    @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // 방장 (User) 정보와의 다대일 (N:1) 연관관계 매핑
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "host_user_id", nullable = false)
     private User host;
@@ -58,7 +63,15 @@ public class GameLobby {
     @Column(name = "map_id")
     private Long mapId;
 
-    @Column(name = "invite_code", nullable = false, unique = true, length = 12)
+    /**
+     * 로비 초대 코드.
+     *
+     * [length 설정]
+     * 초대 코드는 LobbyDefaults.INVITE_CODE_LENGTH 상수 기준 6자리
+     * @Column의 length는 컴파일 타임 상수만 허용하므로 직접 참조할 수 없다.
+     * LobbyDefaults.INVITE_CODE_LENGTH 값과 반드시 동기화되어야 한다.
+     */
+    @Column(name = "invite_code", nullable = false, unique = true, length = 6)
     private String inviteCode;
 
     @Column(name = "title", nullable = false, length = 255)
@@ -76,26 +89,25 @@ public class GameLobby {
     @Column(name = "is_private", nullable = false)
     private Boolean isPrivate;
 
-    // 로비 현재 상태 (예 : WAITING, PLAYING 등)
-    // EnumType.STRING : Enum의 순서 (숫자)가 아닌 문자열 이름 자체를 DB에 저장하여 데이터 정합성을 보호한다.
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private LobbyStatus status;
 
-    // 로비가 파괴되었는지 여부를 나타내는 논리적 삭제 (Soft Delete) 플래그
     @Column(name = "is_deleted", nullable = false)
     private Boolean isDeleted;
 
-    // 로비 생성 시간
-    // 한 번 생성된 이후에는 수정되지 않도록 막아 데이터 불변성을 보장한다.
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     /**
      * DB 저장 전 기본값을 보정한다.
      *
+     * [단일 책임 원칙 — 기본값 설정의 유일한 지점]
+     * status, isDeleted, createdAt의 기본값은 이 메서드에서만 설정한다.
+     * 서비스 레이어에서 이 필드들을 Builder로 명시하지 않는 것이 의도된 설계이다.
+     *
      * [보정 항목]
-     * - createdAt : 서비스 레이어에서 누락 시 자동 세팅 (User, GuestSession과 동일한 패턴)
+     * - createdAt : Builder에서 누락 시 자동 세팅
      * - status    : 로비 생성 시 항상 WAITING이 초기값
      * - isDeleted : 생성 시 삭제 상태가 아님
      */
@@ -105,10 +117,10 @@ public class GameLobby {
             this.createdAt = LocalDateTime.now();
         }
         if (this.status == null) {
-            this.status = LobbyStatus.WAITING; // 초기 상태는 항상 '대기 중'
+            this.status = LobbyStatus.WAITING;
         }
         if (this.isDeleted == null) {
-            this.isDeleted = false; // 방금 생성했으므로 삭제되지 않은 상태
+            this.isDeleted = false;
         }
     }
 

@@ -33,6 +33,9 @@ public class LobbyService {
 
     private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
 
+    // DB Insert 실패 시 클라이언트에 반환할 에러 메시지
+    private static final String ERROR_CREATE_LOBBY_FAILED = "로비 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final UserRepository userRepository;
@@ -63,26 +66,35 @@ public class LobbyService {
 
         String inviteCode = lobbyRepository.saveToRedis(request, principal.userIdentifier());
 
-        GameLobby gameLobby = gameLobbyJpaRepository.save(GameLobby.builder()
-                .host(host)
-                .inviteCode(inviteCode)
-                .title(request.title())
-                .maxPlayers(request.maxPlayers())
-                .roundCount(request.roundCount())
-                .timeLimitSeconds(request.timeLimitSeconds())
-                .isPrivate(request.isPrivate())
-                .build());
+        try {
+            GameLobby gameLobby = gameLobbyJpaRepository.save(GameLobby.builder()
+                    .host(host)
+                    .inviteCode(inviteCode)
+                    .title(request.title())
+                    .maxPlayers(request.maxPlayers())
+                    .roundCount(request.roundCount())
+                    .timeLimitSeconds(request.timeLimitSeconds())
+                    .isPrivate(request.isPrivate())
+                    .build());
 
-        log.info("로비 생성 완료 - 코드: {}, 방장: {}", inviteCode, principal.userIdentifier());
+            log.info("로비 생성 완료 - 코드: {}, 방장: {}", inviteCode, principal.userIdentifier());
 
-        return CreateLobbyResponse.builder()
-                .lobbyId(gameLobby.getId())
-                .inviteCode(inviteCode)
-                .title(gameLobby.getTitle())
-                .maxPlayers(gameLobby.getMaxPlayers())
-                .isPrivate(gameLobby.getIsPrivate())
-                .status(gameLobby.getStatus().name())
-                .build();
+            return CreateLobbyResponse.builder()
+                    .lobbyId(gameLobby.getId())
+                    .inviteCode(inviteCode)
+                    .title(gameLobby.getTitle())
+                    .maxPlayers(gameLobby.getMaxPlayers())
+                    .isPrivate(gameLobby.getIsPrivate())
+                    .status(gameLobby.getStatus().name())
+                    .build();
+
+        } catch (Exception e) {
+            // DB Insert 실패 시 Redis에 저장된 로비 데이터 보상 삭제
+            log.error("DB 로비 저장 실패 - Redis 보상 삭제 시작. 코드: {}", inviteCode, e);
+            lobbyRepository.deleteFromRedis(inviteCode);
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR, ERROR_CREATE_LOBBY_FAILED);
+        }
     }
 
     /**

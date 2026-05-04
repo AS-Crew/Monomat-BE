@@ -28,6 +28,17 @@ public interface LobbyRepository {
   String saveToRedis(CreateLobbyRequest request, String userIdentifier);
 
   /**
+   * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
+   * [보장 삭제 대상]
+   * - lobby:{code} Hash
+   * - lobby:{code}:participants Set
+   * - lobby:{code}:order List
+   * - lobby:public Set에서 코드 제거
+   * - lobby:code:lock:{code} 락 키
+   */
+  void deleteFromRedis(String inviteCode);
+
+  /**
    * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행합니다.
    *
    * [반환 타입 변경 이유]

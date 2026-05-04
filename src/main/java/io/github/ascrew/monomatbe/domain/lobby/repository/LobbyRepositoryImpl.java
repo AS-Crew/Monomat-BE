@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -86,6 +87,39 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
     log.info("로비 Redis 저장 완료 - 코드: {}, 방장: {}", inviteCode, userIdentifier);
     return inviteCode;
+  }
+
+  /**
+   * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
+   *
+   * [보상 삭제 이유]
+   * saveToRedis() 성공 후 DB Insert가 실패하면 Redis에 잔존 데이터가 남아 실제로 입장 불가능한 로비가 공개 목록에 노출되는 데이터 불일치가 발생한다.
+   * 이를 방지하기 위해 DB 실패 시 Redis 데이터를 보상 삭제한다.
+   *
+   * [삭제 실패 처리]
+   * 보상 삭제 자체가 실패하는 경우 ERROR 로그를 남긴다.
+   * 이 경우 수동 정리가 필요하며, 향후 cleanup 배치 작업으로 보완할 수 있다.
+   */
+  @Override
+  public void deleteFromRedis(String inviteCode) {
+    try {
+      // 로비 관련 키 일괄 삭제
+      redisTemplate.delete(List.of(
+              RedisKeys.lobbyKey(inviteCode),
+              RedisKeys.lobbyParticipantsKey(inviteCode),
+              RedisKeys.lobbyOrderKey(inviteCode),
+              RedisKeys.lobbyCodeLockKey(inviteCode) // 락 키도 함께 삭제
+      ));
+
+      // 공개 로비 Set에서 제거
+      redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
+
+      log.info("Redis 보상 삭제 완료 - 코드 : {}", inviteCode);
+    } catch (Exception e) {
+      // 보상 삭제 실패는 ERROR 레벨로 기록
+      // 수동 정리 또는 향ㅎ cleanup 배치 작업 필요
+      log.error("Redis 보상 삭제 실패 - 코드 : {}, 수동 정리 필요.", inviteCode, e);
+    }
   }
 
   @Override

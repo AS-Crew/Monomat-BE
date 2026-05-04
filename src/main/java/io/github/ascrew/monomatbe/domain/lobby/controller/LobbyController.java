@@ -95,11 +95,11 @@ public class LobbyController {
     @Operation(summary = "공개 로비 목록 조회", description = "Redis에서 공개 상태인 로비만 필터링하여 반환합니다.")
     @GetMapping
     public ResponseEntity<List<LobbyRedisDto>> getPublicLobbies() {
-        log.info("요청 수신: 공개 로비 목록 조회 [GET /api/lobbies]");
+        log.info(LOG_GET_PUBLIC_LOBBIES_REQUEST);
 
         List<LobbyRedisDto> publicLobbies = lobbyService.getPublicLobbies();
 
-        log.info("조회 완료: 공개 로비 {}개 반환", publicLobbies.size());
+        log.info(LOG_GET_PUBLIC_LOBBIES_RESPONSE, publicLobbies.size());
 
         return ResponseEntity.ok(publicLobbies);
     }

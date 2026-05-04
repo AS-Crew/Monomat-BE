@@ -55,8 +55,21 @@ public final class RedisKeys {
     /** Refresh Token 저장 키 접두사 */
     private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
 
-    // 초대 코드 SETNX 락 키 접두사
+    /** 초대 코드 중복 방지 SETNX 락 키 접두사 */
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
+
+    // =========================================================
+    // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
+    // =========================================================
+
+    /** 게스트 세션 Hash의 사용자 DB PK 필드 */
+    public static final String FIELD_GUEST_USER_ID = "userId";
+
+    /** 게스트 세션 Hash의 닉네임 필드 */
+    public static final String FIELD_GUEST_USERNAME = "username";
+
+    /** 게스트 세션 Hash의 사용자 유형 필드 */
+    public static final String FIELD_GUEST_USER_TYPE = "userType";
 
     // [삭제] USER_ROOM_PREFIX 및 userRoomKey() 제거
     // lobby:{code}:participants가 단일 진실의 원천으로 통일되었으므로

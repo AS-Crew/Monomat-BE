@@ -54,6 +54,9 @@ public class WebSocketEventListener {
     // TTL은 비정상 종료(서버 다운 등) 시 Redis 좀비 키 방지용
     private static final long USER_STATUS_TTL_HOURS = 2;
 
+    /** 퇴장 메시지 포맷. {0} 위치에 userIdentifier가 삽입됩니다. */
+    private static final String LEAVE_MESSAGE_FORMAT = "%s님이 퇴장하셨습니다.";
+
     private final RedisPublisher redisPublisher;
     private final RedisTemplate<String, Object> redisTemplate;
     private final WebSocketMetric webSocketMetric;
@@ -151,7 +154,7 @@ public class WebSocketEventListener {
                             .type(ChatMessageDto.MessageType.LEAVE)
                             .roomId(lobbyCode)
                             .sender(userIdentifier)
-                            .content(userIdentifier + "님이 퇴장하셨습니다.")
+                            .content(String.format(LEAVE_MESSAGE_FORMAT, userIdentifier))
                             .build()
             );
         }

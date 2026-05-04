@@ -52,6 +52,22 @@ public final class StompDestinations {
     public static final String PUBLISH_LOBBY_CREATE = PUBLISH_PREFIX + "/lobby/create";
 
     // =========================================================
+    // 브로드캐스트 메시지 상수
+    // =========================================================
+
+    /**
+     * 전역 로비 리스트 새로고침 신호 메시지.
+     * LobbyEventService에서 /topic/lobby/refresh 채널로 전송하는 고정 문자열
+     */
+    public static final String MSG_REFRESH_LOBBY_LIST = "REFRESH_LOBBY_LIST";
+
+    /**
+     * 로비 내부 정보 새로고침 신호 메시지.
+     * LobbyEventService에서 /topic/lobby/{code}/refresh 채널로 전송하는 고정 문자열
+     */
+    public static final String MSG_REFRESH_LOBBY_INFO = "REFRESH_LOBBY_INFO";
+
+    // =========================================================
     // 동적 경로 생성 팩토리 메서드
     // =========================================================
 

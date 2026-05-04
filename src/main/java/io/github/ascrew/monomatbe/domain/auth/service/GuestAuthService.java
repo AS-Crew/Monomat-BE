@@ -153,10 +153,12 @@ public class GuestAuthService {
      */
     private void storeGuestSessionToRedis(User user, String userIdentifier, String refreshToken) {
         String guestSessionKey = RedisKeys.guestSessionKey(userIdentifier);
+
+        // RedisKeys.FIELD_GUEST_* 상수로 Hash 필드 키 참조 (오타 방지)
         redisTemplate.opsForHash().putAll(guestSessionKey, Map.of(
-                "userId", String.valueOf(user.getId()),
-                "username", user.getUsername(),
-                "userType", user.getUserType().name()
+                RedisKeys.FIELD_GUEST_USER_ID, String.valueOf(user.getId()),
+                RedisKeys.FIELD_GUEST_USERNAME, user.getUsername(),
+                RedisKeys.FIELD_GUEST_USER_TYPE, user.getUserType().name()
         ));
         redisTemplate.expire(guestSessionKey, GUEST_SESSION_TTL);
 

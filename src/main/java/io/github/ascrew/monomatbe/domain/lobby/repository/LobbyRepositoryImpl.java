@@ -11,13 +11,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.parameters.P;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,9 +27,17 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   private final StringRedisTemplate redisTemplate;
   private final RedisScript<String> leaveLobbyScript;
+  private final RedisScript<String> createLobbyScript;
 
   // =========================================================
-  // Lua 스크립트 반환값 상수
+  // create_lobby.lua 반환값 상수
+  // =========================================================
+
+  private static final String RESULT_OK = "OK";
+  private static final String RESULT_LOCK_FAILED = "LOCK_FAILED";
+
+  // =========================================================
+  // leave_lobby.lua 반환값 상수
   // =========================================================
 
   private static final String RESULT_DESTROYED = "DESTROYED";
@@ -66,7 +72,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   /**
-   * Redis에 로비 데이터를 저장하고 초대 코드를 반환한다.
+   * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환한다.
    *
    * [저장 구조]
    * - lobby:{code}              Hash — 로비 메타 정보
@@ -74,26 +80,35 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    * - lobby:{code}:order        List — 입장 순서 (방장 선 추가)
    * - lobby:public              Set  — 공개 로비 목록 (isPrivate=false 시만)
    *
-   * [SETNX 기반 코드 중복 방지]
-   * lobby:code:lock:{code} 키를 SETNX로 원자적 선점한다.
-   * 선점 실패 시 새 코드를 생성하여 재시도
-   * LobbyDefaults.INVITE_CODE_MAX_RETRY 초과 시 503 반환한다.
+   * [재시도 전략]
+   * LOCK_FAILED 반환 시 새 코드를 생성하여 재시도
+   * LobbyDefaults.INVITE_CODE_MAX_RETRY 초과 시 503을 반환한다.
    */
   @Override
   public String saveToRedis(CreateLobbyRequest request, String userIdentifier) {
-    String inviteCode = acquireInviteCode(userIdentifier);
+    for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
+      String candidate = generateInviteCode();
+      String result = executeCreateLobbyScript(candidate, request, userIdentifier);
 
-    storelobbyData(request, inviteCode, userIdentifier);
+      if (RESULT_OK.equals(result)) {
+        log.info("로비 Redis 저장 완료 - 코드: {}, 방장: {}", candidate, userIdentifier);
+        return candidate;
+      }
 
-    log.info("로비 Redis 저장 완료 - 코드: {}, 방장: {}", inviteCode, userIdentifier);
-    return inviteCode;
+      log.warn("초대 코드 충돌 - 재시도 {}/{}: {}",
+              attempt + 1, LobbyDefaults.INVITE_CODE_MAX_RETRY, candidate);
+    }
+
+    throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE, ERROR_INVITE_CODE_EXHAUSTED);
   }
 
   /**
    * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
    *
    * [보상 삭제 이유]
-   * saveToRedis() 성공 후 DB Insert가 실패하면 Redis에 잔존 데이터가 남아 실제로 입장 불가능한 로비가 공개 목록에 노출되는 데이터 불일치가 발생한다.
+   * saveToRedis() 성공 후 DB Insert가 실패하면 Redis에 잔존 데이터가 남아
+   * 실제로 입장 불가능한 로비가 공개 목록에 노출되는 데이터 불일치가 발생한다.
    * 이를 방지하기 위해 DB 실패 시 Redis 데이터를 보상 삭제한다.
    *
    * [삭제 실패 처리]
@@ -103,22 +118,18 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public void deleteFromRedis(String inviteCode) {
     try {
-      // 로비 관련 키 일괄 삭제
       redisTemplate.delete(List.of(
               RedisKeys.lobbyKey(inviteCode),
               RedisKeys.lobbyParticipantsKey(inviteCode),
               RedisKeys.lobbyOrderKey(inviteCode),
-              RedisKeys.lobbyCodeLockKey(inviteCode) // 락 키도 함께 삭제
+              RedisKeys.lobbyCodeLockKey(inviteCode)
       ));
 
-      // 공개 로비 Set에서 제거
       redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
 
-      log.info("Redis 보상 삭제 완료 - 코드 : {}", inviteCode);
+      log.info("Redis 보상 삭제 완료 - 코드: {}", inviteCode);
     } catch (Exception e) {
-      // 보상 삭제 실패는 ERROR 레벨로 기록
-      // 수동 정리 또는 향ㅎ cleanup 배치 작업 필요
-      log.error("Redis 보상 삭제 실패 - 코드 : {}, 수동 정리 필요.", inviteCode, e);
+      log.error("Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요.", inviteCode, e);
     }
   }
 
@@ -135,8 +146,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       String result = redisTemplate.execute(leaveLobbyScript, keys, userId, code);
       return parseLuaResult(result, code, userId);
     } catch (Exception e) {
-      return new LeaveLobbyResult.Error(
-              "Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
+      return new LeaveLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
     }
   }
 
@@ -164,8 +174,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               .status((String) data.get(RedisKeys.FIELD_STATUS))
               .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
               .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
-              .isPrivate(Boolean.parseBoolean(
-                      (String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
+              .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
               .build());
     }
 
@@ -177,78 +186,44 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   // =========================================================
 
   /**
-   * SETNX로 초대 코드를 원자적으로 선점한다.
-   * 최대 재시도 횟수 초과 시 503 예외를 던진다.
+   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행
+   *
+   * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌)
    */
-  private String acquireInviteCode(String userIdentifier) {
-    for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
-      String candidate = generateInviteCode();
-      String lockKey = RedisKeys.lobbyCodeLockKey(candidate);
-
-      Boolean acquired = redisTemplate.opsForValue()
-              .setIfAbsent(lockKey, userIdentifier, LobbyDefaults.INVITE_CODE_LOCK_TTL);
-
-      if (Boolean.TRUE.equals(acquired)) {
-        return candidate;
-      }
-
-      log.warn("초대 코드 충돌 - 재시도 {}/{}: {}",
-              attempt + 1, LobbyDefaults.INVITE_CODE_MAX_RETRY, candidate);
-    }
-
-    throw new ResponseStatusException(
-            HttpStatus.SERVICE_UNAVAILABLE, ERROR_INVITE_CODE_EXHAUSTED);
-  }
-
-  /**
-   * Redis에 로비 관련 데이터를 저장
-   * Hash, 참여자 Set, 입장 순서 List, 공개 Set에 각각 기록한다.
-   */
-  private void storelobbyData(
-          CreateLobbyRequest request,
+  private String executeCreateLobbyScript(
           String inviteCode,
+          CreateLobbyRequest request,
           String userIdentifier
   ) {
-    redisTemplate.opsForHash().putAll(
-            RedisKeys.lobbyKey(inviteCode),
-            buildLobbyHashData(request, inviteCode, userIdentifier)
+    List<String> keys = List.of(
+            RedisKeys.lobbyCodeLockKey(inviteCode),     // KEYS[1]
+            RedisKeys.lobbyKey(inviteCode),             // KEYS[2]
+            RedisKeys.lobbyParticipantsKey(inviteCode), // KEYS[3]
+            RedisKeys.lobbyOrderKey(inviteCode),        // KEYS[4]
+            RedisKeys.LOBBY_PUBLIC                      // KEYS[5]
     );
 
-    redisTemplate.opsForSet().add(
-            RedisKeys.lobbyParticipantsKey(inviteCode), userIdentifier);
+    String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
 
-    redisTemplate.opsForList().rightPush(
-            RedisKeys.lobbyOrderKey(inviteCode), userIdentifier);
-
-    if (!request.isPrivate()) {
-      redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, inviteCode);
-    }
+    return redisTemplate.execute(
+            createLobbyScript,
+            keys,
+            userIdentifier,                         // ARGV[1]
+            lockTtlMs,                              // ARGV[2]
+            inviteCode,                             // ARGV[3]
+            request.title(),                        // ARGV[4]
+            String.valueOf(request.maxPlayers()),   // ARGV[5]
+            String.valueOf(request.isPrivate()),    // ARGV[6]
+            LobbyStatus.WAITING.name()              // ARGV[7]
+    );
   }
 
   /**
-   * RedisKeys.FIELD_* 상수 기반으로 Redis Hash에 저장할 로비 데이터를 구성한다.
-   */
-  private Map<String, String> buildLobbyHashData(
-          CreateLobbyRequest request,
-          String inviteCode,
-          String userIdentifier
-  ) {
-    Map<String, String> data = new HashMap<>();
-    data.put(RedisKeys.FIELD_CODE, inviteCode);
-    data.put(RedisKeys.FIELD_HOST_USER_ID, userIdentifier);
-    data.put(RedisKeys.FIELD_TITLE, request.title());
-    data.put(RedisKeys.FIELD_MAX_PLAYERS, String.valueOf(request.maxPlayers()));
-    data.put(RedisKeys.FIELD_IS_PRIVATE, String.valueOf(request.isPrivate()));
-    data.put(RedisKeys.FIELD_STATUS, LobbyStatus.WAITING.name());
-    return data;
-  }
-
-  /**
-   * LobbyDefaults 상수 기반으로 6자리 초대 코드를 생성한다.
+   * LobbyDefaults 상수 기반으로 6자리 초대 코드를 생성
    *
    * [SecureRandom 사용 이유]
    * Random 대신 SecureRandom을 사용하여 코드 예측 가능성을 낮춘다.
-   * 게임 특성상 코드 추측으로 비공개 로비에 무단 입장하는 것을 방지한다..
+   * 게임 특성상 코드 추측으로 비공개 로비에 무단 입장하는 것을 방지한다.
    */
   private String generateInviteCode() {
     StringBuilder sb = new StringBuilder(LobbyDefaults.INVITE_CODE_LENGTH);

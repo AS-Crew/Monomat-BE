@@ -10,6 +10,11 @@
  *     → "/topic/lobby/ABC123"
  * StompDestinations.subscribeLobbyRefresh("ABC123")
  *     → "/topic/lobby/ABC123/refresh"
+ *
+ * isLobbyChatSubscription() 추가
+ * - isLobbySubscription()  : /topic/lobby/** 전체 매칭 (리프레시 채널 포함)
+ * - isLobbyChatSubscription(): /topic/lobby/{code} 정확히 매칭 (하위 경로 제외)
+ * - 입장/퇴장 처리 트리거는 채팅 채널 구독 시점에만 발생해야 하므로 분리
  */
 package io.github.ascrew.monomatbe.global.constant;
 
@@ -22,14 +27,14 @@ public final class StompDestinations {
     // Prefix 상수 (WebSocketConfig에서 설정한 값과 일치해야 함)
     // =========================================================
 
-    /** 클라이언트 → 서버 송신 경로 접두사 (WebSocketConfig applicationDestinationPrefix) */
     private static final String PUBLISH_PREFIX = "/app";
-
-    /** 서버 → 클라이언트 수신 경로 접두사 (WebSocketConfig simpleBroker) */
     private static final String SUBSCRIBE_PREFIX = "/topic";
 
+    /** 로비 채널 공통 접두사 — 내부 판별 메서드에서만 사용 */
+    private static final String LOBBY_CHANNEL_PREFIX = SUBSCRIBE_PREFIX + "/lobby/";
+
     // =========================================================
-    // 고정 구독 경로 (단순 상수)
+    // 고정 구독 경로
     // =========================================================
 
     /** 전체 채팅 구독 경로 */
@@ -42,7 +47,7 @@ public final class StompDestinations {
     public static final String SUBSCRIBE_LOBBY_PATTERN = SUBSCRIBE_PREFIX + "/lobby/*";
 
     // =========================================================
-    // 고정 송신 경로 (단순 상수)
+    // 고정 송신 경로
     // =========================================================
 
     /** 전체 채팅 송신 경로 */
@@ -55,84 +60,72 @@ public final class StompDestinations {
     // 브로드캐스트 메시지 상수
     // =========================================================
 
-    /**
-     * 전역 로비 리스트 새로고침 신호 메시지.
-     * LobbyEventService에서 /topic/lobby/refresh 채널로 전송하는 고정 문자열
-     */
     public static final String MSG_REFRESH_LOBBY_LIST = "REFRESH_LOBBY_LIST";
-
-    /**
-     * 로비 내부 정보 새로고침 신호 메시지.
-     * LobbyEventService에서 /topic/lobby/{code}/refresh 채널로 전송하는 고정 문자열
-     */
     public static final String MSG_REFRESH_LOBBY_INFO = "REFRESH_LOBBY_INFO";
 
     // =========================================================
     // 동적 경로 생성 팩토리 메서드
     // =========================================================
 
-    /**
-     * 로비 채팅 구독 경로를 반환합니다.
-     *
-     * @param code 로비 초대 코드
-     * @return "/topic/lobby/{code}"
-     */
+    /** @return "/topic/lobby/{code}" */
     public static String subscribeLobbyChat(String code) {
-        return SUBSCRIBE_PREFIX + "/lobby/" + code;
+        return LOBBY_CHANNEL_PREFIX + code;
     }
 
-    /**
-     * 로비 내부 정보 새로고침 신호 구독 경로를 반환합니다.
-     *
-     * @param code 로비 초대 코드
-     * @return "/topic/lobby/{code}/refresh"
-     */
+    /** @return "/topic/lobby/{code}/refresh" */
     public static String subscribeLobbyRefresh(String code) {
-        return SUBSCRIBE_PREFIX + "/lobby/" + code + "/refresh";
+        return LOBBY_CHANNEL_PREFIX + code + "/refresh";
     }
 
-    /**
-     * 로비 채팅 송신 경로를 반환합니다.
-     *
-     * @param code 로비 초대 코드
-     * @return "/app/chat/lobby/{code}"
-     */
+    /** @return "/app/chat/lobby/{code}" */
     public static String publishLobbyChat(String code) {
         return PUBLISH_PREFIX + "/chat/lobby/" + code;
     }
 
-    /**
-     * 로비 내부 정보 변경 이벤트 송신 경로를 반환합니다.
-     *
-     * @param code 로비 초대 코드
-     * @return "/app/lobby/{code}/update"
-     */
+    /** @return "/app/lobby/{code}/update" */
     public static String publishLobbyUpdate(String code) {
         return PUBLISH_PREFIX + "/lobby/" + code + "/update";
     }
 
+    // =========================================================
+    // 채널 판별 메서드
+    // =========================================================
+
     /**
-     * 주어진 경로가 로비 구독 채널인지 확인합니다.
-     * 외부에서 SUBSCRIBE_PREFIX를 직접 참조하지 않도록 캡슐화합니다.
-     *
-     * @param destination 확인할 STOMP 경로
-     * @return 로비 구독 채널 여부
+     * 로비 관련 채널 전체를 판별합니다 (/topic/lobby/** 포함).
+     * StompChannelInterceptor에서 로비 코드를 세션에 저장할 때 사용합니다.
      */
     public static boolean isLobbySubscription(String destination) {
-        return destination != null
-                && destination.startsWith(SUBSCRIBE_PREFIX + "/lobby/");
+        return destination != null && destination.startsWith(LOBBY_CHANNEL_PREFIX);
+    }
+
+    /**
+     * 로비 채팅 채널만 정확히 판별합니다.
+     *
+     * [판별 기준]
+     * LOBBY_CHANNEL_PREFIX 이후에 슬래시(/)가 없는 경우만 채팅 채널로 판단합니다.
+     * - /topic/lobby/ABC123         → true  (채팅 채널)
+     * - /topic/lobby/ABC123/refresh → false (리프레시 채널)
+     * - /topic/lobby/ABC123/game    → false (향후 추가 채널도 자동 차단)
+     *
+     * [용도]
+     * 입장 처리(참여자 추가, 세션 매핑, ENTER 브로드캐스트) 트리거에만 사용합니다.
+     */
+    public static boolean isLobbyChatSubscription(String destination) {
+        if (destination == null) return false;
+        if (!destination.startsWith(LOBBY_CHANNEL_PREFIX)) return false;
+
+        String afterPrefix = destination.substring(LOBBY_CHANNEL_PREFIX.length());
+        // 코드가 비어있지 않고 슬래시가 없어야 /topic/lobby/{code} 형태
+        return !afterPrefix.isEmpty() && !afterPrefix.contains("/");
     }
 
     /**
      * 로비 구독 경로에서 로비 코드를 추출합니다.
      * "/topic/lobby/{code}" 또는 "/topic/lobby/{code}/..." 형태에서 코드를 파싱합니다.
-     *
-     * @param destination STOMP 구독 경로
-     * @return 로비 코드
      */
     public static String extractLobbyCode(String destination) {
-        // "/topic/lobby/" 이후의 문자열에서 "/" 이전까지가 로비 코드
-        String afterPrefix = destination.substring((SUBSCRIBE_PREFIX + "/lobby/").length());
+        String afterPrefix = destination.substring(LOBBY_CHANNEL_PREFIX.length());
         int slashIndex = afterPrefix.indexOf('/');
         return slashIndex == -1 ? afterPrefix : afterPrefix.substring(0, slashIndex);
     }

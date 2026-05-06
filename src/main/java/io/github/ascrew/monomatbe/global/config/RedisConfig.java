@@ -17,6 +17,8 @@
  */
 package io.github.ascrew.monomatbe.global.config;
 
+import org.springframework.data.redis.connection.RedisPassword;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import tools.jackson.databind.json.JsonMapper;
 import io.github.ascrew.monomatbe.global.redis.RedisSubscriber;
 import org.springframework.context.annotation.Bean;
@@ -47,6 +49,9 @@ public class RedisConfig {
     @Value("${spring.data.redis.port}")
     private int redisPort;
 
+    @Value("${spring.data.redis.password:}")
+    private String redisPassword;
+
     /**
      * Redis 연결 팩토리 Bean.
      *
@@ -57,7 +62,18 @@ public class RedisConfig {
      */
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {
-        return new LettuceConnectionFactory(redisHost, redisPort);
+        // 1. 단일 Redis 서버 설정을 위한 객체 생성
+        RedisStandaloneConfiguration redisConfig = new RedisStandaloneConfiguration();
+
+        // 2. IP 및 포트 설정
+        redisConfig.setHostName(redisHost);
+        redisConfig.setPort(redisPort);
+
+        // 3. 우분투 서버에서 설정한 비밀번호를 주입
+        redisConfig.setPassword(RedisPassword.of(redisPassword));
+
+        // 4. 완성된 설정을 넣어 Factory 반환
+        return new LettuceConnectionFactory(redisConfig);
     }
 
     /**

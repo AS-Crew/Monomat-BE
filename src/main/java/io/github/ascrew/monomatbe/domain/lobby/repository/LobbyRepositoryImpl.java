@@ -211,9 +211,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   /**
    * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행한다.
    *
-   * [isPrivate 정규화]
-   * Lua 스크립트는 isPrivate 값을 == "false" 문자열 비교로 판단합니다.
-   * normalizeIsPrivate()로 반드시 소문자 "true"/"false"로 정규화하여 전달합니다.
+   * participants, order 관련 키 제거 이유:
+   * 입장 처리는 WebSocketEventListener.processLobbyEnter()에서 담당하므로, 생성 시점에서는 방장을 추가하지 않는다.
    *
    * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌) | null (Redis 오류)
    */
@@ -223,18 +222,12 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           String userIdentifier
   ) {
     List<String> keys = List.of(
-            RedisKeys.lobbyCodeLockKey(inviteCode),     // KEYS[1]
-            RedisKeys.lobbyKey(inviteCode),             // KEYS[2]
-            RedisKeys.lobbyParticipantsKey(inviteCode), // KEYS[3]
-            RedisKeys.lobbyOrderKey(inviteCode),        // KEYS[4]
-            RedisKeys.LOBBY_PUBLIC                      // KEYS[5]
+            RedisKeys.lobbyCodeLockKey(inviteCode), // KEYS[1]
+            RedisKeys.lobbyKey(inviteCode),         // KEYS[2]
+            RedisKeys.LOBBY_PUBLIC                  // KEYS[3]
     );
 
     String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
-
-    // isPrivate 정규화
-    // Lua 스크립트의 문자열 비교(isPrivate == "false")와 일치하도록
-    // 반드시 소문자 "true"/"false"로 명시적 정규화하여 전달한다.
     String isPrivateValue = normalizeIsPrivate(request.isPrivate());
 
     return redisTemplate.execute(
@@ -245,7 +238,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             inviteCode,                             // ARGV[3]
             request.title(),                        // ARGV[4]
             String.valueOf(request.maxPlayers()),   // ARGV[5]
-            isPrivateValue,                         // ARGV[6] — 정규화된 isPrivate 값
+            isPrivateValue,                         // ARGV[6]
             LobbyStatus.WAITING.name()              // ARGV[7]
     );
   }

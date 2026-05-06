@@ -50,6 +50,9 @@ public class LobbyEventService {
   // 로비 코드 검증 패턴: 영문 대문자 및 숫자 조합 6~12자리
   private static final Pattern LOBBY_CODE_PATTERN = Pattern.compile("^[A-Z0-9]{6,12}$");
 
+  // [수정] WS 세션 만료 시간 상수 추가
+  private static final Duration WS_CONNECTION_TTL = Duration.ofDays(1);
+
   private final SimpMessagingTemplate messagingTemplate;
   private final LobbyRepository lobbyRepository;
   private final StringRedisTemplate redisTemplate;
@@ -60,7 +63,8 @@ public class LobbyEventService {
    */
   public void notifyLobbyListRefresh() {
     messagingTemplate.convertAndSend(
-            StompDestinations.SUBSCRIBE_LOBBY_LIST_REFRESH, "REFRESH_LOBBY_LIST");
+            StompDestinations.SUBSCRIBE_LOBBY_LIST_REFRESH,
+            StompDestinations.MSG_REFRESH_LOBBY_LIST);
   }
 
   /**
@@ -95,7 +99,8 @@ public class LobbyEventService {
     }
 
     messagingTemplate.convertAndSend(
-            StompDestinations.subscribeLobbyRefresh(code), "REFRESH_LOBBY_INFO");
+            StompDestinations.subscribeLobbyRefresh(code),
+            StompDestinations.MSG_REFRESH_LOBBY_INFO);
   }
 
   /**
@@ -149,7 +154,7 @@ public class LobbyEventService {
         // 방장이 바뀌었으므로 로비 내부 클라이언트에게 새로고침 신호
         messagingTemplate.convertAndSend(
                 StompDestinations.subscribeLobbyRefresh(d.lobbyCode()),
-                "REFRESH_LOBBY_INFO");
+                StompDestinations.MSG_REFRESH_LOBBY_INFO);
       }
       case LeaveLobbyResult.Left l -> {
         log.info("[handlePlayerLeave] 일반 퇴장 - 로비: {}, 식별자: {}",
@@ -157,7 +162,7 @@ public class LobbyEventService {
         // 참여자가 줄었으므로 로비 내부 클라이언트에게 새로고침 신호
         messagingTemplate.convertAndSend(
                 StompDestinations.subscribeLobbyRefresh(l.lobbyCode()),
-                "REFRESH_LOBBY_INFO");
+                StompDestinations.MSG_REFRESH_LOBBY_INFO);
       }
       case LeaveLobbyResult.Error e -> {
         // 정상 흐름이 아니므로 브로드캐스트 없이 에러 로그만 남깁니다.
@@ -174,17 +179,11 @@ public class LobbyEventService {
    * WebSocketEventListener의 handleDisconnectEvent에서
    * wsSessionId만으로 lobbyCode와 userIdentifier를 역추적하는 데 사용됩니다.
    *
-   * [수정 — 하드코딩 제거]
-   * "userId", "lobbyCode" 문자열 리터럴
-   * → WebSocketHeaders.SESSION_USER_ID, SESSION_LOBBY_CODE 상수로 교체
-   * WebSocketEventListener의 조회 키와 반드시 일치해야 하므로 상수로 통일합니다.
-   *
    * @param wsSessionId    WebSocket 고유 세션 ID
    * @param userIdentifier 사용자 식별자 (게스트 UUID 또는 회원 ID)
    * @param lobbyCode      입장한 로비의 초대 코드
    */
   public void saveConnectionInfo(String wsSessionId, String userIdentifier, String lobbyCode) {
-    // [수정] 문자열 리터럴 → WebSocketHeaders 상수로 교체
     Map<String, String> data = Map.of(
             WebSocketHeaders.SESSION_USER_ID, userIdentifier,
             WebSocketHeaders.SESSION_LOBBY_CODE, lobbyCode
@@ -192,6 +191,6 @@ public class LobbyEventService {
 
     // TTL 설정으로 비정상 종료 시 좀비 세션 데이터 자동 만료 처리
     redisTemplate.opsForHash().putAll(RedisKeys.wsConnectionKey(wsSessionId), data);
-    redisTemplate.expire(RedisKeys.wsConnectionKey(wsSessionId), Duration.ofDays(1));
+    redisTemplate.expire(RedisKeys.wsConnectionKey(wsSessionId), WS_CONNECTION_TTL);
   }
 }

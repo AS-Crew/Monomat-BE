@@ -1,8 +1,7 @@
 # Monomat-BE Architecture
 
 ## 📦 패키지 구조
-
-```
+```text
 src/main/java/io/github/ascrew/monomatbe/
 ├── MonomatBeApplication.java
 │
@@ -35,16 +34,23 @@ src/main/java/io/github/ascrew/monomatbe/
 │   └── lobby/                                      # 로비 도메인
 │       ├── LeaveLobbyResult.java                   # 퇴장 처리 결과 (sealed interface)
 │       ├── controller/
-│       │   ├── LobbyController.java                # HTTP REST API (로비 목록 조회)
+│       │   ├── LobbyController.java                # HTTP REST API (로비 생성, 목록 조회)
 │       │   └── LobbyEventController.java           # STOMP 로비 이벤트 수신
 │       ├── dto/
-│       │   └── LobbyRedisDto.java                  # 로비 정보 응답 DTO
+│       │   ├── CreateLobbyRequest.java             # 로비 생성 요청 DTO
+│       │   ├── CreateLobbyResponse.java            # 로비 생성 응답 DTO (inviteCode 포함)
+│       │   └── LobbyRedisDto.java                  # 로비 목록 조회 응답 DTO
+│       ├── entity/
+│       │   ├── GameLobby.java                      # GAME_LOBBY 테이블 엔티티
+│       │   ├── LobbyDefaults.java                  # 로비 생성 기본값 및 상수
+│       │   └── LobbyStatus.java                    # 로비 상태 열거형 (WAITING, PLAYING, FINISHED)
 │       ├── repository/
-│       │   ├── LobbyRepository.java                # 로비 데이터 접근 인터페이스
-│       │   └── LobbyRepositoryImpl.java            # Redis 기반 구현체 (Lua 스크립트 활용)
+│       │   ├── GameLobbyJpaRepository.java         # GAME_LOBBY JPA 리포지토리
+│       │   ├── LobbyRepository.java                # 로비 Redis 데이터 접근 인터페이스
+│       │   └── LobbyRepositoryImpl.java            # Redis 기반 구현체 (SETNX, Lua 스크립트 활용)
 │       └── service/
 │           ├── LobbyEventService.java              # 로비 이벤트 처리 및 STOMP 브로드캐스트
-│           └── LobbyService.java                   # 로비 조회 비즈니스 로직
+│           └── LobbyService.java                   # 로비 생성/조회 비즈니스 로직
 │
 └── global/                                         # 전역 인프라 레이어
     ├── config/                                     # 애플리케이션 설정
@@ -65,21 +71,24 @@ src/main/java/io/github/ascrew/monomatbe/
     │   └── RedisSubscriber.java                    # Redis 채널 메시지 수신 → WebSocket 브로드캐스트
     │
     ├── websocket/                                  # WebSocket 인프라
-        ├── CustomStompErrorHandler.java            # STOMP ERROR 프레임 핸들러
-        ├── StompChannelInterceptor.java            # CONNECT/SUBSCRIBE/SEND 인증 검증
-        ├── WebSocketEventListener.java             # WebSocket 연결 생명주기 이벤트 처리
-        ├── WebSocketMetric.java                    # 활성 세션 수 Prometheus 메트릭
-        ├── WebSocketSessionUtils.java              # 세션 식별자 추출 공통 유틸
-        ├── dto/
-        │   └── ChatMessageDto.java                 # WebSocket 채팅 메시지 DTO
-        └── event/
-            └── PlayerLeaveEvent.java               # 플레이어 퇴장 Spring 이벤트 객체
+    │   ├── CustomStompErrorHandler.java            # STOMP ERROR 프레임 핸들러
+    │   ├── StompChannelInterceptor.java            # CONNECT/SUBSCRIBE/SEND 인증 검증
+    │   ├── WebSocketEventListener.java             # WebSocket 연결 생명주기 이벤트 처리
+    │   ├── WebSocketMetric.java                    # 활성 세션 수 Prometheus 메트릭
+    │   ├── WebSocketSessionUtils.java              # 세션 식별자 추출 공통 유틸
+    │   ├── dto/
+    │   │   └── ChatMessageDto.java                 # WebSocket 채팅 메시지 DTO
+    │   └── event/
+    │       └── PlayerLeaveEvent.java               # 플레이어 퇴장 Spring 이벤트 객체
     └── security/
+        ├── SecurityEndpoints.java                  # Security 경로 상수 중앙화
         └── jwt/
+            ├── CustomPrincipal.java                # JWT 인증 주체 (userId + userIdentifier)
+            ├── JwtAuthenticationFilter.java        # Bearer 토큰 검증 및 SecurityContext 저장
+            ├── JwtClaims.java                      # JWT 클레임 키 상수 (발급/검증 공유)
             ├── JwtTokenProvider.java               # JWT Access/Refresh 토큰 발급
             └── TokenWithExpiry.java                # 토큰 + 만료시각 DTO
 ```
-
 ---
 
 ## 🏛️ 아키텍처 원칙
@@ -174,6 +183,8 @@ leave_lobby.lua
 | `lobby:{code}:participants` | Set | 로비 참여자 식별자 목록 |
 | `lobby:{code}:order` | List | 입장 순서 (방장 위임 시 LINDEX 0 사용) |
 | `lobby:public` | Set | 공개 로비 코드 목록 (고속 필터링용) |
+| `auth:guest:session:{token}` | Hash | 게스트 세션 정보 (userId, username, userType, TTL 30일) |
+| `auth:refresh:{sessionId}` | String | Refresh Token (TTL 30일) |
 | `user_status:{userIdentifier}` | String | 사용자 온라인 상태 (`ONLINE`, TTL 2시간) |
 | `ws:connection:{wsSessionId}` | Hash | WebSocket 세션 → userId, lobbyCode 매핑 |
 
@@ -217,6 +228,26 @@ Redis는 싱글 스레드로 Lua 스크립트를 실행하므로 다수의 동�
 `lobby:{code}:participants`를 단일 진실의 원천으로 통일하여
 입장(Java) → 퇴장(Lua) 모두 동일한 키를 사용합니다.
 
+### SETNX 기반 초대 코드 중복 방지
+
+`LobbyRepositoryImpl.acquireInviteCode()`는 6자리 초대 코드를 생성할 때
+`lobby:code:lock:{code}` 키를 Redis SET NX 명령으로 원자적으로 선점합니다.
+선점 성공 시 해당 코드를 사용하고, 실패 시 최대 `LobbyDefaults.INVITE_CODE_MAX_RETRY`(5회)까지 재시도합니다.
+락 TTL은 10초로 설정하여 로비 생성 실패 시 자동 해제되어 코드 공간이 반환됩니다.
+
+### JWT 인증 구조
+
+`JwtAuthenticationFilter`가 모든 요청의 Authorization 헤더에서 Bearer 토큰을 파싱합니다.
+파싱 성공 시 `CustomPrincipal(userId, userIdentifier, userType)`을 생성하여 SecurityContext에 저장합니다.
+컨트롤러에서는 `@AuthenticationPrincipal CustomPrincipal`로 주입받아 사용합니다.
+
+JWT 클레임 키는 `JwtClaims` 상수 클래스로 중앙 관리하여
+`JwtTokenProvider`(발급)와 `JwtAuthenticationFilter`(검증) 간 키 불일치를 컴파일 타임에 방지합니다.
+
+[식별자 분리]
+- `userId` (Long) : DB users.id FK 참조용
+- `userIdentifier` (UUID String) : Redis/WebSocket 식별자
+
 ---
 
 ## 🌐 STOMP 채널 구조
@@ -257,4 +288,24 @@ StompChannelInterceptor.handleConnect()
     │ 세션에 userIdentifier 저장
     ▼
 이후 모든 STOMP 명령에서 세션의 userIdentifier 검증
+```
+
+### REST API 인증 흐름
+
+```
+HTTP 요청 (Authorization: Bearer {accessToken})
+    │
+    ▼
+JwtAuthenticationFilter
+    │ 1. Authorization 헤더에서 Bearer 토큰 추출
+    │ 2. JWT 서명 검증 (secretKey)
+    │ 3. userId, userIdentifier, userType 클레임 추출 (JwtClaims 상수)
+    │ 4. CustomPrincipal 생성 → SecurityContext 저장
+    ▼
+Controller
+    │ @AuthenticationPrincipal CustomPrincipal로 주입
+    │ - principal.userId()          → DB Insert FK 용도
+    │ - principal.userIdentifier()  → Redis 저장 식별자 용도
+    ▼
+Service
 ```

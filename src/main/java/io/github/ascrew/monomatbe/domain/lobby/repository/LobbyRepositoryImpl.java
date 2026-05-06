@@ -1,40 +1,20 @@
-/*
- * LobbyRepository의 Redis 구현체.
- *
- * [설계 결정]
- * - StringRedisTemplate을 사용하는 이유:
- *   로비 데이터는 Redis Hash로 저장되며 Key/Value 모두 String입니다.
- *   RedisTemplate<String, Object>보다 가볍고 직렬화 오버헤드가 없습니다.
- *
- * - Lua 스크립트를 사용하는 이유:
- *   퇴장 처리 시 여러 Redis 키를 조작해야 하는데,
- *   Java 레벨에서 순차 처리하면 Race Condition이 발생할 수 있습니다.
- *   Lua 스크립트는 Redis 서버에서 원자적으로 실행되므로 이를 방지합니다.
- *
- * - Lua 반환값 파싱을 이 클래스에서 담당하는 이유:
- *   Redis 반환값의 문자열 포맷은 인프라 세부사항입니다.
- *   서비스 레이어가 "DELEGATED:" 같은 문자열 포맷을 알 필요가 없으며,
- *   파싱 책임을 Repository에 캡슐화하여 서비스는 순수한 도메인 결과만 받습니다.
- *
- * [리팩토링 변경 사항]
- * - getPublicLobbies()에서 Redis Hash 필드 키를 문자열 리터럴 대신 RedisKeys.FIELD_* 상수로 교체
- *   → 오타 방지 및 저장/조회 필드명 일관성 보장
- * - 누락된 DTO 필드(mapId, maxPlayers, isPrivate) 매핑 추가
- *   → 클라이언트에 완전한 로비 정보 전달
- * - Redis String → 숫자 타입 파싱 방어 메서드 추가 (parseNullableLong, parseNullableInt)
- *   → ClassCastException 및 NumberFormatException 방지
- */
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,43 +27,57 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   private final StringRedisTemplate redisTemplate;
   private final RedisScript<String> leaveLobbyScript;
+  private final RedisScript<String> createLobbyScript;
 
   // =========================================================
-  // Lua 스크립트 반환값 상수
-  // 서비스 레이어에 노출되지 않고 이 클래스 안에서만 사용됩니다.
+  // create_lobby.lua 반환값 상수
   // =========================================================
 
-  /** Lua 스크립트 반환값 — 로비 폭파 (모든 인원 퇴장) */
+  private static final String RESULT_OK = "OK";
+  private static final String RESULT_LOCK_FAILED = "LOCK_FAILED";
+
+  // =========================================================
+  // leave_lobby.lua 반환값 상수
+  // =========================================================
+
   private static final String RESULT_DESTROYED = "DESTROYED";
-
-  /** Lua 스크립트 반환값 — 일반 유저 퇴장 */
   private static final String RESULT_LEFT = "LEFT";
-
-  /** Lua 스크립트 반환값 접두사 — 방장 위임 (뒤에 새 방장 ID가 붙음) */
   private static final String RESULT_DELEGATED_PREFIX = "DELEGATED:";
+
+  // =========================================================
+  // isPrivate 정규화 상수
+  // =========================================================
+
+  /** Lua 스크립트에 전달할 공개 로비 isPrivate 값 */
+  private static final String IS_PRIVATE_TRUE = "true";
+
+  /** Lua 스크립트에 전달할 비공개 로비 isPrivate 값 */
+  private static final String IS_PRIVATE_FALSE = "false";
+
+  // =========================================================
+  // 초대 코드 생성 상수
+  // =========================================================
+
+  /** 초대 코드 생성용 보안 난수 생성기 */
+  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+  /** 초대 코드 생성 실패 시 반환할 에러 메시지 */
+  private static final String ERROR_INVITE_CODE_EXHAUSTED =
+          "초대 코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+
+  /** Lua 스크립트 null 반환 시 에러 메시지 */
+  private static final String ERROR_REDIS_SCRIPT_NULL =
+          "Redis 스크립트 실행 결과가 null입니다. Redis 연결 상태를 확인해주세요.";
 
   // =========================================================
   // 공개 메서드
   // =========================================================
 
-  /**
-   * 해당 코드의 로비가 Redis에 존재하는지 확인합니다.
-   *
-   * @param code 로비 초대 코드
-   * @return 로비 Hash 키 존재 여부
-   */
   @Override
   public boolean existsByCode(String code) {
     return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.lobbyKey(code)));
   }
 
-  /**
-   * 해당 유저가 해당 로비의 참여자 Set에 포함되어 있는지 확인합니다.
-   *
-   * @param code   로비 초대 코드
-   * @param userId 사용자 식별자
-   * @return 참여자 여부
-   */
   @Override
   public boolean isParticipant(String code, String userId) {
     return Boolean.TRUE.equals(
@@ -92,23 +86,76 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   /**
-   * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행하고
-   * 결과를 도메인 객체(LeaveLobbyResult)로 변환하여 반환합니다.
+   * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환한다.
    *
-   * [KEYS 구성]
-   * KEYS[1] = lobby:{code}              — 로비 메타 정보 Hash
-   * KEYS[2] = lobby:{code}:participants — 참여자 Set
-   * KEYS[3] = lobby:{code}:order        — 입장 순서 List
-   * KEYS[4] = lobby:public              — 전역 공개 로비 Set
+   * [저장 구조]
+   * - lobby:{code}              Hash — 로비 메타 정보
+   * - lobby:{code}:participants Set  — 참여자 목록 (방장 선 추가)
+   * - lobby:{code}:order        List — 입장 순서 (방장 선 추가)
+   * - lobby:public              Set  — 공개 로비 목록 (isPrivate=false 시만)
    *
-   * [ARGV 구성]
-   * ARGV[1] = userId  — 퇴장하는 유저 식별자
-   * ARGV[2] = code    — 로비 코드
-   *
-   * @param code   퇴장 처리 대상 로비 코드
-   * @param userId 퇴장하는 유저 식별자
-   * @return LeaveLobbyResult (Destroyed | Delegated | Left | Error)
+   * [재시도 전략]
+   * - LOCK_FAILED : 코드 충돌 → 새 코드 생성 후 재시도
+   * - null        : Redis 오류 → 재시도하지 않고 즉시 503 반환
+   * - 최대 재시도 횟수 초과 시 503 반환
    */
+  @Override
+  public String saveToRedis(CreateLobbyRequest request, String userIdentifier) {
+    for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
+      String candidate = generateInviteCode();
+      String result = executeCreateLobbyScript(candidate, request, userIdentifier);
+
+      // null 반환은 코드 충돌이 아닌 Redis 오류이므로 즉시 503 반환
+      if (result == null) {
+        log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. 코드: {}", candidate);
+        throw new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE, ERROR_REDIS_SCRIPT_NULL);
+      }
+
+      if (RESULT_OK.equals(result)) {
+        log.info("로비 Redis 저장 완료 - 코드: {}, 방장: {}", candidate, userIdentifier);
+        return candidate;
+      }
+
+      // LOCK_FAILED: 코드 충돌 → 새 코드로 재시도
+      log.warn("초대 코드 충돌 - 재시도 {}/{}: {}",
+              attempt + 1, LobbyDefaults.INVITE_CODE_MAX_RETRY, candidate);
+    }
+
+    throw new ResponseStatusException(
+            HttpStatus.SERVICE_UNAVAILABLE, ERROR_INVITE_CODE_EXHAUSTED);
+  }
+
+  /**
+   * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
+   *
+   * [삭제 실패 처리]
+   * 보상 삭제 실패 시 ERROR 로그를 남기고 false를 반환한다.
+   * 서비스 레이어에서 반환값을 확인하여 추가 알림 처리가 가능하다.
+   *
+   * @return 보상 삭제 성공 여부 (true: 성공, false: 실패)
+   */
+  @Override
+  public boolean deleteFromRedis(String inviteCode) {
+    try {
+      redisTemplate.delete(List.of(
+              RedisKeys.lobbyKey(inviteCode),
+              RedisKeys.lobbyParticipantsKey(inviteCode),
+              RedisKeys.lobbyOrderKey(inviteCode),
+              RedisKeys.lobbyCodeLockKey(inviteCode)
+      ));
+
+      redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
+
+      log.info("Redis 보상 삭제 완료 - 코드: {}", inviteCode);
+      return true;
+
+    } catch (Exception e) {
+      log.error("Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요.", inviteCode, e);
+      return false;
+    }
+  }
+
   @Override
   public LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId) {
     List<String> keys = List.of(
@@ -122,25 +169,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       String result = redisTemplate.execute(leaveLobbyScript, keys, userId, code);
       return parseLuaResult(result, code, userId);
     } catch (Exception e) {
-      return new LeaveLobbyResult.Error(
-              "Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
+      return new LeaveLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
     }
   }
 
-  /**
-   * Redis에서 공개 로비 목록을 조회하여 반환합니다.
-   *
-   * [동작 순서]
-   * 1. lobby:public Set에서 공개 로비 코드 목록을 가져옵니다.
-   * 2. 각 코드로 lobby:{code} Hash를 조회하여 DTO로 변환합니다.
-   * 3. Hash 데이터가 없는 코드(좀비 항목)는 건너뜁니다.
-   *
-   * [성능 고려사항]
-   * 현재 로비 수만큼 반복하여 Redis를 조회하는 N+1 구조입니다.
-   * TODO: 로비 수가 증가할 경우 Redis Pipeline 또는 MGET으로 최적화 필요
-   *
-   * @return 현재 공개 상태인 로비 DTO 목록
-   */
   @Override
   public List<LobbyRedisDto> getPublicLobbies() {
     Set<String> publicLobbyCodes =
@@ -156,23 +188,16 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       Map<Object, Object> data =
               redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(code));
 
-      // lobby:public에는 있지만 실제 Hash가 삭제된 좀비 항목 방어
       if (data.isEmpty()) continue;
 
       result.add(LobbyRedisDto.builder()
-              // [수정] 문자열 리터럴 → RedisKeys.FIELD_* 상수로 교체 (오타 방지)
               .code((String) data.get(RedisKeys.FIELD_CODE))
               .hostId((String) data.get(RedisKeys.FIELD_HOST_USER_ID))
               .title((String) data.get(RedisKeys.FIELD_TITLE))
               .status((String) data.get(RedisKeys.FIELD_STATUS))
-
-              // [수정] 누락된 필드 3개 추가
-              // Redis는 모든 값을 String으로 저장하므로 숫자 타입은 안전하게 파싱
               .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
               .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
-              // "true" / "false" 문자열을 Boolean으로 변환
-              .isPrivate(Boolean.parseBoolean(
-                      (String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
+              .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
               .build());
     }
 
@@ -184,51 +209,97 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   // =========================================================
 
   /**
-   * Lua 스크립트 반환값을 LeaveLobbyResult 도메인 객체로 변환합니다.
+   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행한다.
    *
-   * [캡슐화 이유]
-   * "DELEGATED:", "DESTROYED" 같은 Redis 반환 포맷은 인프라 세부사항입니다.
-   * 파싱 책임을 이 Repository 내부에 숨겨 서비스 레이어가
-   * Redis 반환 포맷을 알 필요 없도록 합니다.
+   * [isPrivate 정규화]
+   * Lua 스크립트는 isPrivate 값을 == "false" 문자열 비교로 판단합니다.
+   * normalizeIsPrivate()로 반드시 소문자 "true"/"false"로 정규화하여 전달합니다.
    *
-   * @param result Lua 스크립트 반환값 문자열
-   * @param code   퇴장 처리 대상 로비 코드
-   * @param userId 퇴장하는 유저 식별자
-   * @return 파싱된 LeaveLobbyResult 도메인 객체
+   * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌) | null (Redis 오류)
    */
+  private String executeCreateLobbyScript(
+          String inviteCode,
+          CreateLobbyRequest request,
+          String userIdentifier
+  ) {
+    List<String> keys = List.of(
+            RedisKeys.lobbyCodeLockKey(inviteCode),     // KEYS[1]
+            RedisKeys.lobbyKey(inviteCode),             // KEYS[2]
+            RedisKeys.lobbyParticipantsKey(inviteCode), // KEYS[3]
+            RedisKeys.lobbyOrderKey(inviteCode),        // KEYS[4]
+            RedisKeys.LOBBY_PUBLIC                      // KEYS[5]
+    );
+
+    String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
+
+    // isPrivate 정규화
+    // Lua 스크립트의 문자열 비교(isPrivate == "false")와 일치하도록
+    // 반드시 소문자 "true"/"false"로 명시적 정규화하여 전달한다.
+    String isPrivateValue = normalizeIsPrivate(request.isPrivate());
+
+    return redisTemplate.execute(
+            createLobbyScript,
+            keys,
+            userIdentifier,                         // ARGV[1]
+            lockTtlMs,                              // ARGV[2]
+            inviteCode,                             // ARGV[3]
+            request.title(),                        // ARGV[4]
+            String.valueOf(request.maxPlayers()),   // ARGV[5]
+            isPrivateValue,                         // ARGV[6] — 정규화된 isPrivate 값
+            LobbyStatus.WAITING.name()              // ARGV[7]
+    );
+  }
+
+  /**
+   * isPrivate 값을 Lua 스크립트와 일치하는 소문자 문자열로 정규화한다.
+   *
+   * [정규화 이유]
+   * Lua 스크립트(create_lobby.lua)에서 isPrivate 값을
+   * if isPrivate == "false" then 으로 비교합니다.
+   * IS_PRIVATE_TRUE / IS_PRIVATE_FALSE 상수를 사용하여
+   * 대소문자 불일치나 예상치 못한 값이 전달되는 것을 방지합니다.
+   *
+   * @param isPrivate 로비 비공개 여부
+   * @return "true" (비공개) 또는 "false" (공개)
+   */
+  private String normalizeIsPrivate(boolean isPrivate) {
+    return isPrivate ? IS_PRIVATE_TRUE : IS_PRIVATE_FALSE;
+  }
+
+  /**
+   * LobbyDefaults 상수 기반으로 6자리 초대 코드를 생성한다.
+   *
+   * [SecureRandom 사용 이유]
+   * Random 대신 SecureRandom을 사용하여 코드 예측 가능성을 낮춘다.
+   * 게임 특성상 코드 추측으로 비공개 로비에 무단 입장하는 것을 방지한다.
+   */
+  private String generateInviteCode() {
+    StringBuilder sb = new StringBuilder(LobbyDefaults.INVITE_CODE_LENGTH);
+    for (int i = 0; i < LobbyDefaults.INVITE_CODE_LENGTH; i++) {
+      sb.append(LobbyDefaults.INVITE_CODE_CHARACTERS.charAt(
+              SECURE_RANDOM.nextInt(LobbyDefaults.INVITE_CODE_CHARACTERS.length())
+      ));
+    }
+    return sb.toString();
+  }
+
   private LeaveLobbyResult parseLuaResult(String result, String code, String userId) {
     if (result == null) {
       return new LeaveLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
     }
-
     if (RESULT_DESTROYED.equals(result)) {
       return new LeaveLobbyResult.Destroyed(code);
     }
-
     if (RESULT_LEFT.equals(result)) {
       return new LeaveLobbyResult.Left(code, userId);
     }
-
     if (result.startsWith(RESULT_DELEGATED_PREFIX)) {
-      // "DELEGATED:{newHostId}" 형태에서 새 방장 ID 추출
       String newHostId = result.substring(RESULT_DELEGATED_PREFIX.length());
       return new LeaveLobbyResult.Delegated(code, newHostId);
     }
-
     return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
   }
 
-  /**
-   * Redis에서 조회한 Object 값을 Long으로 안전하게 변환합니다.
-   *
-   * Redis는 모든 Hash 값을 String으로 저장하므로,
-   * Long 타입 필드는 반드시 String → Long 파싱이 필요합니다.
-   * 값이 null이거나 숫자가 아닌 경우 null을 반환하여
-   * NumberFormatException이 서비스 레이어로 전파되는 것을 방지합니다.
-   *
-   * @param value Redis Hash에서 조회한 원시 값 (null 허용)
-   * @return 변환된 Long, 변환 불가 시 null
-   */
   private Long parseNullableLong(Object value) {
     if (value == null) return null;
     try {
@@ -239,17 +310,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  /**
-   * Redis에서 조회한 Object 값을 Integer로 안전하게 변환합니다.
-   *
-   * Redis는 모든 Hash 값을 String으로 저장하므로,
-   * Integer 타입 필드는 반드시 String → Integer 파싱이 필요합니다.
-   * 값이 null이거나 숫자가 아닌 경우 null을 반환하여
-   * NumberFormatException이 서비스 레이어로 전파되는 것을 방지합니다.
-   *
-   * @param value Redis Hash에서 조회한 원시 값 (null 허용)
-   * @return 변환된 Integer, 변환 불가 시 null
-   */
   private Integer parseNullableInt(Object value) {
     if (value == null) return null;
     try {

@@ -1,9 +1,11 @@
 package io.github.ascrew.monomatbe.global.websocket;
 
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -13,16 +15,29 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+/**
+ * STOMP 채널 인터셉터.
+ */
 @Slf4j
 @RequiredArgsConstructor
 @Component
 public class StompChannelInterceptor implements ChannelInterceptor {
 
-    // 표준 UUID 형식 검증 정규식 (8-4-4-4-12 포맷)
     private static final Pattern UUID_PATTERN =
-            Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+            Pattern.compile(
+                    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+    // 사용자 온라인 상태 TTL (단위: 시간)
+    // 비정상 종료 시 Redis 좀비 키 방지용 — 정상 종료 시 handleDisconnectEvent에서 즉시 삭제
+    private static final long USER_STATUS_TTL_HOURS = 2;
+
+    // [추가] user_status 저장 및 메트릭 처리를 위한 의존성
+    // StringRedisTemplate: 순수 문자열("ONLINE") 저장 — JSON 직렬화 방지
+    private final StringRedisTemplate stringRedisTemplate;
+    private final WebSocketMetric webSocketMetric;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -48,36 +63,52 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
     /**
      * CONNECT 명령 처리.
-     * STOMP 헤더에서 사용자 식별자를 추출하고 형식을 검증한 뒤 세션에 저장합니다.
-     * 검증 실패 시 예외를 던져 연결을 거부합니다.
      */
-    private void handleConnect(StompHeaderAccessor accessor, Map<String, Object> sessionAttributes) {
-        // WebSocketHeaders 상수로 헤더 키 참조 (이슈 #3 네이밍 통일과 연계)
+    private void handleConnect(
+            StompHeaderAccessor accessor,
+            Map<String, Object> sessionAttributes
+    ) {
         String userIdentifier = accessor.getFirstNativeHeader(WebSocketHeaders.USER_IDENTIFIER);
 
         if (userIdentifier == null || userIdentifier.isBlank()) {
             log.warn("STOMP CONNECT 거부: 사용자 식별자 없음");
-            throw new IllegalArgumentException("STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다.");
+            throw new IllegalArgumentException(
+                    "STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다.");
         }
 
         if (!UUID_PATTERN.matcher(userIdentifier).matches()) {
-            log.warn("STOMP CONNECT 거부: 유효하지 않은 식별자 형식 = {}", sanitizeForLog(userIdentifier));
-            throw new IllegalArgumentException("STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다.");
+            log.warn("STOMP CONNECT 거부: 유효하지 않은 식별자 형식 = {}",
+                    sanitizeForLog(userIdentifier));
+            throw new IllegalArgumentException(
+                    "STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다.");
         }
 
-        // 검증 완료 후 세션에 사용자 식별자 저장
+        // 1. 검증 완료 후 세션에 userIdentifier 저장 (이후 SEND/SUBSCRIBE에서 참조)
         if (sessionAttributes != null) {
             sessionAttributes.put(WebSocketHeaders.USER_IDENTIFIER, userIdentifier);
         }
 
+        // 2. Redis user_status 저장
+        // [수정] SessionConnectedEvent에서 이전 — Map 인스턴스 불일치 문제 근본 해결
+        // [수정] stringRedisTemplate 사용 — "ONLINE" 순수 문자열로 저장 (JSON 직렬화 방지)
+        stringRedisTemplate.opsForValue().set(
+                RedisKeys.userStatusKey(userIdentifier),
+                WebSocketHeaders.STATUS_ONLINE,
+                USER_STATUS_TTL_HOURS,
+                TimeUnit.HOURS
+        );
+
+        // 3. 활성 세션 카운터 증가 (Prometheus 메트릭)
+        // [수정] SessionConnectedEvent에서 이전
+        webSocketMetric.increment();
+
         log.info("STOMP CONNECT 성공: {}", userIdentifier);
     }
 
-    /**
-     * SUBSCRIBE / SEND / UNSUBSCRIBE 명령 처리.
-     * 세션에 사용자 식별자가 존재하는지 검증합니다.
-     */
-    private void validateSession(StompHeaderAccessor accessor, Map<String, Object> sessionAttributes) {
+    private void validateSession(
+            StompHeaderAccessor accessor,
+            Map<String, Object> sessionAttributes
+    ) {
         String userIdentifier = sessionAttributes != null
                 ? (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER)
                 : null;
@@ -96,11 +127,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
     }
 
-    /**
-     * SUBSCRIBE 명령 처리.
-     * 로비 채팅 채널 구독 시 세션에 로비 코드를 저장합니다.
-     * DISCONNECT 이벤트에서 퇴장 처리 시 사용됩니다.
-     */
     private void handleSubscribe(
             StompHeaderAccessor accessor,
             Map<String, Object> sessionAttributes,
@@ -108,12 +134,9 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     ) {
         String destination = accessor.getDestination();
 
-        // StompDestinations 상수로 경로 접두사 참조
         if (StompDestinations.isLobbySubscription(destination)) {
             String roomId = StompDestinations.extractLobbyCode(destination);
-
             if (sessionAttributes != null) {
-                // WebSocketHeaders 상수로 세션 키 참조
                 sessionAttributes.put(WebSocketHeaders.ROOM_ID, roomId);
             }
         }
@@ -121,9 +144,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         log.info("[SUBSCRIBE] 구독 - 식별자: {}, 경로: {}", userIdentifier, destination);
     }
 
-    /**
-     * DISCONNECT 명령 처리. 연결 해제 로그를 남깁니다.
-     */
     private void handleDisconnect(Map<String, Object> sessionAttributes) {
         String userIdentifier = sessionAttributes != null
                 ? (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER)
@@ -132,10 +152,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         log.info("STOMP DISCONNECT: {}", userIdentifier);
     }
 
-    /**
-     * 로그 출력 전 입력값을 안전하게 정제합니다.
-     * 로그 인젝션 방지를 위해 개행 문자를 제거하고 길이를 제한합니다.
-     */
     private String sanitizeForLog(String value) {
         if (value == null) return "null";
         String sanitized = value.replaceAll("[\r\n\t]", "");

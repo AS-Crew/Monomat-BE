@@ -477,9 +477,12 @@ public class WebSocketEventListener {
 
     /**
      * 로비 채팅 채널에 ENTER 시스템 메시지를 발행한다.
+     *
+     * Redis Pub/Sub 발행 실패 시 시스템 메시지가 유실될 수 있으므로,
+     * RedisPublisher.publish()의 반환값을 확인하여 실패 로그를 남긴다.
      */
     private void publishEnterMessage(String lobbyCode, String userIdentifier) {
-        redisPublisher.publish(
+        boolean published = redisPublisher.publish(
                 StompDestinations.subscribeLobbyChat(lobbyCode),
                 ChatMessageDto.builder()
                         .type(ChatMessageDto.MessageType.ENTER)
@@ -489,13 +492,20 @@ public class WebSocketEventListener {
                         .timestamp(LocalDateTime.now().toString())
                         .build()
         );
+
+        if (!published) {
+            log.error("ENTER 메시지 발행 실패 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+        }
     }
 
     /**
      * 로비 채팅 채널에 LEAVE 시스템 메시지를 발행한다.
+     *
+     * Redis Pub/Sub 발행 실패 시 퇴장 시스템 메시지가 유실될 수 있으므로,
+     * RedisPublisher.publish()의 반환값을 확인하여 실패 로그를 남긴다.
      */
     private void publishLeaveMessage(String lobbyCode, String userIdentifier) {
-        redisPublisher.publish(
+        boolean published = redisPublisher.publish(
                 StompDestinations.subscribeLobbyChat(lobbyCode),
                 ChatMessageDto.builder()
                         .type(ChatMessageDto.MessageType.LEAVE)
@@ -505,6 +515,10 @@ public class WebSocketEventListener {
                         .timestamp(LocalDateTime.now().toString())
                         .build()
         );
+
+        if (!published) {
+            log.error("LEAVE 메시지 발행 실패 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+        }
     }
 
     /**

@@ -50,6 +50,41 @@ POST /api/auth/guest
 - 정식 회원 닉네임과 충돌: `정식 회원이 이미 사용 중인 닉네임입니다.`
 - 기존 사용자 닉네임과 충돌: `이미 사용 중인 닉네임입니다.`
 
+#### 회원가입
+
+```
+POST /api/auth/register
+```
+
+로그인 ID/비밀번호/닉네임으로 정식 회원 계정을 생성합니다.  
+회원가입 API는 계정 생성만 수행하며 토큰 발급은 로그인 API에서 처리됩니다.
+
+**Request**
+
+```json
+{
+  "loginId": "member01",
+  "password": "password123",
+  "nickname": "registered-user"
+}
+```
+
+**Response `201 Created`**
+
+```json
+{
+  "userId": 2,
+  "loginId": "member01",
+  "nickname": "registered-user",
+  "userType": "REGISTERED"
+}
+```
+
+**Error**
+
+- `400 Bad Request`: 필수값 누락/비밀번호 길이 조건 불만족
+- `409 Conflict`: 로그인 ID 또는 닉네임 중복
+
 ### 로비 (Lobby)
 
 ### 로비 생성
@@ -321,7 +356,6 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 
 | 분류 | 설명 |
 |---|---|
-| 회원가입 | `POST /api/auth/register` |
 | 로그인 | `POST /api/auth/login` |
 | 로비 초대 코드 입장 | `POST /api/lobbies/join` |
 | 맵 CRUD | `GET/POST/PUT/DELETE /api/maps` |

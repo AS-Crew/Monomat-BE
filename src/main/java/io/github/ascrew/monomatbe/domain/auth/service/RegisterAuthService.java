@@ -22,19 +22,25 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class RegisterAuthService {
 
+    private static final String ERR_DUPLICATE_LOGIN_ID = "이미 사용 중인 로그인 ID입니다.";
+    private static final String ERR_DUPLICATE_NICKNAME = "이미 사용 중인 닉네임입니다.";
+
     private final UserRepository userRepository;
     private final UserCredentialRepository userCredentialRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional
     public RegisterResponse register(String rawLoginId, String rawPassword, String rawNickname) {
-        String loginId = normalizeRequired(rawLoginId, "로그인 ID");
-        String password = normalizeRequired(rawPassword, "비밀번호");
-        String nickname = normalizeRequired(rawNickname, "닉네임");
+        String loginId = normalizeRequiredAtServiceBoundary(rawLoginId, "로그인 ID");
+        String password = normalizeRequiredAtServiceBoundary(rawPassword, "비밀번호");
+        String nickname = normalizeRequiredAtServiceBoundary(rawNickname, "닉네임");
 
         validateDuplicate(loginId, nickname);
 
         User savedUser;
+
+        // user_credentials 저장 실패 시 @Transactional에 의해 users 저장도 함께 롤백됨
+        // ResponseStatusException은 런타임 예외이므로 롤백 대상에 포함됨
         try {
             savedUser = userRepository.saveAndFlush(User.builder()
                     .username(nickname)
@@ -42,7 +48,7 @@ public class RegisterAuthService {
                     .status(UserStatus.ACTIVE)
                     .build());
         } catch (DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_NICKNAME);
         }
 
         try {
@@ -52,7 +58,7 @@ public class RegisterAuthService {
                     .passwordHash(passwordEncoder.encode(password))
                     .build());
         } catch (DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 사용 중인 로그인 ID입니다.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_LOGIN_ID);
         }
 
         return RegisterResponse.builder()
@@ -65,14 +71,17 @@ public class RegisterAuthService {
 
     private void validateDuplicate(String loginId, String nickname) {
         if (userCredentialRepository.existsByLoginId(loginId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 사용 중인 로그인 ID입니다.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_LOGIN_ID);
         }
         if (userRepository.existsByUsername(nickname)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다.");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_NICKNAME);
         }
     }
 
-    private String normalizeRequired(String value, String fieldName) {
+    /**
+     * 서비스 직접 호출 경로를 위한 최소 방어선: trim + null/blank 차단.
+     */
+    private String normalizeRequiredAtServiceBoundary(String value, String fieldName) {
         if (value == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
         }

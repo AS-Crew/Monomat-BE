@@ -185,7 +185,7 @@ public final class RedisKeys {
 
     /**
      * WebSocket 세션 매핑 Hash 키를 반환합니다.
-     * 저장 구조: Hash { userId, lobbyCode }
+     * 저장 구조: Hash { userIdentifier, lobbyCode }
      * DISCONNECT 이벤트에서 userIdentifier와 lobbyCode를 역추적하는 데 사용됩니다.
      *
      * @param wsSessionId WebSocket 세션 ID

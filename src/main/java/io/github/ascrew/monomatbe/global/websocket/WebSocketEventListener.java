@@ -381,7 +381,6 @@ public class WebSocketEventListener {
             log.info("로비 세션 교체 처리 - 로비: {}, 식별자: {}, previousWsSessionId: {}, currentWsSessionId: {}",
                     lobbyCode, userIdentifier, previousWsSessionId, wsSessionId);
 
-            cleanupWsConnection(previousWsSessionId);
             return;
         }
 

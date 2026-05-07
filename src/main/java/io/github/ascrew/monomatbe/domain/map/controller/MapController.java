@@ -2,7 +2,7 @@ package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
-import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.PublicMapPageResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.service.MapService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -21,9 +21,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 @Tag(name = "Map", description = "맵 관련 REST API")
 @RestController
@@ -35,8 +34,11 @@ public class MapController {
 
     @Operation(summary = "공개 맵 목록 조회")
     @GetMapping
-    public ResponseEntity<List<MapSummaryResponse>> getPublicMaps() {
-        return ResponseEntity.ok(mapService.getPublicMaps());
+    public ResponseEntity<PublicMapPageResponse> getPublicMaps(
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "20") Integer size
+    ) {
+        return ResponseEntity.ok(mapService.getPublicMaps(page, size));
     }
 
     @Operation(summary = "공개 맵 단건 조회")

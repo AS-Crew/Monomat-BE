@@ -180,21 +180,34 @@ GET /api/maps
 ```
 
 공개(`is_public=true`) 상태이면서 삭제되지 않은 맵만 반환합니다.
+페이지네이션 파라미터를 지원합니다.
+
+| 쿼리 파라미터 | 기본값 | 설명 |
+|---|---:|---|
+| `page` | `0` | 0-based 페이지 번호 |
+| `size` | `20` | 페이지 크기 (최대 100) |
 
 **Response `200 OK`**
 
 ```json
-[
-  {
-    "id": 1,
-    "title": "K-POP 2세대",
-    "category": "kpop",
-    "numOfSong": 20,
-    "totalPlayTime": 600,
-    "isPublic": true,
-    "ownerId": 10
-  }
-]
+{
+  "content": [
+    {
+      "id": 1,
+      "title": "K-POP 2세대",
+      "category": "kpop",
+      "numOfSong": 20,
+      "totalPlayTime": 600,
+      "isPublic": true,
+      "ownerId": 10
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 1,
+  "totalPages": 1,
+  "hasNext": false
+}
 ```
 
 #### 공개 맵 단건 조회

@@ -6,12 +6,18 @@ import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.PublicMapPageResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,11 +28,15 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MapService {
 
     private static final Duration MAP_CACHE_TTL = Duration.ofMinutes(5);
+    private static final int DEFAULT_PAGE = 0;
+    private static final int DEFAULT_SIZE = 20;
+    private static final int MAX_SIZE = 100;
 
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵을 생성할 수 있습니다.";
@@ -38,29 +48,72 @@ public class MapService {
     private final StringRedisTemplate redisTemplate;
     private final JsonMapper jsonMapper;
 
+    // 공개된 맵 목록을 페이징하여 조회 (Redis 캐싱 적용)
     @Transactional(readOnly = true)
-    public List<MapSummaryResponse> getPublicMaps() {
-        String cacheKey = RedisKeys.mapPublicListKey();
-        String cachedValue = redisTemplate.opsForValue().get(cacheKey);
-        if (cachedValue != null) {
-            return jsonMapper.readValue(cachedValue, new TypeReference<List<MapSummaryResponse>>() {});
+    public PublicMapPageResponse getPublicMaps(Integer page, Integer size) {
+        // 파라미터 정규화 및 유효성 검사
+        int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
+        int normalizedSize = size == null || size <= 0 ? DEFAULT_SIZE : Math.min(size, MAX_SIZE);
+
+        // 캐시 키 생성 및 조회
+        String version = getPublicListCacheVersion();
+        String cacheKey = RedisKeys.mapPublicListKey(version, normalizedPage, normalizedSize);
+        // 캐시 조회/역직렬화 실패는 DB fallback으로 처리한다.
+        try {
+            String cachedValue = redisTemplate.opsForValue().get(cacheKey);
+            if (cachedValue != null) {
+                try {
+                    return jsonMapper.readValue(cachedValue, new TypeReference<PublicMapPageResponse>() {});
+                } catch (Exception e) {
+                    log.warn("공개 맵 목록 캐시 역직렬화 실패 - key: {}. 캐시 삭제 후 DB fallback", cacheKey, e);
+                    safeDeleteCache(cacheKey);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("공개 맵 목록 캐시 조회 실패 - key: {}. DB fallback", cacheKey, e);
         }
 
-        List<MapSummaryResponse> response = quizMapJpaRepository.findAllByIsDeletedFalseAndIsPublicTrueOrderByUpdatedAtDesc()
+        // 캐시 미스시 DB에서 데이터 조회
+        Pageable pageable = PageRequest.of(
+                normalizedPage,
+                normalizedSize,
+                Sort.by(Sort.Direction.DESC, "updatedAt")
+        );
+        Page<QuizMap> pageResult = quizMapJpaRepository.findAllByIsDeletedFalseAndIsPublicTrue(pageable);
+        List<MapSummaryResponse> content = pageResult.getContent()
                 .stream()
                 .map(this::toSummaryResponse)
                 .toList();
 
-        redisTemplate.opsForValue().set(cacheKey, jsonMapper.writeValueAsString(response), MAP_CACHE_TTL);
+        PublicMapPageResponse response = PublicMapPageResponse.builder()
+                .content(content)
+                .page(pageResult.getNumber())
+                .size(pageResult.getSize())
+                .totalElements(pageResult.getTotalElements())
+                .totalPages(pageResult.getTotalPages())
+                .hasNext(pageResult.hasNext())
+                .build();
+
+        safeWriteCache(cacheKey, response);
         return response;
     }
 
     @Transactional(readOnly = true)
     public MapDetailResponse getPublicMap(Long mapId) {
         String cacheKey = RedisKeys.mapPublicDetailKey(mapId);
-        String cachedValue = redisTemplate.opsForValue().get(cacheKey);
-        if (cachedValue != null) {
-            return jsonMapper.readValue(cachedValue, MapDetailResponse.class);
+        // 캐시 조회/역직렬화 실패는 DB fallback으로 처리한다.
+        try {
+            String cachedValue = redisTemplate.opsForValue().get(cacheKey);
+            if (cachedValue != null) {
+                try {
+                    return jsonMapper.readValue(cachedValue, MapDetailResponse.class);
+                } catch (Exception e) {
+                    log.warn("공개 맵 단건 캐시 역직렬화 실패 - key: {}. 캐시 삭제 후 DB fallback", cacheKey, e);
+                    safeDeleteCache(cacheKey);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("공개 맵 단건 캐시 조회 실패 - key: {}. DB fallback", cacheKey, e);
         }
 
         QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalseAndIsPublicTrue(mapId)
@@ -68,7 +121,7 @@ public class MapService {
                         HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
 
         MapDetailResponse response = toDetailResponse(quizMap);
-        redisTemplate.opsForValue().set(cacheKey, jsonMapper.writeValueAsString(response), MAP_CACHE_TTL);
+        safeWriteCache(cacheKey, response);
         return response;
     }
 
@@ -147,10 +200,46 @@ public class MapService {
     }
 
     private void evictMapCache(Long mapId) {
-        redisTemplate.delete(List.of(
-                RedisKeys.mapPublicListKey(),
-                RedisKeys.mapPublicDetailKey(mapId)
-        ));
+        redisTemplate.opsForValue().increment(RedisKeys.mapPublicListVersionKey());
+        redisTemplate.delete(RedisKeys.mapPublicDetailKey(mapId));
+    }
+
+    private String getPublicListCacheVersion() {
+        String key = RedisKeys.mapPublicListVersionKey();
+        try {
+            String version = redisTemplate.opsForValue().get(key);
+            if (version != null) {
+                return version;
+            }
+
+            Boolean set = redisTemplate.opsForValue().setIfAbsent(key, "1");
+            if (Boolean.TRUE.equals(set)) {
+                return "1";
+            }
+
+            String fallback = redisTemplate.opsForValue().get(key);
+            return fallback != null ? fallback : "1";
+        } catch (Exception e) {
+            log.warn("공개 맵 목록 캐시 버전 조회/초기화 실패 - key: {}. 기본 버전으로 진행", key, e);
+            return "1";
+        }
+    }
+
+    private void safeWriteCache(String key, Object payload) {
+        try {
+            String serialized = jsonMapper.writeValueAsString(payload);
+            redisTemplate.opsForValue().set(key, serialized, MAP_CACHE_TTL);
+        } catch (Exception e) {
+            log.warn("맵 캐시 저장 실패 - key: {}. 응답은 정상 반환", key, e);
+        }
+    }
+
+    private void safeDeleteCache(String key) {
+        try {
+            redisTemplate.delete(key);
+        } catch (Exception e) {
+            log.warn("손상 캐시 삭제 실패 - key: {}", key, e);
+        }
     }
 
     private MapSummaryResponse toSummaryResponse(QuizMap quizMap) {

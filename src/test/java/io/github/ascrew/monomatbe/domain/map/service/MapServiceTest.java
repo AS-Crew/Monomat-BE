@@ -17,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Optional;
@@ -25,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,6 +42,8 @@ class MapServiceTest {
     @Mock
     private StringRedisTemplate redisTemplate;
     @Mock
+    private ValueOperations<String, String> valueOperations;
+    @Mock
     private JsonMapper jsonMapper;
 
     private MapService mapService;
@@ -46,6 +51,8 @@ class MapServiceTest {
     @BeforeEach
     void setUp() {
         mapService = new MapService(quizMapJpaRepository, userRepository, redisTemplate, jsonMapper);
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(valueOperations.increment(anyString())).thenReturn(1L);
     }
 
     @Test
@@ -93,10 +100,8 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.title()).isEqualTo("new map");
         assertThat(response.isPublic()).isTrue();
-        verify(redisTemplate).delete(argThat((java.util.Collection<String> keys) ->
-                keys.contains(RedisKeys.mapPublicListKey())
-                        && keys.contains(RedisKeys.mapPublicDetailKey(300L))
-        ));
+        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
+        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(300L));
     }
 
     @Test
@@ -154,9 +159,7 @@ class MapServiceTest {
 
         mapService.updateMap(200L, request, ownerPrincipal);
 
-        verify(redisTemplate).delete(argThat((java.util.Collection<String> keys) ->
-                keys.contains(RedisKeys.mapPublicListKey())
-                        && keys.contains(RedisKeys.mapPublicDetailKey(200L))
-        ));
+        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
+        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(200L));
     }
 }

@@ -41,7 +41,7 @@ public class QuizMap {
     @Column(name = "title", nullable = false, length = 50)
     private String title;
 
-    @Column(name = "description", columnDefinition = "TEXT")
+    @Column(name = "description", length = 255)
     private String description;
 
     @Enumerated(EnumType.STRING)

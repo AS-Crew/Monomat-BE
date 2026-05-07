@@ -59,7 +59,10 @@ public final class RedisKeys {
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
 
     /** 공개 맵 목록 캐시 키 */
-    private static final String MAP_PUBLIC_LIST = "map:public:list";
+    private static final String MAP_PUBLIC_LIST_PREFIX = "map:public:list";
+
+    /** 공개 맵 목록 캐시 버전 키 */
+    private static final String MAP_PUBLIC_LIST_VERSION = "map:public:list:version";
 
     /** 공개 맵 단건 캐시 키 접두사 */
     private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:";
@@ -231,8 +234,12 @@ public final class RedisKeys {
         return LOBBY_CODE_LOCK_PREFIX + inviteCode;
     }
 
-    public static String mapPublicListKey() {
-        return MAP_PUBLIC_LIST;
+    public static String mapPublicListVersionKey() {
+        return MAP_PUBLIC_LIST_VERSION;
+    }
+
+    public static String mapPublicListKey(String version, int page, int size) {
+        return MAP_PUBLIC_LIST_PREFIX + ":v:" + version + ":p:" + page + ":s:" + size;
     }
 
     public static String mapPublicDetailKey(Long mapId) {

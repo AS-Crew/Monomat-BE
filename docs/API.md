@@ -50,6 +50,22 @@ POST /api/auth/guest
 - 정식 회원 닉네임과 충돌: `정식 회원이 이미 사용 중인 닉네임입니다.`
 - 기존 사용자 닉네임과 충돌: `이미 사용 중인 닉네임입니다.`
 
+#### (dev 전용) REGISTERED 토큰 발급
+
+```
+POST /api/auth/dev/registered-token
+```
+
+dev 프로필에서만 노출됩니다. 입력한 username으로 REGISTERED 사용자를 만들거나 재사용해 Access/Refresh 토큰을 발급합니다.
+
+**Request**
+
+```json
+{
+  "username": "dev-registered-user"
+}
+```
+
 ### 로비 (Lobby)
 
 ### 로비 생성
@@ -152,6 +168,89 @@ Redis에서 직접 필터링하여 고속 반환합니다.
 | `maxPlayers` | Integer | 최대 참여 인원 |
 | `isPrivate` | Boolean | 비공개 여부 (`true` = 비공개) |
 | `status` | String | 로비 상태 (`WAITING` \| `PLAYING`) |
+
+---
+
+### 맵 (Map)
+
+#### 공개 맵 목록 조회
+
+```
+GET /api/maps
+```
+
+공개(`is_public=true`) 상태이면서 삭제되지 않은 맵만 반환합니다.
+
+**Response `200 OK`**
+
+```json
+[
+  {
+    "id": 1,
+    "title": "K-POP 2세대",
+    "category": "kpop",
+    "numOfSong": 20,
+    "totalPlayTime": 600,
+    "isPublic": true,
+    "ownerId": 10
+  }
+]
+```
+
+#### 공개 맵 단건 조회
+
+```
+GET /api/maps/{mapId}
+```
+
+공개(`is_public=true`) 상태이면서 삭제되지 않은 맵만 조회할 수 있습니다.
+
+**Response `200 OK`**
+
+```json
+{
+  "id": 1,
+  "ownerId": 10,
+  "title": "K-POP 2세대",
+  "description": "추억의 명곡 모음",
+  "category": "kpop",
+  "numOfSong": 20,
+  "totalPlayTime": 600,
+  "isPublic": true,
+  "createdAt": "2026-05-06T10:00:00",
+  "updatedAt": "2026-05-06T10:00:00"
+}
+```
+
+#### 맵 생성
+
+```
+POST /api/maps
+```
+
+정식 회원(`REGISTERED`)만 생성할 수 있습니다.
+
+`category`는 아래 enum 값만 허용합니다.
+- `kpop`
+- `jpop`
+- `pop`
+
+#### 맵 수정
+
+```
+PUT /api/maps/{mapId}
+```
+
+맵 소유자만 수정 가능하며, `isPublic` 필드로 공개/비공개 전환을 지원합니다.
+수정 시 Redis 맵 캐시를 무효화합니다.
+
+#### 맵 삭제
+
+```
+DELETE /api/maps/{mapId}
+```
+
+맵 소유자만 삭제할 수 있으며, 물리 삭제 대신 Soft Delete(`is_deleted=true`) 처리합니다.
 
 ---
 
@@ -324,7 +423,6 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 | 회원가입 | `POST /api/auth/register` |
 | 로그인 | `POST /api/auth/login` |
 | 로비 초대 코드 입장 | `POST /api/lobbies/join` |
-| 맵 CRUD | `GET/POST/PUT/DELETE /api/maps` |
 | 맵 아이템(문제) CRUD | `GET/POST/PUT/DELETE /api/maps/{mapId}/items` |
 | YouTube URL 유효성 검증 | `POST /api/youtube/validate` |
 | 인게임 WebSocket | `/app/game/{code}/**` |

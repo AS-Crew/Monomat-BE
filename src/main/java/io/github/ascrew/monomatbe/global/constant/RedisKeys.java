@@ -58,6 +58,12 @@ public final class RedisKeys {
     /** 초대 코드 중복 방지 SETNX 락 키 접두사 */
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
 
+    /** 공개 맵 목록 캐시 키 */
+    private static final String MAP_PUBLIC_LIST = "map:public:list";
+
+    /** 공개 맵 단건 캐시 키 접두사 */
+    private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:";
+
     // =========================================================
     // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
     // =========================================================
@@ -223,5 +229,13 @@ public final class RedisKeys {
      */
     public static String lobbyCodeLockKey(String inviteCode) {
         return LOBBY_CODE_LOCK_PREFIX + inviteCode;
+    }
+
+    public static String mapPublicListKey() {
+        return MAP_PUBLIC_LIST;
+    }
+
+    public static String mapPublicDetailKey(Long mapId) {
+        return MAP_PUBLIC_DETAIL_PREFIX + mapId;
     }
 }

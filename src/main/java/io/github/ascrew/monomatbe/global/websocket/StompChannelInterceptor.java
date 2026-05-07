@@ -1,117 +1,160 @@
 package io.github.ascrew.monomatbe.global.websocket;
 
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
-import org.springframework.stereotype.Component;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.MessageHeaderAccessor;
+import org.springframework.stereotype.Component;
+
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+/**
+ * STOMP 채널 인터셉터.
+ */
 @Slf4j
 @RequiredArgsConstructor
 @Component
 public class StompChannelInterceptor implements ChannelInterceptor {
-    // 표준 uuid 형식을 검사하는 정규식 (8-4-4-4-12 포멧)
-    private static final Pattern UUID_PATTERN = Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
-    private static final String LOBBY_DESTINATION_PREFIX = "/topic/lobby/";
+
+    private static final Pattern UUID_PATTERN =
+            Pattern.compile(
+                    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+    // 사용자 온라인 상태 TTL (단위: 시간)
+    // 비정상 종료 시 Redis 좀비 키 방지용 — 정상 종료 시 handleDisconnectEvent에서 즉시 삭제
+    private static final long USER_STATUS_TTL_HOURS = 2;
+
+    // [추가] user_status 저장 및 메트릭 처리를 위한 의존성
+    // StringRedisTemplate: 순수 문자열("ONLINE") 저장 — JSON 직렬화 방지
+    private final StringRedisTemplate stringRedisTemplate;
+    private final WebSocketMetric webSocketMetric;
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
+        StompHeaderAccessor accessor =
+                MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
 
-        StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
-
-        if (accessor != null && accessor.getCommand() != null) {
-            Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
-
-            StompCommand command = accessor.getCommand();
-
-            //유저의 행동(Command)에 따라 감시 및 차단 로직
-            switch (command) {
-                case CONNECT:
-                    // 최초 연결 시 헤더에서 uuid 추출
-                    String uuid = accessor.getFirstNativeHeader("uuid");
-
-                    // 검증 로직: uuid가 null이거나 빈 문자열인 경우, 연결을 차단
-                    if (uuid == null || uuid.trim().isEmpty()) {
-                        log.warn("STOMP CONNECT 올바르지 않은 접근 시도: uuid :{}, 목적지: {}", uuid, accessor.getDestination());
-                        throw new IllegalArgumentException("STOMP CONNECT: uuid가 없거나 빈 문자열입니다. 연결이 거부되었습니다.");
-                    }
-                    // 값이 있긴 한데 이상한 문자열(hacked 등)을 보낸 경우 차단
-                    if (!UUID_PATTERN.matcher(uuid).matches()) {
-                        log.warn("STOMP CONNECT 악의적인 접근 시도 (형식 위반): 전달된 UUID = {}", sanitizeForLog(uuid));
-                        throw new IllegalArgumentException("STOMP CONNECT: 유효하지 않은 UUID 형식입니다. 연결이 거부되었습니다.");
-                    }
-
-                    // 검증 이후 sub나 send에 꺼내 쓸 수 있도록 세션에 uuid 저장
-                    if (sessionAttributes != null){
-                        sessionAttributes.put("uuid", uuid); // 세션 속성에 uuid 저장
-                    }
-
-                    log.info("STOMP CONNECT: {} 연결됨", uuid);
-
-                    break;
-
-                case SUBSCRIBE:
-                case SEND:
-                case UNSUBSCRIBE:
-                    validateSession(accessor, sessionAttributes); // 세션 검증 메서드 호출
-                    break;
-                case DISCONNECT:
-                    String disconnectUuid = (sessionAttributes != null) ? (String) sessionAttributes.get("uuid") : "UNKNOWN";
-
-                    log.info("STOMP DISCONNECTED: {}", disconnectUuid);
-                    break;
-
-                default:
-                    break;
-            }
+        if (accessor == null || accessor.getCommand() == null) {
+            return message;
         }
-        return message; // 메시지를 그대로 반환하여 STOMP 메시지 처리를 계속 진행
+
+        Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+        StompCommand command = accessor.getCommand();
+
+        switch (command) {
+            case CONNECT -> handleConnect(accessor, sessionAttributes);
+            case SUBSCRIBE, SEND, UNSUBSCRIBE -> validateSession(accessor, sessionAttributes);
+            case DISCONNECT -> handleDisconnect(sessionAttributes);
+            default -> { /* 별도 처리 불필요 */ }
+        }
+
+        return message;
     }
 
-    private void validateSession(StompHeaderAccessor accessor, Map<String, Object> sessionAttributes) {
-        String uuid = (sessionAttributes != null) ? (String) sessionAttributes.get("uuid") : null;
+    /**
+     * CONNECT 명령 처리.
+     */
+    private void handleConnect(
+            StompHeaderAccessor accessor,
+            Map<String, Object> sessionAttributes
+    ) {
+        String userIdentifier = accessor.getFirstNativeHeader(WebSocketHeaders.USER_IDENTIFIER);
 
-        if (uuid == null) {
-            log.warn("[{} 차단] 인증되지 않은 세션 접근", accessor.getCommand());
-            throw new IllegalStateException("세션 인증 정보가 존재하지 않습니다.");
+        if (userIdentifier == null || userIdentifier.isBlank()) {
+            log.warn("STOMP CONNECT 거부: 사용자 식별자 없음");
+            throw new IllegalArgumentException(
+                    "STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다.");
         }
 
-        // 정상 로직 수행 (로그 기록 등)
-        if (accessor.getCommand() == StompCommand.SUBSCRIBE) {
-            String destination = accessor.getDestination();
-            if (destination != null && destination.startsWith("/topic/lobby/")) {
-                String roomId = destination.substring(LOBBY_DESTINATION_PREFIX.length());
+        if (!UUID_PATTERN.matcher(userIdentifier).matches()) {
+            log.warn("STOMP CONNECT 거부: 유효하지 않은 식별자 형식 = {}",
+                    sanitizeForLog(userIdentifier));
+            throw new IllegalArgumentException(
+                    "STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다.");
+        }
 
-                if (sessionAttributes != null) {
-                    sessionAttributes.put("roomId", roomId); // 세션 속성에 roomId 저장
-                }
-            }
-            log.info("[SUBSCRIBE] 방 입장 - UUID: {}, Destination: {}", uuid, destination);
-            // 특정 방에 대한 인가 검사 로직 추가해야함
-        } else if (accessor.getCommand() == StompCommand.SEND) {
-            log.info("[SEND] 메시지 발송 - UUID: {}, Destination: {}", uuid, accessor.getDestination());
-            // 도배 방지 만들꺼면 로직 추가
-        }else if (accessor.getCommand() == StompCommand.UNSUBSCRIBE) {
-            log.info("[UNSUBSCRIBE] 방 퇴장 - UUID: {}", uuid);
-            // UNSUBSCRIBE는 일반적으로 추가 차단 로직 없이 로그만 남깁니다.
+        // 1. 검증 완료 후 세션에 userIdentifier 저장 (이후 SEND/SUBSCRIBE에서 참조)
+        if (sessionAttributes != null) {
+            sessionAttributes.put(WebSocketHeaders.USER_IDENTIFIER, userIdentifier);
+        }
+
+        // 2. Redis user_status 저장
+        // [수정] SessionConnectedEvent에서 이전 — Map 인스턴스 불일치 문제 근본 해결
+        // [수정] stringRedisTemplate 사용 — "ONLINE" 순수 문자열로 저장 (JSON 직렬화 방지)
+        stringRedisTemplate.opsForValue().set(
+                RedisKeys.userStatusKey(userIdentifier),
+                WebSocketHeaders.STATUS_ONLINE,
+                USER_STATUS_TTL_HOURS,
+                TimeUnit.HOURS
+        );
+
+        // 3. 활성 세션 카운터 증가 (Prometheus 메트릭)
+        // [수정] SessionConnectedEvent에서 이전
+        webSocketMetric.increment();
+
+        log.info("STOMP CONNECT 성공: {}", userIdentifier);
+    }
+
+    private void validateSession(
+            StompHeaderAccessor accessor,
+            Map<String, Object> sessionAttributes
+    ) {
+        String userIdentifier = sessionAttributes != null
+                ? (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER)
+                : null;
+
+        if (userIdentifier == null) {
+            log.warn("[{}] 인증되지 않은 세션 접근 차단", accessor.getCommand());
+            throw new IllegalStateException("인증 정보가 존재하지 않습니다.");
+        }
+
+        switch (accessor.getCommand()) {
+            case SUBSCRIBE -> handleSubscribe(accessor, sessionAttributes, userIdentifier);
+            case SEND -> log.info("[SEND] 메시지 발송 - 식별자: {}, 경로: {}",
+                    userIdentifier, accessor.getDestination());
+            case UNSUBSCRIBE -> log.info("[UNSUBSCRIBE] 구독 해제 - 식별자: {}", userIdentifier);
+            default -> { /* 별도 처리 불필요 */ }
         }
     }
 
-    private String sanitizeForLog(String uuid) {
-        if (uuid == null) {
-            return "null";
-        }
-        String sanitized = uuid.replaceAll("[\r\n\t]", "");
+    private void handleSubscribe(
+            StompHeaderAccessor accessor,
+            Map<String, Object> sessionAttributes,
+            String userIdentifier
+    ) {
+        String destination = accessor.getDestination();
 
-        return sanitized.length() > 50 ? sanitized.substring(0, 50) + "..." : sanitized; // 로그에 너무 긴 UUID는 일부만 표시
+        if (StompDestinations.isLobbySubscription(destination)) {
+            String roomId = StompDestinations.extractLobbyCode(destination);
+            if (sessionAttributes != null) {
+                sessionAttributes.put(WebSocketHeaders.ROOM_ID, roomId);
+            }
+        }
+
+        log.info("[SUBSCRIBE] 구독 - 식별자: {}, 경로: {}", userIdentifier, destination);
+    }
+
+    private void handleDisconnect(Map<String, Object> sessionAttributes) {
+        String userIdentifier = sessionAttributes != null
+                ? (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER)
+                : WebSocketHeaders.UNKNOWN_IDENTIFIER;
+
+        log.info("STOMP DISCONNECT: {}", userIdentifier);
+    }
+
+    private String sanitizeForLog(String value) {
+        if (value == null) return "null";
+        String sanitized = value.replaceAll("[\r\n\t]", "");
+        return sanitized.length() > 50 ? sanitized.substring(0, 50) + "..." : sanitized;
     }
 }
-
-
-

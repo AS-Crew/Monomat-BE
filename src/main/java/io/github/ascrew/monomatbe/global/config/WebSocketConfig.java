@@ -47,19 +47,25 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
 
 
+    // =========================================================
+    // 상수 추가
+    // =========================================================
+    private static final int HEARTBEAT_SCHEDULER_POOL_SIZE = 1;
+    private static final String HEARTBEAT_THREAD_NAME_PREFIX = "wss-heartbeat-thread-";
+    private static final long HEARTBEAT_INTERVAL_MS = 10000L;
+
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
-        // 하트비트를 담당할 스레드 생성 및 초기화
         ThreadPoolTaskScheduler taskScheduler = new ThreadPoolTaskScheduler();
-        taskScheduler.setPoolSize(1);                                           //스레드 1개로 제한
-        taskScheduler.setThreadNamePrefix("wss-heartbeat-thread-");             //스레드 이름 접두사 설정
+        taskScheduler.setPoolSize(HEARTBEAT_SCHEDULER_POOL_SIZE);
+        taskScheduler.setThreadNamePrefix(HEARTBEAT_THREAD_NAME_PREFIX);
         taskScheduler.initialize();
 
-        registry.enableSimpleBroker("/topic")                   //수신용
+        registry.enableSimpleBroker("/topic")
                 .setTaskScheduler(taskScheduler)
-                .setHeartbeatValue(new long[]{10000,10000}); //클라이언트와 서버가 10000ms(10초)마다 하트비트를 주고받도록 설정
+                .setHeartbeatValue(new long[]{HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS});
 
-        registry.setApplicationDestinationPrefixes("/app");  //송신용(발행)
+        registry.setApplicationDestinationPrefixes("/app");
     }
 
     @Override

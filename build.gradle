@@ -22,6 +22,7 @@ dependencies {
     // 1. Web & WebSocket (Spring Boot 4.x 모듈화 기준)
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
 
     // 2. Database (JPA, MySQL, Redis 추가)
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
@@ -30,6 +31,9 @@ dependencies {
 
     // 3. Security
     implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.7'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.7'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.7'
 
     // 4. Utility (.env & Lombok)
     implementation 'me.paulschwarz:spring-dotenv:4.0.0'
@@ -47,10 +51,14 @@ dependencies {
     testCompileOnly 'org.projectlombok:lombok'
     testAnnotationProcessor 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'com.h2database:h2'
 
     // 6. Monitoring (Actuator & Prometheus)
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+    // 7. OpenAPI 및 Swagger UI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.0.3'
 }
 
 tasks.named('test') {

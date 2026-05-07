@@ -22,4 +22,12 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    @Bean
+    public RedisScript<String> createLobbyScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/create_lobby.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

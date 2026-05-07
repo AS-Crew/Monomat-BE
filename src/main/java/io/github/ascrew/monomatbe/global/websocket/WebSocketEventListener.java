@@ -11,6 +11,10 @@
  * Java 코드에서 participants Set, order List, ws:connection Hash를 각각 따로 저장하면
  * 중간 실패 시 Redis 상태가 불일치할 수 있기 때문이다.
  *
+ * [동일 userIdentifier 다중 세션 정책]
+ * 같은 userIdentifier가 같은 로비에 다시 입장하면 최신 wsSessionId를 현재 유효 세션으로 본다.
+ * 이전 wsSessionId는 stale 세션으로 간주하며, stale 세션의 DISCONNECT는 실제 퇴장으로 처리하지 않는다.
+ *
  * [실패 처리 정책]
  * STOMP SUBSCRIBE 프레임은 이미 처리되어 클라이언트가 구독 상태가 될 수 있다.
  * 따라서 Redis Lua 입장 처리가 실패하면 클라이언트는 구독되어 있지만
@@ -27,7 +31,6 @@ import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
@@ -39,6 +42,7 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -47,7 +51,6 @@ import java.util.Map;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class WebSocketEventListener {
 
     // =========================================================
@@ -67,6 +70,18 @@ public class WebSocketEventListener {
     private static final String ENTER_RESULT_ALREADY_JOINED = "ALREADY_JOINED";
 
     /**
+     * 동일 userIdentifier의 기존 WebSocket 세션이 새 세션으로 교체된 경우.
+     * 이전 wsSessionId는 stale 세션으로 간주한다.
+     */
+    private static final String ENTER_RESULT_SESSION_REPLACED_PREFIX = "SESSION_REPLACED:";
+
+    /**
+     * SESSION_REPLACED 반환값에서 이전 wsSessionId를 추출하기 위한 prefix 길이.
+     */
+    private static final int ENTER_RESULT_SESSION_REPLACED_PREFIX_LENGTH =
+            ENTER_RESULT_SESSION_REPLACED_PREFIX.length();
+
+    /**
      * Redis에 해당 lobby:{code} Hash가 존재하지 않는 경우.
      * 존재하지 않는 로비에 고스트 participants/order를 만들지 않기 위해 입장을 거부한다.
      */
@@ -79,8 +94,8 @@ public class WebSocketEventListener {
     /**
      * Lua 실행 최대 시도 횟수.
      *
-     * 최초 실행 1회 + 재시도 1회입니다.
-     * SUBSCRIBE 이벤트 처리를 과도하게 지연시키지 않기 위해 재시도는 1회로 제한합니다.
+     * 최초 실행 1회 + 재시도 1회다.
+     * SUBSCRIBE 이벤트 처리를 과도하게 지연시키지 않기 위해 재시도는 1회로 제한한다.
      */
     private static final int ENTER_SCRIPT_MAX_ATTEMPTS = 2;
 
@@ -112,7 +127,7 @@ public class WebSocketEventListener {
     private static final String LEAVE_MESSAGE_FORMAT = "%s님이 퇴장하셨습니다.";
 
     /**
-     * ws:connection:{wsSessionId} 매핑 TTL.
+     * ws:connection:{wsSessionId} 및 lobby:{code}:user_session:{userIdentifier} 매핑 TTL.
      *
      * 정상 종료 시 DISCONNECT 이벤트에서 즉시 삭제한다.
      * TTL은 서버 장애, 이벤트 누락, 비정상 종료에 대비한 안전장치다.
@@ -139,9 +154,9 @@ public class WebSocketEventListener {
     private final RedisPublisher redisPublisher;
 
     /**
-     * 로비 refresh 신호와 입장 실패 메시지를 현재 서버에 연결된 WebSocket 클라이언트에게 전송한다.
+     * 현재 서버에 연결된 WebSocket 클라이언트에게 직접 메시지를 전송한다.
      *
-     * ENTER_FAILED 메시지는 Redis 장애 가능성을 고려하여 Redis Pub/Sub을 거치지 않고
+     * ENTER_FAILED 메시지 또는 Pub/Sub 발행 실패 fallback 메시지는 Redis를 거치지 않고
      * 현재 서버의 Simple Broker로 직접 전송한다.
      */
     private final SimpMessagingTemplate messagingTemplate;
@@ -162,22 +177,45 @@ public class WebSocketEventListener {
 
     /**
      * 로비 입장 원자 처리 Lua 스크립트.
-     *
-     * RedisScript<String> Bean이 여러 개(create/leave/enter) 존재하므로
-     * @Qualifier로 명확하게 주입한다.
      */
-    @Qualifier("enterLobbyScript")
     private final RedisScript<String> enterLobbyScript;
+
+    /**
+     * WebSocket 직접 전송 메시지 직렬화용 JsonMapper.
+     *
+     * ENTER_FAILED 또는 Pub/Sub fallback 메시지는 RedisSubscriber를 거치지 않고
+     * 직접 SimpMessagingTemplate으로 전송되므로, DTO 객체를 그대로 보내지 않고
+     * JSON 문자열로 변환하여 프론트 메시지 계약을 통일한다.
+     */
+    private final JsonMapper pubSubJsonMapper;
+
+    public WebSocketEventListener(
+            StringRedisTemplate stringRedisTemplate,
+            RedisPublisher redisPublisher,
+            SimpMessagingTemplate messagingTemplate,
+            ApplicationEventPublisher eventPublisher,
+            WebSocketMetric webSocketMetric,
+            @Qualifier("enterLobbyScript") RedisScript<String> enterLobbyScript,
+            @Qualifier("pubSubJsonMapper") JsonMapper pubSubJsonMapper
+    ) {
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.redisPublisher = redisPublisher;
+        this.messagingTemplate = messagingTemplate;
+        this.eventPublisher = eventPublisher;
+        this.webSocketMetric = webSocketMetric;
+        this.enterLobbyScript = enterLobbyScript;
+        this.pubSubJsonMapper = pubSubJsonMapper;
+    }
 
     /**
      * WebSocket 채널 구독 이벤트 처리.
      *
      * [중요]
-     * 로비 관련 채널은 다음처럼 나뉩니다.
+     * 로비 관련 채널은 다음처럼 나뉜다.
      * - /topic/lobby/{code}         : 로비 채팅 채널
      * - /topic/lobby/{code}/refresh : 로비 정보 새로고침 채널
      *
-     * 입장 처리는 반드시 채팅 채널 구독 시점에만 실행합니다.
+     * 입장 처리는 반드시 채팅 채널 구독 시점에만 실행한다.
      * refresh 채널까지 입장 처리 대상으로 보면 같은 사용자가 participants/order에 중복 저장될 수 있다.
      */
     @EventListener
@@ -214,10 +252,11 @@ public class WebSocketEventListener {
      * [처리 순서]
      * 1. 세션에서 userIdentifier 조회
      * 2. wsSessionId로 Redis ws:connection:{wsSessionId} 조회
-     * 3. lobbyCode가 있으면 PlayerLeaveEvent 발행
-     * 4. LEAVE 시스템 메시지 브로드캐스트
-     * 5. user_status / ws:connection 키 정리
-     * 6. WebSocket 활성 세션 메트릭 감소
+     * 3. stale 세션 여부 확인
+     * 4. 현재 유효 세션이면 PlayerLeaveEvent 발행
+     * 5. LEAVE 시스템 메시지 브로드캐스트
+     * 6. Redis 키 정리
+     * 7. WebSocket 활성 세션 메트릭 감소
      */
     @EventListener
     public void handleDisconnectEvent(SessionDisconnectEvent event) {
@@ -239,6 +278,15 @@ public class WebSocketEventListener {
 
         String lobbyCode = findLobbyCodeByWsSessionId(wsSessionId);
 
+        if (lobbyCode != null && isStaleLobbySession(lobbyCode, userIdentifier, wsSessionId)) {
+            log.info("stale WebSocket 세션 연결 해제 감지 - 실제 퇴장 처리 생략. 로비: {}, 식별자: {}, wsSessionId: {}",
+                    lobbyCode, userIdentifier, wsSessionId);
+
+            deleteStaleConnectionKey(wsSessionId);
+            webSocketMetric.decrement();
+            return;
+        }
+
         log.info("WebSocket 연결 해제 - 식별자: {}, 로비: {}", userIdentifier, lobbyCode);
 
         if (lobbyCode != null) {
@@ -249,7 +297,7 @@ public class WebSocketEventListener {
             publishLeaveMessage(lobbyCode, userIdentifier);
         }
 
-        deleteDisconnectKeys(userIdentifier, wsSessionId);
+        deleteDisconnectKeys(userIdentifier, wsSessionId, lobbyCode);
 
         webSocketMetric.decrement();
     }
@@ -295,6 +343,7 @@ public class WebSocketEventListener {
      * - lobby:{code}:participants
      * - lobby:{code}:order
      * - ws:connection:{wsSessionId}
+     * - lobby:{code}:user_session:{userIdentifier}
      *
      * [실패 처리]
      * SUBSCRIBE 프레임은 이미 처리되어 클라이언트가 구독 상태가 될 수 있다.
@@ -323,6 +372,16 @@ public class WebSocketEventListener {
         if (ENTER_RESULT_ALREADY_JOINED.equals(result)) {
             log.info("로비 중복 구독 처리 - order 중복 저장 방지. 로비: {}, 식별자: {}, wsSessionId: {}",
                     lobbyCode, userIdentifier, wsSessionId);
+            return;
+        }
+
+        if (result != null && result.startsWith(ENTER_RESULT_SESSION_REPLACED_PREFIX)) {
+            String previousWsSessionId = result.substring(ENTER_RESULT_SESSION_REPLACED_PREFIX_LENGTH);
+
+            log.info("로비 세션 교체 처리 - 로비: {}, 식별자: {}, previousWsSessionId: {}, currentWsSessionId: {}",
+                    lobbyCode, userIdentifier, previousWsSessionId, wsSessionId);
+
+            cleanupWsConnection(previousWsSessionId);
             return;
         }
 
@@ -357,6 +416,7 @@ public class WebSocketEventListener {
      * [재시도하지 않는 대상]
      * - ENTERED
      * - ALREADY_JOINED
+     * - SESSION_REPLACED:{previousWsSessionId}
      * - LOBBY_NOT_FOUND
      *
      * LOBBY_NOT_FOUND는 일시 장애라기보다 잘못된 로비 코드 또는 이미 삭제된 로비 상태이므로
@@ -408,7 +468,8 @@ public class WebSocketEventListener {
                 RedisKeys.lobbyKey(lobbyCode),
                 RedisKeys.lobbyParticipantsKey(lobbyCode),
                 RedisKeys.lobbyOrderKey(lobbyCode),
-                RedisKeys.wsConnectionKey(wsSessionId)
+                RedisKeys.wsConnectionKey(wsSessionId),
+                RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier)
         );
 
         return stringRedisTemplate.execute(
@@ -418,7 +479,8 @@ public class WebSocketEventListener {
                 lobbyCode,
                 String.valueOf(WS_CONNECTION_TTL.toMillis()),
                 WebSocketHeaders.SESSION_USER_ID,
-                WebSocketHeaders.SESSION_LOBBY_CODE
+                WebSocketHeaders.SESSION_LOBBY_CODE,
+                wsSessionId
         );
     }
 
@@ -476,48 +538,86 @@ public class WebSocketEventListener {
     }
 
     /**
+     * 현재 DISCONNECT 된 wsSessionId가 로비 내 최신 유효 세션인지 확인한다.
+     *
+     * 동일 userIdentifier가 같은 로비에 재연결된 경우,
+     * 이전 wsSessionId는 stale 세션으로 간주한다.
+     * stale 세션의 DISCONNECT는 participants/order를 제거하면 안 된다.
+     */
+    private boolean isStaleLobbySession(
+            String lobbyCode,
+            String userIdentifier,
+            String wsSessionId
+    ) {
+        if (lobbyCode == null || userIdentifier == null || wsSessionId == null) {
+            return false;
+        }
+
+        String currentWsSessionId = stringRedisTemplate.opsForValue()
+                .get(RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier));
+
+        return currentWsSessionId != null && !currentWsSessionId.equals(wsSessionId);
+    }
+
+    /**
      * 로비 채팅 채널에 ENTER 시스템 메시지를 발행한다.
      *
-     * Redis Pub/Sub 발행 실패 시 시스템 메시지가 유실될 수 있으므로,
-     * RedisPublisher.publish()의 반환값을 확인하여 실패 로그를 남긴다.
+     * Redis Pub/Sub 발행 실패 시 현재 서버의 WebSocket Broker로 fallback 전송한다.
      */
     private void publishEnterMessage(String lobbyCode, String userIdentifier) {
+        ChatMessageDto message = ChatMessageDto.builder()
+                .type(ChatMessageDto.MessageType.ENTER)
+                .roomId(lobbyCode)
+                .sender(userIdentifier)
+                .content(String.format(ENTER_MESSAGE_FORMAT, userIdentifier))
+                .timestamp(LocalDateTime.now().toString())
+                .build();
+
         boolean published = redisPublisher.publish(
                 StompDestinations.subscribeLobbyChat(lobbyCode),
-                ChatMessageDto.builder()
-                        .type(ChatMessageDto.MessageType.ENTER)
-                        .roomId(lobbyCode)
-                        .sender(userIdentifier)
-                        .content(String.format(ENTER_MESSAGE_FORMAT, userIdentifier))
-                        .timestamp(LocalDateTime.now().toString())
-                        .build()
+                message
         );
 
         if (!published) {
-            log.error("ENTER 메시지 발행 실패 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+            log.error("ENTER 메시지 Pub/Sub 발행 실패 - 로컬 WebSocket fallback 전송. 로비: {}, 식별자: {}",
+                    lobbyCode, userIdentifier);
+
+            sendDirectJsonMessage(
+                    StompDestinations.subscribeLobbyChat(lobbyCode),
+                    message,
+                    "ENTER_FALLBACK"
+            );
         }
     }
 
     /**
      * 로비 채팅 채널에 LEAVE 시스템 메시지를 발행한다.
      *
-     * Redis Pub/Sub 발행 실패 시 퇴장 시스템 메시지가 유실될 수 있으므로,
-     * RedisPublisher.publish()의 반환값을 확인하여 실패 로그를 남긴다.
+     * Redis Pub/Sub 발행 실패 시 현재 서버의 WebSocket Broker로 fallback 전송한다.
      */
     private void publishLeaveMessage(String lobbyCode, String userIdentifier) {
+        ChatMessageDto message = ChatMessageDto.builder()
+                .type(ChatMessageDto.MessageType.LEAVE)
+                .roomId(lobbyCode)
+                .sender(userIdentifier)
+                .content(String.format(LEAVE_MESSAGE_FORMAT, userIdentifier))
+                .timestamp(LocalDateTime.now().toString())
+                .build();
+
         boolean published = redisPublisher.publish(
                 StompDestinations.subscribeLobbyChat(lobbyCode),
-                ChatMessageDto.builder()
-                        .type(ChatMessageDto.MessageType.LEAVE)
-                        .roomId(lobbyCode)
-                        .sender(userIdentifier)
-                        .content(String.format(LEAVE_MESSAGE_FORMAT, userIdentifier))
-                        .timestamp(LocalDateTime.now().toString())
-                        .build()
+                message
         );
 
         if (!published) {
-            log.error("LEAVE 메시지 발행 실패 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+            log.error("LEAVE 메시지 Pub/Sub 발행 실패 - 로컬 WebSocket fallback 전송. 로비: {}, 식별자: {}",
+                    lobbyCode, userIdentifier);
+
+            sendDirectJsonMessage(
+                    StompDestinations.subscribeLobbyChat(lobbyCode),
+                    message,
+                    "LEAVE_FALLBACK"
+            );
         }
     }
 
@@ -526,22 +626,50 @@ public class WebSocketEventListener {
      *
      * Redis 장애 때문에 enter_lobby.lua가 실패했을 수 있으므로
      * 실패 알림은 Redis Pub/Sub을 거치지 않고 현재 서버의 WebSocket Broker로 직접 전송한다.
+     *
+     * 단, 프론트 메시지 계약을 유지하기 위해 DTO 객체가 아니라 JSON 문자열로 전송한다.
      */
     private void publishEnterFailedMessage(
             String lobbyCode,
             String userIdentifier,
             String content
     ) {
-        messagingTemplate.convertAndSend(
+        ChatMessageDto message = ChatMessageDto.builder()
+                .type(ChatMessageDto.MessageType.ENTER_FAILED)
+                .roomId(lobbyCode)
+                .sender(userIdentifier)
+                .content(content)
+                .timestamp(LocalDateTime.now().toString())
+                .build();
+
+        sendDirectJsonMessage(
                 StompDestinations.subscribeLobbyChat(lobbyCode),
-                ChatMessageDto.builder()
-                        .type(ChatMessageDto.MessageType.ENTER_FAILED)
-                        .roomId(lobbyCode)
-                        .sender(userIdentifier)
-                        .content(content)
-                        .timestamp(LocalDateTime.now().toString())
-                        .build()
+                message,
+                "ENTER_FAILED"
         );
+    }
+
+    /**
+     * 현재 서버의 WebSocket Broker로 JSON 문자열 메시지를 직접 전송한다.
+     *
+     * Redis Pub/Sub 장애 또는 ENTER_FAILED처럼 Redis를 거치면 안 되는 상황에서 사용한다.
+     * DTO 객체를 그대로 보내면 타입 정보가 포함될 수 있으므로 반드시 JSON 문자열로 변환한다.
+     */
+    private void sendDirectJsonMessage(
+            String destination,
+            ChatMessageDto message,
+            String context
+    ) {
+        try {
+            String payload = pubSubJsonMapper.writeValueAsString(message);
+            messagingTemplate.convertAndSend(destination, payload);
+        } catch (Exception e) {
+            log.error("WebSocket 직접 메시지 전송 실패 - context: {}, destination: {}, messageType: {}",
+                    context,
+                    destination,
+                    message != null ? message.getType() : null,
+                    e);
+        }
     }
 
     /**
@@ -558,10 +686,7 @@ public class WebSocketEventListener {
     }
 
     /**
-     * 입장 처리 실패 시 ws:connection 키를 보상 삭제한다.
-     *
-     * Redis Lua 스크립트는 원자적으로 실행되므로 일반적으로 부분 성공은 발생하지 않는다.
-     * 다만 재시도 과정 또는 이전 시도에서 남은 ws:connection 키가 있을 수 있으므로 안전하게 정리한다.
+     * 입장 처리 실패 또는 세션 교체 시 ws:connection 키를 보상 삭제한다.
      */
     private void cleanupWsConnection(String wsSessionId) {
         if (wsSessionId == null || wsSessionId.isBlank()) {
@@ -576,13 +701,37 @@ public class WebSocketEventListener {
     }
 
     /**
-     * DISCONNECT 이후 불필요한 Redis 키를 정리한다.
+     * stale 세션의 ws:connection 키만 삭제한다.
+     *
+     * stale 세션은 최신 유효 세션이 아니므로 user_status나 lobbyUserSessionKey를 삭제하면 안 된다.
      */
-    private void deleteDisconnectKeys(String userIdentifier, String wsSessionId) {
+    private void deleteStaleConnectionKey(String wsSessionId) {
+        if (wsSessionId == null || wsSessionId.isBlank()) {
+            return;
+        }
+
+        stringRedisTemplate.delete(RedisKeys.wsConnectionKey(wsSessionId));
+    }
+
+    /**
+     * DISCONNECT 이후 불필요한 Redis 키를 정리한다.
+     *
+     * 현재 유효 세션의 DISCONNECT에서만 user_status와 lobbyUserSessionKey를 삭제한다.
+     * stale 세션은 deleteStaleConnectionKey()에서 ws:connection만 삭제한다.
+     */
+    private void deleteDisconnectKeys(
+            String userIdentifier,
+            String wsSessionId,
+            String lobbyCode
+    ) {
         stringRedisTemplate.delete(RedisKeys.userStatusKey(userIdentifier));
 
         if (wsSessionId != null && !wsSessionId.isBlank()) {
             stringRedisTemplate.delete(RedisKeys.wsConnectionKey(wsSessionId));
+        }
+
+        if (lobbyCode != null && !lobbyCode.isBlank()) {
+            stringRedisTemplate.delete(RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier));
         }
     }
 

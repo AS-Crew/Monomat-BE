@@ -8,60 +8,64 @@
 -- 2. participants Set에 userIdentifier 저장
 -- 3. order List에 userIdentifier 저장
 -- 4. wsSessionId 기준으로 lobbyCode, userIdentifier 매핑 저장
--- 5. 중복 구독 시 participants/order 중복 저장 방지
+-- 5. userIdentifier 기준 현재 유효 wsSessionId 저장
+-- 6. 중복 구독 및 재연결 겹침 상황 처리
 --
--- [원자성]
--- Redis Lua 스크립트는 싱글 스레드로 실행되므로,
--- 아래의 입장 상태 변경 작업은 중간에 다른 Redis 명령이 끼어들 수 없다.
---
--- [중복 구독 처리]
--- SADD 결과가 1이면 신규 입장자
--- SADD 결과가 0이면 이미 participants에 존재하는 사용자이므로,
--- order List에는 다시 넣지 않는다.
--- 단, WebSocket 세션은 새로 열렸을 수 있으므로 ws:connection 매핑은 항상 갱신한다.
+-- [동일 userIdentifier 다중 세션 정책]
+-- 같은 userIdentifier가 같은 로비에 다시 입장하면 최신 wsSessionId를 현재 유효 세션으로 본다.
+-- 이전 wsSessionId는 Java에서 stale 세션으로 처리하여 DISCONNECT 시 퇴장 처리하지 않는다.
 -- ============================================================================
 
-local lobbyKey        = KEYS[1] -- lobby:{code}
-local participantsKey = KEYS[2] -- lobby:{code}:participants
-local orderKey        = KEYS[3] -- lobby:{code}:order
-local wsConnectionKey = KEYS[4] -- ws:connection:{wsSessionId}
+local lobbyKey              = KEYS[1] -- lobby:{code}
+local participantsKey       = KEYS[2] -- lobby:{code}:participants
+local orderKey              = KEYS[3] -- lobby:{code}:order
+local wsConnectionKey       = KEYS[4] -- ws:connection:{wsSessionId}
+local lobbyUserSessionKey   = KEYS[5] -- lobby:{code}:user_session:{userIdentifier}
 
-local userIdentifier  = ARGV[1] -- 사용자 식별자(UUID)
-local lobbyCode       = ARGV[2] -- 로비 초대 코드
-local connectionTtlMs = ARGV[3] -- ws:connection TTL(ms)
-local userField       = ARGV[4] -- WebSocketHeaders.SESSION_USER_ID
-local lobbyField      = ARGV[5] -- WebSocketHeaders.SESSION_LOBBY_CODE
+local userIdentifier        = ARGV[1] -- 사용자 식별자(UUID)
+local lobbyCode             = ARGV[2] -- 로비 초대 코드
+local connectionTtlMs       = ARGV[3] -- ws:connection TTL(ms)
+local userField             = ARGV[4] -- WebSocketHeaders.SESSION_USER_ID
+local lobbyField            = ARGV[5] -- WebSocketHeaders.SESSION_LOBBY_CODE
+local wsSessionId           = ARGV[6] -- 현재 WebSocket 세션 ID
 
 -- 1. 로비가 존재하지 않으면 입장 상태를 만들지 않는다.
--- 존재하지 않는 로비에 participants/order가 생기는 고스트 데이터 방지용
 if redis.call('EXISTS', lobbyKey) == 0 then
     return "LOBBY_NOT_FOUND"
 end
 
--- 2. 참여자 Set에 추가
+-- 2. 기존에 같은 userIdentifier로 등록된 현재 유효 wsSessionId를 조회한다.
+local previousWsSessionId = redis.call('GET', lobbyUserSessionKey)
+
+-- 3. 참여자 Set에 추가한다.
 -- SADD 반환값:
--- - 1: 새로 추가됨
--- - 0: 이미 존재함
+-- - 1: 신규 참여자
+-- - 0: 이미 참여 중인 사용자
 local added = redis.call('SADD', participantsKey, userIdentifier)
 
--- 3. 신규 입장자일 때만 order List에 추가한다.
--- 중복 구독 또는 새로고침으로 같은 사용자가 다시 구독해도 방장 위임 순서가 중복되지 않는다.
+-- 4. 신규 참여자일 때만 order List에 추가한다.
+-- 이미 참여 중인 사용자의 재연결/중복 구독은 order를 중복 저장하지 않는다.
 if added == 1 then
     redis.call('RPUSH', orderKey, userIdentifier)
 end
 
--- 4. WebSocket 세션 ID 기준 역추적 정보를 저장한다.
--- DISCONNECT 이벤트에서 wsSessionId만으로 lobbyCode를 찾기 위해 필요하다.
+-- 5. 현재 WebSocket 세션 기준 역추적 정보를 저장한다.
 redis.call('HSET', wsConnectionKey,
     userField,  userIdentifier,
     lobbyField, lobbyCode
 )
-
--- 5. 비정상 종료 또는 서버 장애 시 좀비 ws:connection 키가 남지 않도록 TTL을 설정한다.
 redis.call('PEXPIRE', wsConnectionKey, connectionTtlMs)
 
+-- 6. userIdentifier 기준 현재 유효 세션을 최신 wsSessionId로 갱신한다.
+redis.call('SET', lobbyUserSessionKey, wsSessionId, 'PX', connectionTtlMs)
+
+-- 7. 반환값 결정
 if added == 1 then
     return "ENTERED"
+end
+
+if previousWsSessionId and previousWsSessionId ~= wsSessionId then
+    return "SESSION_REPLACED:" .. previousWsSessionId
 end
 
 return "ALREADY_JOINED"

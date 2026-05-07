@@ -58,6 +58,9 @@ public final class RedisKeys {
     /** 초대 코드 중복 방지 SETNX 락 키 접두사 */
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
 
+    /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
+    private static final String USER_SESSION_SUFFIX = ":user_session:";
+
     // =========================================================
     // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
     // =========================================================
@@ -223,5 +226,24 @@ public final class RedisKeys {
      */
     public static String lobbyCodeLockKey(String inviteCode) {
         return LOBBY_CODE_LOCK_PREFIX + inviteCode;
+    }
+
+    /**
+     * 로비 내 특정 사용자의 현재 유효 WebSocket 세션 ID를 저장하는 키를 반환한다.
+     *
+     * [사용 목적]
+     * 동일 userIdentifier가 같은 로비에 여러 번 연결될 수 있는 상황에서
+     * 어떤 wsSessionId가 현재 유효한 세션인지 판별하기 위해 사용한다.
+     *
+     * 저장 구조 :
+     * - Key : lobby:{code}:user_session:{userIdentifier}
+     * - Value : wsSessionId
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return "lobby:{code}:user_session:{userIdentifier}"
+     */
+    public static String lobbyUserSessionKey(String code, String userIdentifier) {
+        return LOBBY_PREFIX + code + USER_SESSION_SUFFIX + userIdentifier;
     }
 }

@@ -44,7 +44,7 @@ public class RedisScriptConfig {
      * - 로비 존재 여부 확인
      * - participants Set 저장
      * - order List 저장
-     * - weSessionId -> lobbyCode/userIdentifier 매핑 저장
+     * - wsSessionId -> lobbyCode/userIdentifier 매핑 저장
      * - 중복 구독 시 participants/order 중복 저장 방지
      */
     @Bean

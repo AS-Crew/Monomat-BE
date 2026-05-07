@@ -106,6 +106,14 @@ public class RedisConfig {
     }
 
     /**
+     * Redis Pub/Sub 전용 JsonMapper
+     */
+    @Bean
+    public JsonMapper pubSubJsonMapper() {
+        return JsonMapper.builder().build();
+    }
+
+    /**
      * RedisTemplate Bean.
      *
      * [직렬화 전략]

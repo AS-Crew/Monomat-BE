@@ -185,16 +185,19 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             sessionAttributes.put(WebSocketHeaders.SESSION_SEQUENCE, sessionSequence);
         }
 
-        stringRedisTemplate.opsForValue().set(
-                RedisKeys.userStatusKey(userIdentifier),
-                WebSocketHeaders.STATUS_ONLINE,
-                USER_STATUS_TTL_HOURS,
-                TimeUnit.HOURS
-        );
+        String wsSessionId = accessor.getSessionId();
+
+        if (wsSessionId == null || wsSessionId.isBlank()) {
+            log.warn("STOMP CONNECT 거부: WebSocket 세션 ID 없음 - userIdentifier: {}", userIdentifier);
+            throw new IllegalStateException("STOMP CONNECT: WebSocket 세션 ID가 없습니다.");
+        }
+
+        saveUserOnlineSession(userIdentifier, wsSessionId);
 
         webSocketMetric.increment();
 
-        log.info("STOMP CONNECT 성공: {}, sessionSequence: {}", userIdentifier, sessionSequence);
+        log.info("STOMP CONNECT 성공: {}, wsSessionId: {}, sessionSequence: {}",
+                userIdentifier, wsSessionId, sessionSequence);
     }
 
     /**
@@ -487,5 +490,32 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         LOBBY_NOT_FOUND,
         INVALID_SEQUENCE,
         UNKNOWN
+    }
+
+    /**
+     * 사용자 온라인 상태와 현재 WebSocket 세션을 Redis에 저장한다.
+     *
+     * [저장 구조]
+     * - user_status:{userIdentifier}:sessions = Set<wsSessionId>
+     * - user_status:{userIdentifier} = ONLINE
+     */
+    private void saveUserOnlineSession(String userIdentifier, String wsSessionId) {
+        String userStatusKey = RedisKeys.userStatusKey(userIdentifier);
+        String userStatusSessionsKey = RedisKeys.userStatusSessionsKey(userIdentifier);
+
+        stringRedisTemplate.opsForSet().add(userStatusSessionsKey, wsSessionId);
+
+        stringRedisTemplate.expire(
+                userStatusSessionsKey,
+                USER_STATUS_TTL_HOURS,
+                TimeUnit.HOURS
+        );
+
+        stringRedisTemplate.opsForValue().set(
+                userStatusKey,
+                WebSocketHeaders.STATUS_ONLINE,
+                USER_STATUS_TTL_HOURS,
+                TimeUnit.HOURS
+        );
     }
 }

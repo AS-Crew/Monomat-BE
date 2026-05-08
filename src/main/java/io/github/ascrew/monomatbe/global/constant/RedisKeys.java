@@ -183,13 +183,31 @@ public final class RedisKeys {
     /**
      * 사용자 온라인 상태 키를 반환합니다.
      * 저장 구조: String "ONLINE"
-     * TTL: WebSocketEventListener에서 2시간으로 설정
      *
      * @param userIdentifier 사용자 식별자 (게스트 UUID 또는 회원 ID)
      * @return "user_status:{userIdentifier}"
      */
     public static String userStatusKey(String userIdentifier) {
         return USER_STATUS_PREFIX + userIdentifier;
+    }
+
+    /**
+     * 사용자 온라인 상태를 구성하는 WebSocket 세션 Set 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : user_status:{userIdentifier}:sessions
+     * - Type  : Set
+     * - Value : wsSessionId 목록
+     *
+     * [사용 목적]
+     * 동일 userIdentifier가 여러 WebSocket 세션을 가질 수 있으므로,
+     * 마지막 세션이 종료되기 전까지 user_status:{userIdentifier}를 ONLINE으로 유지하기 위해 사용한다.
+     *
+     * @param userIdentifier 사용자 식별자
+     * @return "user_status:{userIdentifier}:sessions"
+     */
+    public static String userStatusSessionsKey(String userIdentifier) {
+        return USER_STATUS_PREFIX + userIdentifier + ":sessions";
     }
 
     /**

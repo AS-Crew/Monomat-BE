@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
+import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
@@ -18,6 +19,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 @Slf4j
@@ -68,6 +70,16 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   /** Lua 스크립트 null 반환 시 에러 메시지 */
   private static final String ERROR_REDIS_SCRIPT_NULL =
           "Redis 스크립트 실행 결과가 null입니다. Redis 연결 상태를 확인해주세요.";
+
+  // =========================================================
+  // findByInviteCode 관련 상수
+  // =========================================================
+
+  /**
+   * 로비가 존재하지 않거나 TTL이 만료된 경우 반환할 빈 Optional.
+   * 매번 새 객체를 생성하지 않기 위해 상수로 관리한다.
+   */
+  private static final Optional<JoinLobbyResponse> EMPTY_LOBBY = Optional.empty();
 
   // =========================================================
   // 공개 메서드
@@ -204,15 +216,73 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return result;
   }
 
+  /**
+   * 초대 코드로 로비 입장에 필요한 정보를 조회한다.
+   *
+   * [조회 전략]
+   * HGETALL로 lobby:{code} Hash를 한 번에 읽어 응답 객체를 구성한다.
+   * currentPlayers는 participants Set의 SCARD로 별도 조회한다.
+   *
+   * [mapCategory]
+   * 맵 선택 기능 구현 전까지 null로 반환한다.
+   * 맵 선택 이슈에서 Redis Hash에 map_category 필드가 추가되면
+   * FIELD_MAP_CATEGORY 상수로 조회한다.
+   *
+   * @param inviteCode 로비 초대 코드
+   * @return 로비 정보 Optional (로비 미존재 시 empty)
+   */
+  @Override
+  public Optional<JoinLobbyResponse> findByInviteCode(String inviteCode) {
+    // HGETALL로 Hash 전체를 한 번에 읽어 네트워크 왕복 횟수를 최소화한다.
+    Map<Object, Object> data =
+            redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(inviteCode));
+
+    // 로비가 존재하지 않거나 TTL이 만료된 경우
+    if (data.isEmpty()) {
+      return EMPTY_LOBBY;
+    }
+
+    // 현재 참여 인원은 participants Set의 SCARD로 조회한다.
+    int currentPlayers = getCurrentPlayerCount(inviteCode);
+
+    return Optional.of(JoinLobbyResponse.builder()
+            .inviteCode(inviteCode)
+            .title((String) data.get(RedisKeys.FIELD_TITLE))
+            .hostId((String) data.get(RedisKeys.FIELD_HOST_USER_ID))
+            .maxPlayers(parseNullableIntOrDefault(data.get(RedisKeys.FIELD_MAX_PLAYERS), 0))
+            .currentPlayers(currentPlayers)
+            .status((String) data.get(RedisKeys.FIELD_STATUS))
+            // 맵 선택 이슈 구현 전까지 null로 반환한다.
+            .mapCategory(null)
+            .build());
+  }
+
+  /**
+   * 해당 로비의 현재 참여 인원 수를 반환한다.
+   *
+   * [구현 방식]
+   * lobby:{code}:participants Set의 SCARD 명령으로 조회한다.
+   * null 반환 시 Redis 연결 이상이므로 0으로 폴백하여 NPE를 방지한다.
+   *
+   * @param inviteCode 로비 초대 코드
+   * @return 현재 참여 인원 수 (Redis 오류 시 0)
+   */
+  @Override
+  public int getCurrentPlayerCount(String inviteCode) {
+    Long count = redisTemplate.opsForSet()
+            .size(RedisKeys.lobbyParticipantsKey(inviteCode));
+
+    // null은 Redis 연결 이상을 의미한다.
+    // 0으로 폴백하여 NPE를 방지하고, 서비스 레이어에서 정상 흐름을 유지한다.
+    return count != null ? count.intValue() : 0;
+  }
+
   // =========================================================
   // private 메서드
   // =========================================================
 
   /**
    * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행한다.
-   *
-   * participants, order 관련 키 제거 이유:
-   * 입장 처리는 WebSocketEventListener.processLobbyEnter()에서 담당하므로, 생성 시점에서는 방장을 추가하지 않는다.
    *
    * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌) | null (Redis 오류)
    */
@@ -248,9 +318,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    *
    * [정규화 이유]
    * Lua 스크립트(create_lobby.lua)에서 isPrivate 값을
-   * if isPrivate == "false" then 으로 비교합니다.
+   * if isPrivate == "false" then 으로 비교한다.
    * IS_PRIVATE_TRUE / IS_PRIVATE_FALSE 상수를 사용하여
-   * 대소문자 불일치나 예상치 못한 값이 전달되는 것을 방지합니다.
+   * 대소문자 불일치나 예상치 못한 값이 전달되는 것을 방지한다.
    *
    * @param isPrivate 로비 비공개 여부
    * @return "true" (비공개) 또는 "false" (공개)
@@ -310,6 +380,31 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     } catch (NumberFormatException e) {
       log.warn("Redis Hash 필드 Integer 파싱 실패 - 값: {}", value);
       return null;
+    }
+  }
+
+  /**
+   * Redis Hash 필드값을 Integer로 파싱한다.
+   * null이거나 파싱 실패 시 defaultValue를 반환한다.
+   *
+   * [parseNullableInt()와의 차이]
+   * parseNullableInt()는 null을 그대로 반환하지만,
+   * 이 메서드는 primitive int 필드에 대입할 때 NullPointerException이 발생하지 않도록 반드시 기본값을 반환한다.
+   *
+   * @param value        Redis Hash에서 조회한 원시값
+   * @param defaultValue 파싱 실패 시 반환할 기본값
+   * @return 파싱된 정수 또는 defaultValue
+   */
+  private int parseNullableIntOrDefault(Object value, int defaultValue) {
+    if (value == null) {
+      return defaultValue;
+    }
+    try {
+      return Integer.parseInt((String) value);
+    } catch (NumberFormatException e) {
+      log.warn("Redis Hash 필드 Integer 파싱 실패 - 값: {}, 기본값 {} 사용",
+              value, defaultValue);
+      return defaultValue;
     }
   }
 }

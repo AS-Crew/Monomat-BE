@@ -33,10 +33,12 @@ public class RegisterAuthService {
     @Transactional
     public RegisterResponse register(String rawLoginId, String rawPassword, String rawNickname) {
         String loginId = normalizeRequiredWithTrim(rawLoginId, "로그인 ID");
-        String password = validatePasswordWithoutWhitespace(rawPassword);
+        validateNoWhitespace(loginId, "로그인 ID");
+
+        String password = validateNoWhitespace(rawPassword, "비밀번호");
+
         String nickname = normalizeRequiredWithTrim(rawNickname, "닉네임");
         validateNicknameLength(nickname);
-
         validateDuplicate(loginId, nickname);
 
         User savedUser;
@@ -94,12 +96,12 @@ public class RegisterAuthService {
         return normalized;
     }
 
-    private String validatePasswordWithoutWhitespace(String value) {
+    private String validateNoWhitespace(String value, String fieldName) {
         if (value == null || value.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호는 비어 있을 수 없습니다.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는(은) 비어 있을 수 없습니다.");
         }
         if (value.chars().anyMatch(Character::isWhitespace)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "비밀번호에는 공백을 포함할 수 없습니다.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "에는 공백을 포함할 수 없습니다.");
         }
         return value;
     }

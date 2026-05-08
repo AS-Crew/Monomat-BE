@@ -126,4 +126,17 @@ class RegisterAuthServiceTest {
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         assertEquals("닉네임은 8자를 초과할 수 없습니다.", exception.getReason());
     }
+
+    @Test
+    void register_loginIdWithWhitespace_throwsBadRequest() {
+        // given
+        String loginIdWithWhitespace = "abc def";
+        String uniqueNickname = uniqueNickname();
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
+                registerAuthService.register(loginIdWithWhitespace, "password123", uniqueNickname));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertEquals("로그인 ID에는 공백을 포함할 수 없습니다.", exception.getReason());
+    }
 }

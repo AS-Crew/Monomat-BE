@@ -19,7 +19,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
@@ -72,16 +71,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     // =========================================================
 
     /**
-     * 사용자 온라인 상태 TTL.
-     *
-     * 비정상 종료 시 Redis 좀비 키 방지용입니다.
-     * 정상 종료 시 WebSocketEventListener에서 즉시 삭제한다.
-     *
-     * user_status 다중 세션 정합성은 후속 이슈 #55에서 개선합니다.
-     */
-    private static final long USER_STATUS_TTL_HOURS = 2;
-
-    /**
      * ws:connection:{wsSessionId}, lobby:{code}:user_session:{userIdentifier},
      * lobby:{code}:user_session_seq:{userIdentifier} 매핑 TTL.
      *
@@ -90,8 +79,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
      * 기존 2시간은 장시간 로비 대기 또는 게임 진행 중 TTL 만료 타이밍 이슈가 생길 수 있어
      * 6시간으로 늘린다.
      *
-     * 추후 #55에서 사용자 온라인 상태 다중 세션 관리와 함께
-     * WebSocket heartbeat 기반 TTL 연장 구조를 검토한다.
+     * 사용자 온라인 상태 TTL은 userStatusTtl 설정값을 사용한다.
      */
     private static final Duration WS_CONNECTION_TTL = Duration.ofHours(6);
 
@@ -102,6 +90,21 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final StringRedisTemplate stringRedisTemplate;
     private final WebSocketMetric webSocketMetric;
     private final RedisScript<String> enterLobbyScript;
+
+    /**
+     * 사용자 온라인 상태 TTL.
+     *
+     * [기본값]
+     * - PT2H: 2시간
+     *
+     * [설정 예시]
+     * monomat.websocket.user-status.ttl=PT2H
+     *
+     * [설계 의도]
+     * CONNECT 시점과 DISCONNECT 후 TTL 연장 시점이 동일한 정책을 따르도록
+     * WebSocketEventListener와 같은 설정 키를 사용한다.
+     */
+    private final Duration userStatusTtl;
 
     /**
      * 로비 입장 Lua 재시도 횟수.
@@ -120,11 +123,13 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     public StompChannelInterceptor(
             StringRedisTemplate stringRedisTemplate,
             WebSocketMetric webSocketMetric,
-            @Qualifier("enterLobbyScript") RedisScript<String> enterLobbyScript
+            @Qualifier("enterLobbyScript") RedisScript<String> enterLobbyScript,
+            @Value("${monomat.websocket.user-status.ttl:PT2H}") Duration userStatusTtl
     ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.webSocketMetric = webSocketMetric;
         this.enterLobbyScript = enterLobbyScript;
+        this.userStatusTtl = userStatusTtl;
     }
 
     @Override
@@ -314,21 +319,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                     }
 
                     case INVALID_SEQUENCE -> {
-                        /*
-                         * INVALID_SEQUENCE는 재시도 대상이 아니다.
-                         *
-                         * sessionSequence는 CONNECT 단계에서 Redis INCR로 발급되고,
-                         * SUBSCRIBE 처리 전에 Java의 extractSessionSequence()에서 검증된 뒤 Lua에 전달된다.
-                         *
-                         * 따라서 Lua에서 INVALID_SEQUENCE가 반환된다는 것은 일시적인 Redis 장애라기보다
-                         * Java-Lua 인자 계약이 깨졌거나 세션 속성 저장 흐름이 깨진 서버 내부 오류에 가깝다.
-                         *
-                         * fallback 값(예: 0)을 사용하면 sequence가 없는 세션이 정상 입장될 수 있어
-                         * stale 세션 방지 정책이 약해진다.
-                         *
-                         * 또한 같은 잘못된 ARGV로 재시도해도 결과가 반복될 가능성이 높으므로
-                         * 즉시 STOMP ERROR로 실패시키고 클라이언트가 새 연결을 생성하도록 유도한다.
-                         */
                         cleanupWsConnection(wsSessionId);
                         throw new IllegalStateException("로비 입장 실패: 세션 상태가 유효하지 않습니다. 새로고침 후 다시 시도해주세요.");
                     }
@@ -366,7 +356,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
 
         cleanupWsConnection(wsSessionId);
-        throw new IllegalStateException("일시적으로 로비 입장 상태를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요.");    }
+        throw new IllegalStateException("일시적으로 로비 입장 상태를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요.");
+    }
 
     /**
      * STOMP 세션 속성에서 sessionSequence를 추출한다.
@@ -386,7 +377,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     }
 
     /**
-     * enter_lobby.lua를 1회 실행
+     * enter_lobby.lua를 1회 실행한다.
      */
     private String executeEnterLobbyScript(
             String lobbyCode,
@@ -482,6 +473,32 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         return sanitized.length() > 50 ? sanitized.substring(0, 50) + "..." : sanitized;
     }
 
+    /**
+     * 사용자 온라인 상태와 현재 WebSocket 세션을 Redis에 저장한다.
+     *
+     * [저장 구조]
+     * - user_status:{userIdentifier}:sessions = Set<wsSessionId>
+     * - user_status:{userIdentifier} = ONLINE
+     *
+     * [중요]
+     * CONNECT 시점과 DISCONNECT 후 TTL 연장 시점이 서로 다른 TTL 정책을 사용하면
+     * 분산 환경에서 온라인 상태 만료 기준이 달라질 수 있다.
+     * 따라서 userStatusTtl 설정값 하나로 온라인 상태 TTL을 통일한다.
+     */
+    private void saveUserOnlineSession(String userIdentifier, String wsSessionId) {
+        String userStatusKey = RedisKeys.userStatusKey(userIdentifier);
+        String userStatusSessionsKey = RedisKeys.userStatusSessionsKey(userIdentifier);
+
+        stringRedisTemplate.opsForSet().add(userStatusSessionsKey, wsSessionId);
+        stringRedisTemplate.expire(userStatusSessionsKey, userStatusTtl);
+
+        stringRedisTemplate.opsForValue().set(
+                userStatusKey,
+                WebSocketHeaders.STATUS_ONLINE,
+                userStatusTtl
+        );
+    }
+
     private enum LobbyEnterResultType {
         ENTERED,
         ALREADY_JOINED,
@@ -490,32 +507,5 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         LOBBY_NOT_FOUND,
         INVALID_SEQUENCE,
         UNKNOWN
-    }
-
-    /**
-     * 사용자 온라인 상태와 현재 WebSocket 세션을 Redis에 저장한다.
-     *
-     * [저장 구조]
-     * - user_status:{userIdentifier}:sessions = Set<wsSessionId>
-     * - user_status:{userIdentifier} = ONLINE
-     */
-    private void saveUserOnlineSession(String userIdentifier, String wsSessionId) {
-        String userStatusKey = RedisKeys.userStatusKey(userIdentifier);
-        String userStatusSessionsKey = RedisKeys.userStatusSessionsKey(userIdentifier);
-
-        stringRedisTemplate.opsForSet().add(userStatusSessionsKey, wsSessionId);
-
-        stringRedisTemplate.expire(
-                userStatusSessionsKey,
-                USER_STATUS_TTL_HOURS,
-                TimeUnit.HOURS
-        );
-
-        stringRedisTemplate.opsForValue().set(
-                userStatusKey,
-                WebSocketHeaders.STATUS_ONLINE,
-                USER_STATUS_TTL_HOURS,
-                TimeUnit.HOURS
-        );
     }
 }

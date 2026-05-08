@@ -82,12 +82,18 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private static final long USER_STATUS_TTL_HOURS = 2;
 
     /**
-     * ws:connection:{wsSessionId} 및 lobby:{code}:user_session:{userIdentifier} 매핑 TTL.
+     * ws:connection:{wsSessionId}, lobby:{code}:user_session:{userIdentifier},
+     * lobby:{code}:user_session_seq:{userIdentifier} 매핑 TTL.
      *
-     * 정상 종료 시 DISCONNECT 이벤트에서 즉시 삭제하고,
-     * 비정상 종료 시 TTL로 자동 만료됩니다.
+     * WebSocket DISCONNECT 이벤트 누락, 서버 비정상 종료에 대비한 안전장치다.
+     *
+     * 기존 2시간은 장시간 로비 대기 또는 게임 진행 중 TTL 만료 타이밍 이슈가 생길 수 있어
+     * 6시간으로 늘린다.
+     *
+     * 추후 #55에서 사용자 온라인 상태 다중 세션 관리와 함께
+     * WebSocket heartbeat 기반 TTL 연장 구조를 검토한다.
      */
-    private static final Duration WS_CONNECTION_TTL = Duration.ofHours(2);
+    private static final Duration WS_CONNECTION_TTL = Duration.ofHours(6);
 
     // =========================================================
     // 의존성
@@ -305,8 +311,23 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                     }
 
                     case INVALID_SEQUENCE -> {
+                        /*
+                         * INVALID_SEQUENCE는 재시도 대상이 아니다.
+                         *
+                         * sessionSequence는 CONNECT 단계에서 Redis INCR로 발급되고,
+                         * SUBSCRIBE 처리 전에 Java의 extractSessionSequence()에서 검증된 뒤 Lua에 전달된다.
+                         *
+                         * 따라서 Lua에서 INVALID_SEQUENCE가 반환된다는 것은 일시적인 Redis 장애라기보다
+                         * Java-Lua 인자 계약이 깨졌거나 세션 속성 저장 흐름이 깨진 서버 내부 오류에 가깝다.
+                         *
+                         * fallback 값(예: 0)을 사용하면 sequence가 없는 세션이 정상 입장될 수 있어
+                         * stale 세션 방지 정책이 약해진다.
+                         *
+                         * 또한 같은 잘못된 ARGV로 재시도해도 결과가 반복될 가능성이 높으므로
+                         * 즉시 STOMP ERROR로 실패시키고 클라이언트가 새 연결을 생성하도록 유도한다.
+                         */
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 세션 순서값이 유효하지 않습니다.");
+                        throw new IllegalStateException("로비 입장 실패: 세션 상태가 유효하지 않습니다. 새로고침 후 다시 시도해주세요.");
                     }
 
                     case UNKNOWN -> {
@@ -342,8 +363,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
 
         cleanupWsConnection(wsSessionId);
-        throw new IllegalStateException("로비 입장 처리에 실패했습니다. 새로고침 후 다시 시도해주세요.");
-    }
+        throw new IllegalStateException("일시적으로 로비 입장 상태를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요.");    }
 
     /**
      * STOMP 세션 속성에서 sessionSequence를 추출한다.

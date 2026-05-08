@@ -160,8 +160,7 @@ public class WebSocketEventListener {
         Object resultValue = sessionAttributes.remove(WebSocketHeaders.LOBBY_ENTER_RESULT);
 
         if (!(resultValue instanceof String result)) {
-            log.warn("로비 입장 후처리 중단 - 인터셉터 입장 결과가 없습니다. 로비: {}, 식별자: {}, wsSessionId: {}",
-                    lobbyCode, userIdentifier, wsSessionId);
+            handleMissingLobbyEnterResult(lobbyCode, userIdentifier, wsSessionId);
             return;
         }
 
@@ -299,8 +298,50 @@ public class WebSocketEventListener {
             return;
         }
 
-        log.warn("로비 입장 후처리 중 알 수 없는 결과 수신 - result: {}, 로비: {}, 식별자: {}, wsSessionId: {}",
+        handleUnknownLobbyEnterResult(lobbyCode, userIdentifier, wsSessionId, result);
+    }
+
+    /**
+     * 로비 입장 후처리 결과가 세션 속성에 없는 경우의 fallback 처리.
+     *
+     * 정상 흐름에서는 StompChannelInterceptor가 SUBSCRIBE preSend 단계에서
+     * enter_lobby.lua를 성공시킨 뒤 LOBBY_ENTER_RESULT를 세션 속성에 저장한다.
+     *
+     * 따라서 이 값이 없다는 것은 입장 실패라기보다 후처리 메타데이터 누락에 가깝다.
+     * 이 상황에서 ENTER_FAILED를 보내면 이미 Redis에 입장 처리된 사용자를 실패로 오인시킬 수 있다.
+     *
+     * 안전한 fallback으로 로비 정보 refresh만 전송하여 클라이언트가 서버 상태를 다시 조회하게 한다.
+     */
+    private void handleMissingLobbyEnterResult(
+            String lobbyCode,
+            String userIdentifier,
+            String wsSessionId
+    ) {
+        log.error("로비 입장 후처리 fallback 실행 - 인터셉터 입장 결과가 없습니다. 로비: {}, 식별자: {}, wsSessionId: {}",
+                lobbyCode, userIdentifier, wsSessionId);
+
+        notifyLobbyInfoRefresh(lobbyCode);
+    }
+
+    /**
+     * 알 수 없는 Lua 입장 결과가 후처리 단계까지 전달된 경우의 fallback 처리.
+     *
+     * StompChannelInterceptor에서 Lua 반환값을 enum parser로 검증하므로,
+     * 정상적으로는 알 수 없는 결과가 여기까지 오면 안 된다.
+     *
+     * 다만 반환값 계약 변경 또는 예외적 상황에 대비해 ENTER_FAILED 대신 refresh를 전송한다.
+     * ENTER 메시지는 중복 발행 위험이 있고, ENTER_FAILED는 실제 입장 완료 상태와 충돌할 수 있기 때문이다.
+     */
+    private void handleUnknownLobbyEnterResult(
+            String lobbyCode,
+            String userIdentifier,
+            String wsSessionId,
+            String result
+    ) {
+        log.error("로비 입장 후처리 fallback 실행 - 알 수 없는 결과 수신. result: {}, 로비: {}, 식별자: {}, wsSessionId: {}",
                 result, lobbyCode, userIdentifier, wsSessionId);
+
+        notifyLobbyInfoRefresh(lobbyCode);
     }
 
     /**

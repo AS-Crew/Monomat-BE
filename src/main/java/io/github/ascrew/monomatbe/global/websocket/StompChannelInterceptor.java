@@ -101,8 +101,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
      * monomat.websocket.user-status.ttl=PT2H
      *
      * [설계 의도]
-     * CONNECT 시점과 DISCONNECT 후 TTL 연장 시점이 동일한 정책을 따르도록
-     * WebSocketEventListener와 같은 설정 키를 사용한다.
+     * 사용자 온라인 상태 생성 시점의 TTL 정책을 설정값으로 관리한다.
+     * DISCONNECT에서는 TTL을 연장하지 않고 세션 제거 및 마지막 세션 여부만 판단한다.
      */
     private final Duration userStatusTtl;
 
@@ -197,11 +197,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             throw new IllegalStateException("STOMP CONNECT: WebSocket 세션 ID가 없습니다.");
         }
 
+        log.debug("STOMP CONNECT 온라인 상태 저장 시작 - userIdentifier: {}, wsSessionId: {}, sessionSequence: {}",
+                userIdentifier, wsSessionId, sessionSequence);
+
         saveUserOnlineSession(userIdentifier, wsSessionId);
 
         webSocketMetric.increment();
 
-        log.info("STOMP CONNECT 성공: {}, wsSessionId: {}, sessionSequence: {}",
+        log.info("STOMP CONNECT 성공 - userIdentifier: {}, wsSessionId: {}, sessionSequence: {}",
                 userIdentifier, wsSessionId, sessionSequence);
     }
 
@@ -481,22 +484,27 @@ public class StompChannelInterceptor implements ChannelInterceptor {
      * - user_status:{userIdentifier} = ONLINE
      *
      * [중요]
-     * CONNECT 시점과 DISCONNECT 후 TTL 연장 시점이 서로 다른 TTL 정책을 사용하면
-     * 분산 환경에서 온라인 상태 만료 기준이 달라질 수 있다.
-     * 따라서 userStatusTtl 설정값 하나로 온라인 상태 TTL을 통일한다.
+     * 온라인 상태 TTL은 CONNECT 시점의 생존 신호를 기준으로 설정한다.
+     * DISCONNECT는 세션 정리 이벤트이므로 TTL 연장 기준으로 사용하지 않는다.
      */
     private void saveUserOnlineSession(String userIdentifier, String wsSessionId) {
         String userStatusKey = RedisKeys.userStatusKey(userIdentifier);
         String userStatusSessionsKey = RedisKeys.userStatusSessionsKey(userIdentifier);
 
-        stringRedisTemplate.opsForSet().add(userStatusSessionsKey, wsSessionId);
-        stringRedisTemplate.expire(userStatusSessionsKey, userStatusTtl);
+        try {
+            stringRedisTemplate.opsForSet().add(userStatusSessionsKey, wsSessionId);
+            stringRedisTemplate.expire(userStatusSessionsKey, userStatusTtl);
 
-        stringRedisTemplate.opsForValue().set(
-                userStatusKey,
-                WebSocketHeaders.STATUS_ONLINE,
-                userStatusTtl
-        );
+            stringRedisTemplate.opsForValue().set(
+                    userStatusKey,
+                    WebSocketHeaders.STATUS_ONLINE,
+                    userStatusTtl
+            );
+        } catch (RuntimeException e) {
+            log.error("STOMP CONNECT 온라인 상태 저장 실패 - userIdentifier: {}, wsSessionId: {}, userStatusKey: {}, userStatusSessionsKey: {}",
+                    userIdentifier, wsSessionId, userStatusKey, userStatusSessionsKey, e);
+            throw new IllegalStateException("STOMP CONNECT: 사용자 온라인 상태 저장에 실패했습니다.", e);
+        }
     }
 
     private enum LobbyEnterResultType {

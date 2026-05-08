@@ -1,0 +1,81 @@
+package io.github.ascrew.monomatbe.domain.map.controller;
+
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.PublicMapPageResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.service.MapService;
+import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@Tag(name = "Map", description = "맵 관련 REST API")
+@RestController
+@RequestMapping("/api/maps")
+@RequiredArgsConstructor
+public class MapController {
+
+    private final MapService mapService;
+
+    @Operation(summary = "공개 맵 목록 조회")
+    @GetMapping
+    public ResponseEntity<PublicMapPageResponse> getPublicMaps(
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "20") Integer size
+    ) {
+        return ResponseEntity.ok(mapService.getPublicMaps(page, size));
+    }
+
+    @Operation(summary = "공개 맵 단건 조회")
+    @GetMapping("/{mapId}")
+    public ResponseEntity<MapDetailResponse> getPublicMap(@PathVariable Long mapId) {
+        return ResponseEntity.ok(mapService.getPublicMap(mapId));
+    }
+
+    @Operation(summary = "맵 생성", description = "정식 회원(REGISTERED)만 생성 가능합니다.")
+    @PostMapping
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<MapDetailResponse> createMap(
+            @Valid @RequestBody CreateMapRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(mapService.createMap(request, principal));
+    }
+
+    @Operation(summary = "맵 수정", description = "맵 소유자만 수정 가능합니다.")
+    @PutMapping("/{mapId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<MapDetailResponse> updateMap(
+            @PathVariable Long mapId,
+            @Valid @RequestBody UpdateMapRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        return ResponseEntity.ok(mapService.updateMap(mapId, request, principal));
+    }
+
+    @Operation(summary = "맵 삭제", description = "맵 소유자만 삭제 가능하며 Soft Delete 처리됩니다.")
+    @DeleteMapping("/{mapId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> deleteMap(
+            @PathVariable Long mapId,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        mapService.deleteMap(mapId, principal);
+        return ResponseEntity.noContent().build();
+    }
+}

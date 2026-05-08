@@ -564,8 +564,6 @@ public class WebSocketEventListener {
             return;
         }
 
-        refreshUserOnlineStatusTtl(userStatusKey, userStatusSessionsKey);
-
         log.info("사용자 온라인 상태 유지 - 남은 WebSocket 세션 수: {}, userIdentifier: {}, disconnectedWsSessionId: {}",
                 remainingSessionCount, userIdentifier, wsSessionId);
     }
@@ -613,16 +611,5 @@ public class WebSocketEventListener {
 
         log.info("사용자 온라인 상태 삭제 - 마지막 WebSocket 세션 종료. userIdentifier: {}, wsSessionId: {}",
                 userIdentifier, wsSessionId);
-    }
-
-    /**
-     * 사용자 온라인 상태 관련 Redis 키의 TTL을 갱신한다.
-     *
-     * 일부 세션만 종료된 경우에도 다른 세션이 살아 있으므로,
-     * user_status와 sessions Set의 TTL을 다시 연장하여 온라인 상태가 조기 만료되지 않도록 한다.
-     */
-    private void refreshUserOnlineStatusTtl(String userStatusKey, String userStatusSessionsKey) {
-        stringRedisTemplate.expire(userStatusKey, userStatusTtl);
-        stringRedisTemplate.expire(userStatusSessionsKey, userStatusTtl);
     }
 }

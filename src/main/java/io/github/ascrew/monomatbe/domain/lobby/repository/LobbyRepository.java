@@ -6,9 +6,11 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
+import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface LobbyRepository {
 
@@ -25,18 +27,6 @@ public interface LobbyRepository {
 
   /**
    * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
-   *
-   * [보상 삭제 대상]
-   * - lobby:{code} Hash
-   * - lobby:{code}:participants Set
-   * - lobby:{code}:order List
-   * - lobby:public Set에서 코드 제거
-   * - lobby:code:lock:{code} 락 키
-   *
-   * 반환 타입을 void → boolean으로 변경
-   * 보상 삭제 성공 여부를 서비스 레이어에서 확인하여
-   * 실패 시 모니터링 가능한 로그/알림 처리를 가능하게 한다.
-   *
    * @param inviteCode 삭제할 로비 초대 코드
    * @return 보상 삭제 성공 여부 (true: 성공, false: 실패)
    */
@@ -44,11 +34,29 @@ public interface LobbyRepository {
 
   /**
    * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행한다.
-   *
    * @return LeaveLobbyResult (Destroyed | Delegated | Left | Error)
    */
   LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId);
 
   /** Redis에서 공개 로비 목록을 필터링하여 반환한다. */
   List<LobbyRedisDto> getPublicLobbies();
+
+  /**
+   * 초대 코드로 로비 입장에 필요한 정보를 조회한다.
+   *
+   * [반환 전략]
+   * 로비가 존재하지 않으면 Optinal.empty()를 반환한다.
+   * 서비스 레이어에서 empty 여부로 404를 처리 하므로, Repository는 존재 여부 판단을 서비스에 위임한다.
+   *
+   * @param inviteCode 로비 초대 코드
+   * @return 로비 정보 Optional (로비 미존재 시 empty)
+   */
+  Optional<JoinLobbyResponse> findByInviteCode(String inviteCode);
+
+  /**
+   * 해당 로비의 현재 참여 인원 수를 반환한다.
+   * @param inviteCode 로비 초대 코드
+   * @return 현재 참여 인원 수
+   */
+  int getCurrentPlayerCount(String inviteCode);
 }

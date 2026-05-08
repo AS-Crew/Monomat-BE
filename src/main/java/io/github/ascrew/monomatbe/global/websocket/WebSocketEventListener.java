@@ -24,6 +24,7 @@ import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -34,6 +35,7 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -73,6 +75,25 @@ public class WebSocketEventListener {
 
     /** 퇴장 시스템 메시지 포맷 */
     private static final String LEAVE_MESSAGE_FORMAT = "%s님이 퇴장하셨습니다.";
+
+    // =========================================================
+    // 설정값
+    // =========================================================
+
+    /**
+     * 사용자 온라인 상태 TTL.
+     *
+     * [기본값]
+     * - PT2H: 2시간
+     *
+     * [설정 예시]
+     * monomat.websocket.user-status.ttl=PT2H
+     *
+     * [설계 의도]
+     * WebSocket DISCONNECT 이벤트 누락 또는 서버 비정상 종료 시
+     * user_status 및 sessions Set이 Redis에 영구적으로 남지 않도록 TTL을 적용한다.
+     */
+    private final Duration userStatusTtl;
 
     // =========================================================
     // 의존성
@@ -118,7 +139,8 @@ public class WebSocketEventListener {
             SimpMessagingTemplate messagingTemplate,
             ApplicationEventPublisher eventPublisher,
             WebSocketMetric webSocketMetric,
-            @Qualifier("pubSubJsonMapper") JsonMapper pubSubJsonMapper
+            @Qualifier("pubSubJsonMapper") JsonMapper pubSubJsonMapper,
+            @Value("${monomat.websocket.user-status.ttl:PT2H}") Duration userStatusTtl
     ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.redisPublisher = redisPublisher;
@@ -126,6 +148,7 @@ public class WebSocketEventListener {
         this.eventPublisher = eventPublisher;
         this.webSocketMetric = webSocketMetric;
         this.pubSubJsonMapper = pubSubJsonMapper;
+        this.userStatusTtl = userStatusTtl;
     }
 
     /**
@@ -203,6 +226,7 @@ public class WebSocketEventListener {
             log.info("stale WebSocket 세션 연결 해제 감지 - 실제 퇴장 처리 생략. 로비: {}, 식별자: {}, wsSessionId: {}",
                     lobbyCode, userIdentifier, wsSessionId);
 
+            removeUserOnlineSessionOnly(userIdentifier, wsSessionId);
             deleteStaleConnectionKey(wsSessionId);
             webSocketMetric.decrement();
             return;
@@ -495,17 +519,17 @@ public class WebSocketEventListener {
     /**
      * DISCONNECT 이후 불필요한 Redis 키를 정리한다.
      *
-     * 현재 유효 세션의 DISCONNECT에서만 user_status, lobbyUserSessionKey,
-     * lobbyUserSessionSequenceKey를 삭제한다.
-     *
-     * stale 세션은 deleteStaleConnectionKey()에서 ws:connection만 삭제한다.
+     * [중요]
+     * user_status:{userIdentifier}는 무조건 삭제하지 않는다.
+     * 현재 wsSessionId를 user_status:{userIdentifier}:sessions Set에서 제거한 뒤,
+     * 남은 세션이 없을 때만 사용자를 오프라인으로 처리한다.
      */
     private void deleteDisconnectKeys(
             String userIdentifier,
             String wsSessionId,
             String lobbyCode
     ) {
-        stringRedisTemplate.delete(RedisKeys.userStatusKey(userIdentifier));
+        deleteUserOnlineSession(userIdentifier, wsSessionId);
 
         if (wsSessionId != null && !wsSessionId.isBlank()) {
             stringRedisTemplate.delete(RedisKeys.wsConnectionKey(wsSessionId));
@@ -515,5 +539,77 @@ public class WebSocketEventListener {
             stringRedisTemplate.delete(RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier));
             stringRedisTemplate.delete(RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, userIdentifier));
         }
+    }
+
+    /**
+     * DISCONNECT 된 WebSocket 세션을 사용자 온라인 세션 Set에서 제거한다.
+     *
+     * 마지막 세션이 종료된 경우에만 user_status:{userIdentifier}를 삭제한다.
+     * 아직 다른 WebSocket 세션이 남아 있다면 사용자는 온라인 상태로 유지한다.
+     */
+    private void deleteUserOnlineSession(String userIdentifier, String wsSessionId) {
+        if (!hasValidUserIdentifier(userIdentifier)) {
+            return;
+        }
+
+        String userStatusKey = RedisKeys.userStatusKey(userIdentifier);
+        String userStatusSessionsKey = RedisKeys.userStatusSessionsKey(userIdentifier);
+
+        removeUserOnlineSession(userStatusSessionsKey, wsSessionId);
+
+        Long remainingSessionCount = stringRedisTemplate.opsForSet().size(userStatusSessionsKey);
+
+        if (remainingSessionCount == null || remainingSessionCount == 0) {
+            deleteUserOnlineStatus(userStatusKey, userStatusSessionsKey, userIdentifier, wsSessionId);
+            return;
+        }
+
+        log.info("사용자 온라인 상태 유지 - 남은 WebSocket 세션 수: {}, userIdentifier: {}, disconnectedWsSessionId: {}",
+                remainingSessionCount, userIdentifier, wsSessionId);
+    }
+
+    /**
+     * stale WebSocket 세션을 사용자 온라인 세션 Set에서만 제거한다.
+     *
+     * stale 세션은 로비 기준 최신 유효 세션이 아니므로,
+     * 로비 퇴장 처리와 user_status 삭제 판단은 수행하지 않는다.
+     */
+    private void removeUserOnlineSessionOnly(String userIdentifier, String wsSessionId) {
+        if (!hasValidUserIdentifier(userIdentifier)) {
+            return;
+        }
+
+        String userStatusSessionsKey = RedisKeys.userStatusSessionsKey(userIdentifier);
+        removeUserOnlineSession(userStatusSessionsKey, wsSessionId);
+
+        log.info("stale WebSocket 세션을 온라인 세션 Set에서 제거 - userIdentifier: {}, wsSessionId: {}",
+                userIdentifier, wsSessionId);
+    }
+
+    /**
+     * 사용자 온라인 세션 Set에서 특정 wsSessionId를 제거한다.
+     */
+    private void removeUserOnlineSession(String userStatusSessionsKey, String wsSessionId) {
+        if (wsSessionId == null || wsSessionId.isBlank()) {
+            return;
+        }
+
+        stringRedisTemplate.opsForSet().remove(userStatusSessionsKey, wsSessionId);
+    }
+
+    /**
+     * 사용자 온라인 상태 관련 Redis 키를 삭제한다.
+     */
+    private void deleteUserOnlineStatus(
+            String userStatusKey,
+            String userStatusSessionsKey,
+            String userIdentifier,
+            String wsSessionId
+    ) {
+        stringRedisTemplate.delete(userStatusKey);
+        stringRedisTemplate.delete(userStatusSessionsKey);
+
+        log.info("사용자 온라인 상태 삭제 - 마지막 WebSocket 세션 종료. userIdentifier: {}, wsSessionId: {}",
+                userIdentifier, wsSessionId);
     }
 }

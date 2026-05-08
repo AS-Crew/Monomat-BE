@@ -145,7 +145,7 @@ public class MapService {
                 .isPublic(request.isPublic())
                 .build());
 
-        evictMapCache(created.getId());
+        safeEvictMapCache(created.getId());
         return toDetailResponse(created);
     }
 
@@ -160,7 +160,7 @@ public class MapService {
         validateOwnership(quizMap, principal);
         quizMap.update(request.title(), request.description(), request.category(), request.isPublic());
 
-        evictMapCache(quizMap.getId());
+        safeEvictMapCache(quizMap.getId());
         return toDetailResponse(quizMap);
     }
 
@@ -174,7 +174,7 @@ public class MapService {
 
         validateOwnership(quizMap, principal);
         quizMap.softDelete();
-        evictMapCache(quizMap.getId());
+        safeEvictMapCache(quizMap.getId());
     }
 
     private void validatePrincipal(CustomPrincipal principal) {
@@ -199,9 +199,20 @@ public class MapService {
         }
     }
 
-    private void evictMapCache(Long mapId) {
-        redisTemplate.opsForValue().increment(RedisKeys.mapPublicListVersionKey());
-        redisTemplate.delete(RedisKeys.mapPublicDetailKey(mapId));
+    private void safeEvictMapCache(Long mapId) {
+        try {
+            redisTemplate.opsForValue().increment(RedisKeys.mapPublicListVersionKey());
+        } catch (Exception e) {
+            log.warn("공개 맵 목록 캐시 버전 무효화 실패 - key: {}",
+                    RedisKeys.mapPublicListVersionKey(), e);
+        }
+
+        String detailKey = RedisKeys.mapPublicDetailKey(mapId);
+        try {
+            redisTemplate.delete(detailKey);
+        } catch (Exception e) {
+            log.warn("공개 맵 단건 캐시 무효화 실패 - key: {}", detailKey, e);
+        }
     }
 
     private String getPublicListCacheVersion() {

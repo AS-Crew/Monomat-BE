@@ -40,6 +40,15 @@ public final class RedisKeys {
     /** 초대 코드 중복 방지 SETNX 락 키 접두사 */
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
 
+    /** 공개 맵 목록 캐시 키 */
+    private static final String MAP_PUBLIC_LIST_PREFIX = "map:public:list";
+
+    /** 공개 맵 목록 캐시 버전 키 */
+    private static final String MAP_PUBLIC_LIST_VERSION = "map:public:list:version";
+
+    /** 공개 맵 단건 캐시 키 접두사 */
+    private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:";
+
     // =========================================================
     // Key Suffix 상수
     // =========================================================
@@ -253,5 +262,17 @@ public final class RedisKeys {
      */
     public static String lobbyUserSessionSequenceKey(String code, String userIdentifier) {
         return LOBBY_PREFIX + code + USER_SESSION_SEQUENCE_SUFFIX + userIdentifier;
+    }
+}
+    public static String mapPublicListVersionKey() {
+        return MAP_PUBLIC_LIST_VERSION;
+    }
+
+    public static String mapPublicListKey(String version, int page, int size) {
+        return MAP_PUBLIC_LIST_PREFIX + ":v:" + version + ":p:" + page + ":s:" + size;
+    }
+
+    public static String mapPublicDetailKey(Long mapId) {
+        return MAP_PUBLIC_DETAIL_PREFIX + mapId;
     }
 }

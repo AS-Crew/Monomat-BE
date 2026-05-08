@@ -4,13 +4,13 @@ import io.github.ascrew.monomatbe.domain.auth.dto.RegisterResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @SpringBootTest
 @ActiveProfiles("test")
+@Transactional
 class RegisterAuthServiceTest {
 
     @Autowired
@@ -27,13 +28,14 @@ class RegisterAuthServiceTest {
     @Autowired
     private UserRepository userRepository;
 
-    @Autowired
-    private UserCredentialRepository userCredentialRepository;
+    private String uniqueNickname() {
+        return "n" + (System.nanoTime() % 1_000_000);
+    }
 
     @Test
     void register_success() {
         String uniqueLoginId = "member_" + System.nanoTime();
-        String uniqueNickname = "nick_" + System.nanoTime();
+        String uniqueNickname = uniqueNickname();
 
         RegisterResponse response = registerAuthService.register(
                 uniqueLoginId,
@@ -48,13 +50,13 @@ class RegisterAuthServiceTest {
     }
 
     @Test
-    void register_trimsInputValues() {
+    void register_trimsLoginIdAndNickname() {
         String uniqueLoginId = "member_" + System.nanoTime();
-        String uniqueNickname = "nick_" + System.nanoTime();
+        String uniqueNickname = uniqueNickname();
 
         RegisterResponse response = registerAuthService.register(
                 "  " + uniqueLoginId + "  ",
-                "  password123  ",
+                "password123",
                 "  " + uniqueNickname + "  "
         );
 
@@ -63,20 +65,32 @@ class RegisterAuthServiceTest {
     }
 
     @Test
+    void register_passwordWithWhitespace_throwsBadRequest() {
+        String uniqueLoginId = "member_" + System.nanoTime();
+        String uniqueNickname = uniqueNickname();
+        String rawPassword = "  password123  ";
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
+                registerAuthService.register(uniqueLoginId, rawPassword, uniqueNickname));
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertEquals("비밀번호에는 공백을 포함할 수 없습니다.", exception.getReason());
+    }
+
+    @Test
     void register_duplicateLoginId_throwsConflict() {
         String loginId = "dup_login_" + System.nanoTime();
 
-        registerAuthService.register(loginId, "password123", "dupNick_" + System.nanoTime());
+        registerAuthService.register(loginId, "password123", uniqueNickname());
 
         ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register(loginId, "password123", "anotherNick_" + System.nanoTime()));
+                registerAuthService.register(loginId, "password123", uniqueNickname()));
         assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
         assertEquals("이미 사용 중인 로그인 ID입니다.", exception.getReason());
     }
 
     @Test
     void register_duplicateNickname_throwsConflict() {
-        String nickname = "dup_nick_" + System.nanoTime();
+        String nickname = uniqueNickname();
         userRepository.saveAndFlush(User.builder()
                 .username(nickname)
                 .userType(UserType.REGISTERED)
@@ -92,7 +106,7 @@ class RegisterAuthServiceTest {
     @Test
     void register_nullPassword_throwsBadRequest() {
         ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register("login_" + System.nanoTime(), null, "nick_" + System.nanoTime()));
+                registerAuthService.register("login_" + System.nanoTime(), null, uniqueNickname()));
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         assertEquals("비밀번호는 비어 있을 수 없습니다.", exception.getReason());
     }
@@ -100,8 +114,16 @@ class RegisterAuthServiceTest {
     @Test
     void register_blankLoginId_throwsBadRequest() {
         ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register("   ", "password123", "nick_" + System.nanoTime()));
+                registerAuthService.register("   ", "password123", uniqueNickname()));
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         assertEquals("로그인 ID는 비어 있을 수 없습니다.", exception.getReason());
+    }
+
+    @Test
+    void register_nicknameTooLong_throwsBadRequest() {
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
+                registerAuthService.register("login_" + System.nanoTime(), "password123", "123456789"));
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertEquals("닉네임은 8자를 초과할 수 없습니다.", exception.getReason());
     }
 }

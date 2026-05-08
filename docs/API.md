@@ -93,7 +93,7 @@ POST /api/auth/register
 
 **Error**
 
-- `400 Bad Request`: 필수값 누락/비밀번호 길이 조건 불만족
+- `400 Bad Request`: 필수값 누락/비밀번호 길이 조건 불만족/비밀번호 공백 포함/닉네임 8자 초과
 - `409 Conflict`: 로그인 ID 또는 닉네임 중복
 
 ### 로비 (Lobby)

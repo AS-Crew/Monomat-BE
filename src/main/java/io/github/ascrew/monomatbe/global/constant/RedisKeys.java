@@ -6,18 +6,6 @@
  * - FIELD_* : Redis Hash 내부 필드명 상수 (public)
  * - 정적 메서드 : 동적 파라미터가 필요한 키를 생성하는 팩토리 메서드
  *
- * [리팩토링 변경 사항]
- * 1. FIELD_* 상수 추가
- *    LobbyRepositoryImpl에서 Redis Hash 필드 키를 문자열 리터럴로 직접 사용하여
- *    오타 위험과 저장/조회 불일치 문제가 있었습니다.
- *    FIELD_* 상수로 통일하여 컴파일 타임에 오타를 방지합니다.
- *
- * 2. USER_ROOM_PREFIX 및 userRoomKey() 제거
- *    user_room:{lobbyCode} Set과 lobby:{code}:participants Set이 동일한 데이터를
- *    이중으로 관리하는 문제가 있었습니다.
- *    lobby:{code}:participants를 단일 진실의 원천(Source of Truth)으로 통일하고
- *    user_room 관련 상수와 메서드를 제거합니다.
- *
  * [사용 예시]
  * RedisKeys.lobbyKey("ABC123")             → "lobby:ABC123"
  * RedisKeys.lobbyParticipantsKey("ABC123") → "lobby:ABC123:participants"
@@ -45,6 +33,12 @@ public final class RedisKeys {
 
     /** 로비별 입장 순서 List 키 접미사 */
     private static final String ORDER_SUFFIX = ":order";
+
+    /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
+    private static final String USER_SESSION_SUFFIX = ":user_session:";
+
+    /** 로비 내 사용자별 현재 유효 WebSocket 세션 sequence 키 접미사 */
+    private static final String USER_SESSION_SEQUENCE_SUFFIX = ":user_session_seq:";
 
     /** WebSocket 세션 매핑 Hash 키 접두사 */
     private static final String WS_CONNECTION_PREFIX = "ws:connection:";
@@ -90,6 +84,15 @@ public final class RedisKeys {
 
     /** 공개 로비 코드 목록을 담는 전역 Set 키 */
     public static final String LOBBY_PUBLIC = "lobby:public";
+
+    /**
+     * WebSocket 세션 sequence 발급용 전역 키.
+     *
+     * 동일 userIdentifier의 재접속이 거의 동시에 발생할 때,
+     * 오래된 세션의 늦은 SUBSCRIBE가 최신 세션을 덮어쓰지 않도록
+     * Redis INCR 기반 단조 증가 sequence를 발급하는 데 사용합니다.
+     */
+    public static final String WS_SESSION_SEQUENCE = "ws:session:sequence";
 
     // =========================================================
     // Redis Hash 필드 키 상수 (lobby:{code} Hash 내부 필드명)
@@ -221,7 +224,6 @@ public final class RedisKeys {
         return REFRESH_TOKEN_PREFIX + sessionId;
     }
 
-    // 초대 코드 SETNX 락 키 팩토리 메서드
     /**
      * 초대 코드 중복 방지 SETNX 락 키를 반환한다.
      *
@@ -229,19 +231,79 @@ public final class RedisKeys {
      * Redis SET NX 명령으로 원자적으로 코드를 선점한다.
      * 선점 성공 시 해당 코드를 사용하고, 실패 시 재생성한다.
      * TTL은 LobbyDefaults.INVITE_CODE_LOCK_TTL을 따르며 생성 실패 시 자동 해제되어 코드 공간을 반환한다.
+     *
+     * @param inviteCode 로비 초대 코드
+     * @return "lobby:code:lock:{inviteCode}"
      */
     public static String lobbyCodeLockKey(String inviteCode) {
         return LOBBY_CODE_LOCK_PREFIX + inviteCode;
     }
 
+    /**
+     * 로비 내 특정 사용자의 현재 유효 WebSocket 세션 ID를 저장하는 키를 반환합니다.
+     *
+     * [사용 목적]
+     * 동일 userIdentifier가 같은 로비에 여러 번 연결될 수 있는 상황에서
+     * 어떤 wsSessionId가 현재 유효한 세션인지 판별하기 위해 사용합니다.
+     *
+     * 저장 구조:
+     * - Key   : lobby:{code}:user_session:{userIdentifier}
+     * - Value : wsSessionId
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return "lobby:{code}:user_session:{userIdentifier}"
+     */
+    public static String lobbyUserSessionKey(String code, String userIdentifier) {
+        return LOBBY_PREFIX + code + USER_SESSION_SUFFIX + userIdentifier;
+    }
+
+    /**
+     * 로비 내 특정 사용자의 현재 유효 WebSocket 세션 sequence를 저장하는 키를 반환합니다.
+     *
+     * [사용 목적]
+     * 동일 userIdentifier가 같은 로비에 거의 동시에 재접속하는 경우,
+     * 오래된 세션의 늦은 SUBSCRIBE가 최신 세션을 덮어쓰지 않도록 sequence 비교에 사용합니다.
+     *
+     * 저장 구조:
+     * - Key   : lobby:{code}:user_session_seq:{userIdentifier}
+     * - Value : sessionSequence
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return "lobby:{code}:user_session_seq:{userIdentifier}"
+     */
+    public static String lobbyUserSessionSequenceKey(String code, String userIdentifier) {
+        return LOBBY_PREFIX + code + USER_SESSION_SEQUENCE_SUFFIX + userIdentifier;
+    }
+
+    /**
+     * 공개 맵 목록 캐시 버전 키를 반환합니다.
+     *
+     * @return "map:public:list:version"
+     */
     public static String mapPublicListVersionKey() {
         return MAP_PUBLIC_LIST_VERSION;
     }
 
+    /**
+     * 공개 맵 목록 페이지 캐시 키를 반환합니다.
+     *
+     * @param version 캐시 버전
+     * @param page 페이지 번호
+     * @param size 페이지 크기
+     * @return "map:public:list:v:{version}:p:{page}:s:{size}"
+     */
     public static String mapPublicListKey(String version, int page, int size) {
         return MAP_PUBLIC_LIST_PREFIX + ":v:" + version + ":p:" + page + ":s:" + size;
     }
 
+    /**
+     * 공개 맵 단건 캐시 키를 반환합니다.
+     *
+     * @param mapId 맵 ID
+     * @return "map:public:{mapId}"
+     */
     public static String mapPublicDetailKey(Long mapId) {
         return MAP_PUBLIC_DETAIL_PREFIX + mapId;
     }

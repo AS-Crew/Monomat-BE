@@ -34,6 +34,6 @@ public class ChatMessageDto {
      * - LEAVE  : 퇴장 알림 시스템 메시지
      */
     public enum MessageType {
-        CHAT, ANSWER, ENTER, LEAVE
+        CHAT, ANSWER, ENTER, LEAVE, ENTER_FAILED
     }
 }

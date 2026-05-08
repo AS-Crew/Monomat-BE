@@ -6,18 +6,6 @@
  * - FIELD_* : Redis Hash 내부 필드명 상수 (public)
  * - 정적 메서드 : 동적 파라미터가 필요한 키를 생성하는 팩토리 메서드
  *
- * [리팩토링 변경 사항]
- * 1. FIELD_* 상수 추가
- *    LobbyRepositoryImpl에서 Redis Hash 필드 키를 문자열 리터럴로 직접 사용하여
- *    오타 위험과 저장/조회 불일치 문제가 있었습니다.
- *    FIELD_* 상수로 통일하여 컴파일 타임에 오타를 방지합니다.
- *
- * 2. USER_ROOM_PREFIX 및 userRoomKey() 제거
- *    user_room:{lobbyCode} Set과 lobby:{code}:participants Set이 동일한 데이터를
- *    이중으로 관리하는 문제가 있었습니다.
- *    lobby:{code}:participants를 단일 진실의 원천(Source of Truth)으로 통일하고
- *    user_room 관련 상수와 메서드를 제거합니다.
- *
  * [사용 예시]
  * RedisKeys.lobbyKey("ABC123")             → "lobby:ABC123"
  * RedisKeys.lobbyParticipantsKey("ABC123") → "lobby:ABC123:participants"
@@ -31,7 +19,7 @@ public final class RedisKeys {
     private RedisKeys() {}
 
     // =========================================================
-    // Key Prefix 상수 (private — 팩토리 메서드를 통해서만 사용)
+    // Key Prefix 상수
     // =========================================================
 
     /** 로비 메타 정보 Hash 키 접두사 */
@@ -39,12 +27,6 @@ public final class RedisKeys {
 
     /** 사용자 온라인 상태 키 접두사 */
     private static final String USER_STATUS_PREFIX = "user_status:";
-
-    /** 로비별 참여자 Set 키 접미사 */
-    private static final String PARTICIPANTS_SUFFIX = ":participants";
-
-    /** 로비별 입장 순서 List 키 접미사 */
-    private static final String ORDER_SUFFIX = ":order";
 
     /** WebSocket 세션 매핑 Hash 키 접두사 */
     private static final String WS_CONNECTION_PREFIX = "ws:connection:";
@@ -58,11 +40,40 @@ public final class RedisKeys {
     /** 초대 코드 중복 방지 SETNX 락 키 접두사 */
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
 
+    // =========================================================
+    // Key Suffix 상수
+    // =========================================================
+
+    /** 로비별 참여자 Set 키 접미사 */
+    private static final String PARTICIPANTS_SUFFIX = ":participants";
+
+    /** 로비별 입장 순서 List 키 접미사 */
+    private static final String ORDER_SUFFIX = ":order";
+
     /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
     private static final String USER_SESSION_SUFFIX = ":user_session:";
 
+    /** 로비 내 사용자별 현재 유효 WebSocket 세션 sequence 키 접미사 */
+    private static final String USER_SESSION_SEQUENCE_SUFFIX = ":user_session_seq:";
+
     // =========================================================
-    // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
+    // 전역 단일 키 상수
+    // =========================================================
+
+    /** 공개 로비 코드 목록을 담는 전역 Set 키 */
+    public static final String LOBBY_PUBLIC = "lobby:public";
+
+    /**
+     * WebSocket 세션 sequence 발급용 전역 키.
+     *
+     * 동일 userIdentifier의 재접속이 거의 동시에 발생할 때,
+     * 오래된 세션의 늦은 SUBSCRIBE가 최신 세션을 덮어쓰지 않도록
+     * Redis INCR 기반 단조 증가 sequence를 발급하는 데 사용한다.
+     */
+    public static final String WS_SESSION_SEQUENCE = "ws:session:sequence";
+
+    // =========================================================
+    // Redis Hash 필드 키 상수 (auth:guest:session:{token})
     // =========================================================
 
     /** 게스트 세션 Hash의 사용자 DB PK 필드 */
@@ -74,24 +85,8 @@ public final class RedisKeys {
     /** 게스트 세션 Hash의 사용자 유형 필드 */
     public static final String FIELD_GUEST_USER_TYPE = "userType";
 
-    // [삭제] USER_ROOM_PREFIX 및 userRoomKey() 제거
-    // lobby:{code}:participants가 단일 진실의 원천으로 통일되었으므로
-    // user_room:{lobbyCode} 관련 상수는 더 이상 필요하지 않습니다.
-
     // =========================================================
-    // 전역 단일 키 상수
-    // =========================================================
-
-    /** 공개 로비 코드 목록을 담는 전역 Set 키 */
-    public static final String LOBBY_PUBLIC = "lobby:public";
-
-    // =========================================================
-    // Redis Hash 필드 키 상수 (lobby:{code} Hash 내부 필드명)
-    //
-    // [추가 이유]
-    // LobbyRepositoryImpl에서 "host_user_id", "title" 등의 문자열 리터럴을
-    // 직접 사용하면 오타 발생 시 런타임에서야 발견됩니다.
-    // 상수로 통일하여 컴파일 타임 오타 검출 및 저장/조회 필드명 일관성을 보장합니다.
+    // Redis Hash 필드 키 상수 (lobby:{code})
     // =========================================================
 
     /** 로비 Hash의 초대 코드 필드 */
@@ -102,29 +97,23 @@ public final class RedisKeys {
      *
      * [Lua 스크립트 동기화 필요]
      * leave_lobby.lua에서 이 필드명을 문자열 리터럴로 직접 사용합니다.
-     * Lua 스크립트는 Java 상수를 참조할 수 없는 구조이므로,
      * 이 값을 변경할 경우 leave_lobby.lua의 'host_user_id'도 반드시 함께 수정해야 합니다.
-     *   - HGET lobbyKey, 'host_user_id'
-     *   - HSET lobbyKey, 'host_user_id', nextHost
      */
     public static final String FIELD_HOST_USER_ID = "host_user_id";
 
     /** 로비 Hash의 로비 제목 필드 */
     public static final String FIELD_TITLE = "title";
 
-    /** 로비 Hash의 선택된 맵 ID 필드 (null 가능 — 맵 미선택 상태) */
+    /** 로비 Hash의 선택된 맵 ID 필드 */
     public static final String FIELD_MAP_ID = "map_id";
 
     /** 로비 Hash의 최대 참여 인원 필드 */
     public static final String FIELD_MAX_PLAYERS = "max_players";
 
-    /**
-     * 로비 Hash의 공개/비공개 여부 필드.
-     * 저장 값: "true" (비공개) / "false" (공개)
-     */
+    /** 로비 Hash의 공개/비공개 여부 필드 */
     public static final String FIELD_IS_PRIVATE = "is_private";
 
-    /** 로비 Hash의 상태 필드. 저장 값: "WAITING" / "PLAYING" */
+    /** 로비 Hash의 상태 필드 */
     public static final String FIELD_STATUS = "status";
 
     // =========================================================
@@ -132,8 +121,10 @@ public final class RedisKeys {
     // =========================================================
 
     /**
-     * 로비 메타 정보 Hash 키를 반환합니다.
-     * 저장 구조: Hash { code, host_user_id, title, map_id, max_players, is_private, status }
+     * 로비 메타 정보 Hash 키를 반환한다.
+     *
+     * 저장 구조:
+     * Hash { code, host_user_id, title, map_id, max_players, is_private, status }
      *
      * @param code 로비 초대 코드
      * @return "lobby:{code}"
@@ -143,14 +134,10 @@ public final class RedisKeys {
     }
 
     /**
-     * 로비 참여자 Set 키를 반환합니다.
-     * 저장 구조: Set { userId1, userId2, ... }
+     * 로비 참여자 Set 키를 반환한다.
      *
-     * [단일 진실의 원천]
-     * 기존에 user_room:{lobbyCode}와 이중 관리되던 문제를 해결하고
-     * 이 키를 참여자 관리의 단일 진실의 원천으로 사용합니다.
-     * Lua 스크립트(leave_lobby.lua)의 퇴장 처리와 Java 레벨의 입장 처리 모두
-     * 이 키를 일관되게 사용합니다.
+     * 저장 구조:
+     * Set { userIdentifier1, userIdentifier2, ... }
      *
      * @param code 로비 초대 코드
      * @return "lobby:{code}:participants"
@@ -160,9 +147,10 @@ public final class RedisKeys {
     }
 
     /**
-     * 로비 입장 순서 List 키를 반환합니다.
-     * 저장 구조: List [ 첫 번째 입장 userId, 두 번째 입장 userId, ... ]
-     * 방장 위임 시 LINDEX 0으로 다음 방장을 선정하는 데 사용됩니다.
+     * 로비 입장 순서 List 키를 반환한다.
+     *
+     * 저장 구조:
+     * List [ 첫 번째 입장 userIdentifier, 두 번째 입장 userIdentifier, ... ]
      *
      * @param code 로비 초대 코드
      * @return "lobby:{code}:order"
@@ -172,11 +160,12 @@ public final class RedisKeys {
     }
 
     /**
-     * 사용자 온라인 상태 키를 반환합니다.
-     * 저장 구조: String "ONLINE"
-     * TTL: WebSocketEventListener에서 2시간으로 설정
+     * 사용자 온라인 상태 키를 반환한다.
      *
-     * @param userIdentifier 사용자 식별자 (게스트 UUID 또는 회원 ID)
+     * 저장 구조:
+     * String "ONLINE"
+     *
+     * @param userIdentifier 사용자 식별자
      * @return "user_status:{userIdentifier}"
      */
     public static String userStatusKey(String userIdentifier) {
@@ -184,9 +173,12 @@ public final class RedisKeys {
     }
 
     /**
-     * WebSocket 세션 매핑 Hash 키를 반환합니다.
-     * 저장 구조: Hash { userIdentifier, lobbyCode }
-     * DISCONNECT 이벤트에서 userIdentifier와 lobbyCode를 역추적하는 데 사용됩니다.
+     * WebSocket 세션 매핑 Hash 키를 반환한다.
+     *
+     * 저장 구조:
+     * Hash { userId: userIdentifier, lobbyCode }
+     *
+     * DISCONNECT 이벤트에서 wsSessionId 기준으로 userIdentifier와 lobbyCode를 역추적하는 데 사용한다.
      *
      * @param wsSessionId WebSocket 세션 ID
      * @return "ws:connection:{wsSessionId}"
@@ -196,7 +188,7 @@ public final class RedisKeys {
     }
 
     /**
-     * 게스트 세션 정보를 저장하는 Redis Hash 키를 반환합니다.
+     * 게스트 세션 정보를 저장하는 Redis Hash 키를 반환한다.
      *
      * @param guestToken 게스트 UUID 토큰
      * @return "auth:guest:session:{guestToken}"
@@ -206,7 +198,7 @@ public final class RedisKeys {
     }
 
     /**
-     * Refresh Token 저장 키를 반환합니다.
+     * Refresh Token 저장 키를 반환한다.
      *
      * @param sessionId 세션 식별자(UUID)
      * @return "auth:refresh:{sessionId}"
@@ -215,14 +207,11 @@ public final class RedisKeys {
         return REFRESH_TOKEN_PREFIX + sessionId;
     }
 
-    // 초대 코드 SETNX 락 키 팩토리 메서드
     /**
      * 초대 코드 중복 방지 SETNX 락 키를 반환한다.
      *
-     * [SETNX 전략]
-     * Redis SET NX 명령으로 원자적으로 코드를 선점한다.
-     * 선점 성공 시 해당 코드를 사용하고, 실패 시 재생성한다.
-     * TTL은 LobbyDefaults.INVITE_CODE_LOCK_TTL을 따르며 생성 실패 시 자동 해제되어 코드 공간을 반환한다.
+     * @param inviteCode 로비 초대 코드
+     * @return "lobby:code:lock:{inviteCode}"
      */
     public static String lobbyCodeLockKey(String inviteCode) {
         return LOBBY_CODE_LOCK_PREFIX + inviteCode;
@@ -235,8 +224,8 @@ public final class RedisKeys {
      * 동일 userIdentifier가 같은 로비에 여러 번 연결될 수 있는 상황에서
      * 어떤 wsSessionId가 현재 유효한 세션인지 판별하기 위해 사용한다.
      *
-     * 저장 구조 :
-     * - Key : lobby:{code}:user_session:{userIdentifier}
+     * 저장 구조:
+     * - Key   : lobby:{code}:user_session:{userIdentifier}
      * - Value : wsSessionId
      *
      * @param code 로비 초대 코드
@@ -245,5 +234,24 @@ public final class RedisKeys {
      */
     public static String lobbyUserSessionKey(String code, String userIdentifier) {
         return LOBBY_PREFIX + code + USER_SESSION_SUFFIX + userIdentifier;
+    }
+
+    /**
+     * 로비 내 특정 사용자의 현재 유효 WebSocket 세션 sequence를 저장하는 키를 반환한다.
+     *
+     * [사용 목적]
+     * 동일 userIdentifier가 같은 로비에 거의 동시에 재접속하는 경우,
+     * 오래된 세션의 늦은 SUBSCRIBE가 최신 세션을 덮어쓰지 않도록 sequence 비교에 사용한다.
+     *
+     * 저장 구조:
+     * - Key   : lobby:{code}:user_session_seq:{userIdentifier}
+     * - Value : sessionSequence
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return "lobby:{code}:user_session_seq:{userIdentifier}"
+     */
+    public static String lobbyUserSessionSequenceKey(String code, String userIdentifier) {
+        return LOBBY_PREFIX + code + USER_SESSION_SEQUENCE_SUFFIX + userIdentifier;
     }
 }

@@ -82,7 +82,10 @@ public class LobbyController {
             @Valid @RequestBody CreateLobbyRequest request,
             @AuthenticationPrincipal CustomPrincipal principal
     ) {
-        log.info(LOG_CREATE_LOBBY_REQUEST, principal.userIdentifier());
+        log.info(
+                LOG_CREATE_LOBBY_REQUEST,
+                principal != null ? principal.userIdentifier() : "null"
+        );
 
         CreateLobbyResponse response = lobbyService.createLobby(request, principal);
 
@@ -100,7 +103,7 @@ public class LobbyController {
      *
      * [처리 흐름]
      * 이 API는 입장 허가 사전 검증만 수행한다.
-     * 실제 참여자 등록은 클라이언트가 읍답을 받은 뒤
+     * 실제 참여자 등록은 클라이언트가 응답을 받은 뒤
      * WebSocket /topic/lobby/{inviteCode}를 구독하는 시점에 처리된다.
      *
      * 클라이언트 처리 순서:
@@ -129,7 +132,11 @@ public class LobbyController {
             @Valid @RequestBody JoinLobbyRequest request,
             @AuthenticationPrincipal CustomPrincipal principal
     ) {
-        log.info(LOG_JOIN_LOBBY_REQUEST, request.inviteCode(), principal.userIdentifier());
+        log.info(
+                LOG_JOIN_LOBBY_REQUEST,
+                request.inviteCode(),
+                principal != null ? principal.userIdentifier() : "null"
+        );
 
         JoinLobbyResponse response = lobbyService.joinLobby(request.inviteCode(), principal);
 

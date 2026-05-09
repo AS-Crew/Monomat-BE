@@ -171,23 +171,27 @@ public class LobbyService {
      * @return 로비 응답 DTO
      */
     public JoinLobbyResponse joinLobby(String inviteCode, CustomPrincipal principal) {
+        if (principal == null || principal.userId() == null) {
+            log.warn("로비 입장 요청 거부 - principal 또는 userId가 null. inviteCode: {}", inviteCode);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+        }
+
         log.info(LOG_JOIN_LOBBY_REQUEST, inviteCode, principal.userIdentifier());
 
-        // 1. 로비 존재 여부 확인
-        // findByInviteCode()는 HGETALL로 로비 Hash 전체를 읽는다.
-        // 로비가 없으면 404를 반환하고 이후 검증을 진행하지 않는다.
         JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(inviteCode)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, ERROR_LOBBY_NOT_FOUND));
 
-        // 2. 로비 상태 확인
-        // PLAYING, FINISHED 상태의 로비에는 입장할 수 없다.
         if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
         }
 
-        // 3. 인원 초과 확인
-        if (lobbyInfo.currentPlayers() >= lobbyInfo.maxPlayers()) {
+        boolean alreadyParticipant = lobbyRepository.isParticipant(
+                inviteCode,
+                principal.userIdentifier()
+        );
+
+        if (!alreadyParticipant && lobbyInfo.currentPlayers() >= lobbyInfo.maxPlayers()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_FULL);
         }
 

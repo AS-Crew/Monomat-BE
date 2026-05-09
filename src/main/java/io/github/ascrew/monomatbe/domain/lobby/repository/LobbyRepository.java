@@ -45,7 +45,7 @@ public interface LobbyRepository {
    * 초대 코드로 로비 입장에 필요한 정보를 조회한다.
    *
    * [반환 전략]
-   * 로비가 존재하지 않으면 Optinal.empty()를 반환한다.
+   * 로비가 존재하지 않으면 Optional.empty()를 반환한다.
    * 서비스 레이어에서 empty 여부로 404를 처리 하므로, Repository는 존재 여부 판단을 서비스에 위임한다.
    *
    * @param inviteCode 로비 초대 코드

@@ -208,6 +208,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               .title((String) data.get(RedisKeys.FIELD_TITLE))
               .status((String) data.get(RedisKeys.FIELD_STATUS))
               .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
+              .mapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY))
               .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
               .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
               .build());

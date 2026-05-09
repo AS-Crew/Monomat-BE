@@ -81,6 +81,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    */
   private static final Optional<JoinLobbyResponse> EMPTY_LOBBY = Optional.empty();
 
+  private static final String ERROR_INVALID_LOBBY_DATA =
+          "로비 정보가 유효하지 않습니다.";
+
   // =========================================================
   // 공개 메서드
   // =========================================================
@@ -246,11 +249,17 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     // 현재 참여 인원은 participants Set의 SCARD로 조회한다.
     int currentPlayers = getCurrentPlayerCount(inviteCode);
 
+    int maxPlayers = parseRequiredPositiveInt(
+            data.get(RedisKeys.FIELD_MAX_PLAYERS),
+            RedisKeys.FIELD_MAX_PLAYERS,
+            inviteCode
+    );
+
     return Optional.of(JoinLobbyResponse.builder()
             .inviteCode(inviteCode)
             .title((String) data.get(RedisKeys.FIELD_TITLE))
             .hostId((String) data.get(RedisKeys.FIELD_HOST_USER_ID))
-            .maxPlayers(parseNullableIntOrDefault(data.get(RedisKeys.FIELD_MAX_PLAYERS), 0))
+            .maxPlayers(maxPlayers)
             .currentPlayers(currentPlayers)
             .status((String) data.get(RedisKeys.FIELD_STATUS))
             // 맵 선택 이슈 구현 전까지 null로 반환한다.
@@ -385,27 +394,55 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   /**
-   * Redis Hash 필드값을 Integer로 파싱한다.
-   * null이거나 파싱 실패 시 defaultValue를 반환한다.
+   * Redis Hash의 필수 양수 정수 필드를 파싱한다.
    *
-   * [parseNullableInt()와의 차이]
-   * parseNullableInt()는 null을 그대로 반환하지만,
-   * 이 메서드는 primitive int 필드에 대입할 때 NullPointerException이 발생하지 않도록 반드시 기본값을 반환한다.
+   * [사용 목적]
+   * max_players처럼 로비 입장 검증에 반드시 필요한 필드는
+   * 누락되거나 잘못된 값일 때 기본값으로 폴백하면 안 된다.
    *
-   * @param value        Redis Hash에서 조회한 원시값
-   * @param defaultValue 파싱 실패 시 반환할 기본값
-   * @return 파싱된 정수 또는 defaultValue
+   * [실패 처리]
+   * - null
+   * - 숫자 파싱 실패
+   * - 0 이하
+   *
+   * 위 경우는 Redis 로비 데이터 손상으로 보고 500을 반환한다.
+   *
+   * @param value      Redis Hash에서 조회한 원시값
+   * @param fieldName  Redis Hash 필드명
+   * @param inviteCode 로비 초대 코드
+   * @return 파싱된 양수 정수
    */
-  private int parseNullableIntOrDefault(Object value, int defaultValue) {
+  private int parseRequiredPositiveInt(Object value, String fieldName, String inviteCode) {
     if (value == null) {
-      return defaultValue;
+      log.error("Redis 로비 필수 필드 누락 - inviteCode: {}, field: {}",
+              inviteCode, fieldName);
+      throw new ResponseStatusException(
+              HttpStatus.INTERNAL_SERVER_ERROR,
+              ERROR_INVALID_LOBBY_DATA
+      );
     }
+
     try {
-      return Integer.parseInt((String) value);
+      int parsed = Integer.parseInt((String) value);
+
+      if (parsed <= 0) {
+        log.error("Redis 로비 필수 필드 값이 유효하지 않음 - inviteCode: {}, field: {}, value: {}",
+                inviteCode, fieldName, value);
+        throw new ResponseStatusException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                ERROR_INVALID_LOBBY_DATA
+        );
+      }
+
+      return parsed;
+
     } catch (NumberFormatException e) {
-      log.warn("Redis Hash 필드 Integer 파싱 실패 - 값: {}, 기본값 {} 사용",
-              value, defaultValue);
-      return defaultValue;
+      log.error("Redis 로비 필수 필드 숫자 파싱 실패 - inviteCode: {}, field: {}, value: {}",
+              inviteCode, fieldName, value, e);
+      throw new ResponseStatusException(
+              HttpStatus.INTERNAL_SERVER_ERROR,
+              ERROR_INVALID_LOBBY_DATA
+      );
     }
   }
 }

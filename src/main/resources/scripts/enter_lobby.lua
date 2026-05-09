@@ -94,7 +94,11 @@ if alreadyInLobby == 0 then
     local currentCount = redis.call('SCARD', participantsKey)
     local maxPlayers   = tonumber(redis.call('HGET', lobbyKey, 'max_players'))
 
-    if maxPlayers ~= nil and currentCount >= maxPlayers then
+    if maxPlayers == nil or maxPlayers <= 0 then
+        return "INVALID_LOBBY_CAPACITY"
+    end
+
+    if currentCount >= maxPlayers then
         return "FULL"
     end
 end

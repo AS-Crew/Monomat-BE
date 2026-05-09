@@ -98,14 +98,14 @@ public class RegisterAuthService {
 
     private String validateNoWhitespace(String value, String fieldName) {
         if (value == null || value.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는(은) 비어 있을 수 없습니다.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
         }
         if (value.chars().anyMatch(Character::isWhitespace)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "에는 공백을 포함할 수 없습니다.");
         }
         return value;
     }
-
+    
     private void validateNicknameLength(String nickname) {
         if (nickname.length() > MAX_NICKNAME_LENGTH) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "닉네임은 8자를 초과할 수 없습니다.");

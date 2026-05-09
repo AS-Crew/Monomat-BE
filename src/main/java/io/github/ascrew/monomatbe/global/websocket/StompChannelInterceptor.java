@@ -58,7 +58,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private static final String ENTER_RESULT_STALE_SESSION_PREFIX = "STALE_SESSION:";
     private static final String ENTER_RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
     private static final String ENTER_RESULT_INVALID_SEQUENCE = "INVALID_SEQUENCE";
-    private static final String ENTER_RESULT_FULL = "FULL"; // 로비 최대 인원 초과 반환값
+    private static final String ENTER_RESULT_FULL = "FULL";
+    private static final String ENTER_RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
 
     // =========================================================
     // 실패 사유 상수
@@ -312,10 +313,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         return result;
                     }
 
-                    // 최대 인원 초과 : ws:connection 정리 후 즉시 거부
                     case FULL -> {
                         cleanupWsConnection(wsSessionId);
                         throw new IllegalStateException("로비 입장 실패: 최대 인원에 도달했습니다.");
+                    }
+
+                    case LOBBY_NOT_WAITING -> {
+                        cleanupWsConnection(wsSessionId);
+                        throw new IllegalStateException("로비 입장 실패: 게임이 이미 시작된 로비입니다.");
                     }
 
                     case STALE_SESSION -> {
@@ -448,9 +453,12 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             return LobbyEnterResultType.INVALID_SEQUENCE;
         }
 
-        // 최대 인원 초과 반환값
         if (ENTER_RESULT_FULL.equals(result)) {
             return LobbyEnterResultType.FULL;
+        }
+
+        if (ENTER_RESULT_LOBBY_NOT_WAITING.equals(result)) {
+            return LobbyEnterResultType.LOBBY_NOT_WAITING;
         }
 
         return LobbyEnterResultType.UNKNOWN;
@@ -526,7 +534,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         STALE_SESSION,
         LOBBY_NOT_FOUND,
         INVALID_SEQUENCE,
-        FULL, //최대 인원 초과
+        FULL,
+        LOBBY_NOT_WAITING,
         UNKNOWN
     }
 }

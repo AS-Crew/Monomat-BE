@@ -46,16 +46,25 @@ if redis.call('EXISTS', lobbyKey) == 0 then
     return "LOBBY_NOT_FOUND"
 end
 
--- 2. sessionSequence가 숫자가 아니면 잘못된 서버 상태로 본다.
+-- 2. WAITING 상태의 로비만 입장을 허용한다.
+-- REST join API는 UX용 사전 검증이고, 실제 입장 확정은 이 Lua에서 수행되므로
+-- PLAYING / FINISHED 상태 로비는 여기서 최종 차단해야 한다.
+local lobbyStatus = redis.call('HGET', lobbyKey, 'status')
+
+if lobbyStatus ~= 'WAITING' then
+    return "LOBBY_NOT_WAITING"
+end
+
+-- 3. sessionSequence가 숫자가 아니면 잘못된 서버 상태로 본다.
 if sessionSequence == nil then
     return "INVALID_SEQUENCE"
 end
 
--- 3. 기존 현재 유효 세션과 sequence를 조회한다.
+-- 4. 기존 현재 유효 세션과 sequence를 조회한다.
 local previousWsSessionId = redis.call('GET', lobbyUserSessionKey)
 local previousSequence = redis.call('GET', lobbyUserSessionSeqKey)
 
--- 4. 이미 더 최신 세션이 존재하면 현재 요청은 stale로 간주한다.
+-- 5. 이미 더 최신 세션이 존재하면 현재 요청은 stale로 간주한다.
 if previousSequence ~= false and tonumber(previousSequence) > sessionSequence then
     if previousWsSessionId ~= false and previousWsSessionId == wsSessionId then
         redis.call('HSET', wsConnectionKey,
@@ -73,12 +82,12 @@ if previousSequence ~= false and tonumber(previousSequence) > sessionSequence th
 end
 
 
--- 5. 이미 참여 중인 유저인지 먼저 확인한다.
+-- 6. 이미 참여 중인 유저인지 먼저 확인한다.
 --    재접속(SESSION_REPLACED, ALREADY_JOINED)인 경우에는 인원 초과 검증을 건너뛴다.
 --    participants Set에 이미 존재하므로 SADD 결과가 0이 되어 SCARD가 증가하지 않기 때문이다.
 local alreadyInLobby = redis.call('SISMEMBER', participantsKey, userIdentifier)
 
--- 6. 신규 입장자에 한해서만 최대 인원 초과를 검증한다.
+-- 7. 신규 입장자에 한해서만 최대 인원 초과를 검증한다.
 --    [Race Condition 방어]
 --    REST API의 인원 검증과 달리, SADD 직전에 검증하므로 원자적으로 처리된다.
 if alreadyInLobby == 0 then
@@ -90,26 +99,26 @@ if alreadyInLobby == 0 then
     end
 end
 
--- 7. 참여자 Set에 추가한다.
+-- 8. 참여자 Set에 추가한다.
 local added = redis.call('SADD', participantsKey, userIdentifier)
 
--- 8. 신규 참여자일 때만 order List에 추가한다.
+-- 9. 신규 참여자일 때만 order List에 추가한다.
 if added == 1 then
     redis.call('RPUSH', orderKey, userIdentifier)
 end
 
--- 9. 현재 WebSocket 세션 기준 역추적 정보를 저장한다.
+-- 10. 현재 WebSocket 세션 기준 역추적 정보를 저장한다.
 redis.call('HSET', wsConnectionKey,
     userField,  userIdentifier,
     lobbyField, lobbyCode
 )
 redis.call('PEXPIRE', wsConnectionKey, connectionTtlMs)
 
--- 10. userIdentifier 기준 현재 유효 세션을 최신 wsSessionId로 갱신한다.
+-- 11. userIdentifier 기준 현재 유효 세션을 최신 wsSessionId로 갱신한다.
 redis.call('SET', lobbyUserSessionKey,    wsSessionId,                 'PX', connectionTtlMs)
 redis.call('SET', lobbyUserSessionSeqKey, tostring(sessionSequence),  'PX', connectionTtlMs)
 
--- 11. 반환값 결정
+-- 12. 반환값 결정
 if added == 1 then
     return "ENTERED"
 end

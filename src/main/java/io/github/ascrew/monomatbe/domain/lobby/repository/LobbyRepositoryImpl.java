@@ -262,8 +262,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             .maxPlayers(maxPlayers)
             .currentPlayers(currentPlayers)
             .status((String) data.get(RedisKeys.FIELD_STATUS))
-            // 맵 선택 이슈 구현 전까지 null로 반환한다.
-            .mapCategory(null)
+            .mapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY))
             .build());
   }
 

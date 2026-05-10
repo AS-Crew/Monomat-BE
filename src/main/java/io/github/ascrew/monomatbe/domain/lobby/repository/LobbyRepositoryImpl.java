@@ -190,6 +190,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             RedisKeys.lobbyKey(code),
             RedisKeys.lobbyParticipantsKey(code),
             RedisKeys.lobbyOrderKey(code),
+            RedisKeys.lobbyKickedKey(code),
             RedisKeys.LOBBY_PUBLIC
     );
 
@@ -211,6 +212,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             RedisKeys.lobbyKey(code),
             RedisKeys.lobbyParticipantsKey(code),
             RedisKeys.lobbyOrderKey(code),
+            RedisKeys.lobbyKickedKey(code),
             RedisKeys.lobbyUserSessionKey(code, targetUserIdentifier),
             RedisKeys.lobbyUserSessionSequenceKey(code, targetUserIdentifier)
     );

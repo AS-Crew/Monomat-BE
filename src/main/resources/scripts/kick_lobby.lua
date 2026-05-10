@@ -22,8 +22,9 @@
 local lobbyKey                  = KEYS[1] -- lobby:{code}
 local participantsKey           = KEYS[2] -- lobby:{code}:participants
 local orderKey                  = KEYS[3] -- lobby:{code}:order
-local targetLobbyUserSessionKey = KEYS[4] -- lobby:{code}:user_session:{targetUserIdentifier}
-local targetLobbyUserSeqKey     = KEYS[5] -- lobby:{code}:user_session_seq:{targetUserIdentifier}
+local kickedKey                 = KEYS[4] -- lobby:{code}:kicked
+local targetLobbyUserSessionKey = KEYS[5] -- lobby:{code}:user_session:{targetUserIdentifier}
+local targetLobbyUserSeqKey     = KEYS[6] -- lobby:{code}:user_session_seq:{targetUserIdentifier}
 
 local requesterIdentifier       = ARGV[1] -- 강퇴 요청자 식별자
 local targetUserIdentifier      = ARGV[2] -- 강퇴 대상 식별자
@@ -67,9 +68,12 @@ end
 redis.call('SREM', participantsKey, targetUserIdentifier)
 redis.call('LREM', orderKey, 0, targetUserIdentifier)
 
--- 7. 로비 내 대상 유저 세션 매핑 제거
+-- 7. 강퇴 대상 재입장 차단 등록
+redis.call('SADD', kickedKey, targetUserIdentifier)
+
+-- 8. 로비 내 대상 유저 세션 매핑 제거
 redis.call('DEL', targetLobbyUserSessionKey, targetLobbyUserSeqKey)
 
--- 8. 결과 반환
+-- 9. 결과 반환
 -- Java 레이어에서 targetWsSessionId를 파싱해 ws:connection:{sessionId} 정리 및 알림 처리에 사용한다.
 return "KICKED:" .. targetWsSessionId

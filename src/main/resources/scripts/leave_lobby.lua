@@ -9,7 +9,8 @@
 
 local lobbyKey = KEYS[1]         -- 로비 메타 정보 (Hash)
 local participantsKey = KEYS[2]  -- 로비 참여자 명단 (Set)
-local orderKey = KEYS[3]         -- 로비 입장 순서 (List)
+local orderKey = KEYS[3]        -- 로비 입장 순서 (List)
+local kickedKey = KEYS[4]     -- 로비 강퇴 명단 (Set)
 local publicListKey = KEYS[4]    -- 전역 공개 로비 목록 (Set)
 
 local userId = ARGV[1]           -- 퇴장하려는 유저 ID
@@ -25,7 +26,7 @@ local remainCount = redis.call('SCARD', participantsKey)
 if remainCount == 0 then
     -- [Case A: 남은 인원이 0명인 경우 -> 로비 폭파]
     -- 로비와 관련된 모든 키를 일괄 삭제하여 Redis 메모리 누수(좀비 방)를 방지한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey)
+    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
     redis.call('SREM', publicListKey, lobbyCode) -- 공개 방 목록에서도 제외
     return "DESTROYED"
 else
@@ -46,7 +47,7 @@ else
                 return "DELEGATED:" .. fallbackHost
             else
                 -- 실질적으로 참여자가 없는 상태 -> 로비 폭파
-                redis.call('DEL', lobbyKey, participantsKey, orderKey)
+                redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
                 redis.call('SREM', publicListKey, lobbyCode)
                 return "DESTROYED"
             end

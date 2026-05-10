@@ -61,6 +61,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private static final String ENTER_RESULT_FULL = "FULL";
     private static final String ENTER_RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
     private static final String ENTER_RESULT_INVALID_LOBBY_CAPACITY = "INVALID_LOBBY_CAPACITY";
+    private static final String ENTER_RESULT_KICKED_USER = "KICKED_USER";
 
     // =========================================================
     // 실패 사유 상수
@@ -334,6 +335,11 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         throw new IllegalStateException("로비 입장 실패: 더 최신 WebSocket 세션이 이미 존재합니다.");
                     }
 
+                    case KICKED_USER -> {
+                        cleanupWsConnection(wsSessionId);
+                        throw new IllegalStateException("로비 입장 실패 : 강퇴된 로비에는 재입장할 수 없습니다.");
+                    }
+
                     case LOBBY_NOT_FOUND -> {
                         cleanupWsConnection(wsSessionId);
                         throw new IllegalArgumentException("로비 입장 실패: 존재하지 않는 로비입니다.");
@@ -410,6 +416,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                 RedisKeys.lobbyKey(lobbyCode),
                 RedisKeys.lobbyParticipantsKey(lobbyCode),
                 RedisKeys.lobbyOrderKey(lobbyCode),
+                RedisKeys.lobbyKickedKey(lobbyCode),
                 RedisKeys.wsConnectionKey(wsSessionId),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier),
                 RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, userIdentifier)
@@ -469,6 +476,10 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (ENTER_RESULT_INVALID_LOBBY_CAPACITY.equals(result)) {
             return LobbyEnterResultType.INVALID_LOBBY_CAPACITY;
+        }
+
+        if (ENTER_RESULT_KICKED_USER.equals(result)) {
+            return LobbyEnterResultType.KICKED_USER;
         }
 
         return LobbyEnterResultType.UNKNOWN;
@@ -547,6 +558,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         FULL,
         LOBBY_NOT_WAITING,
         INVALID_LOBBY_CAPACITY,
+        KICKED_USER,
         UNKNOWN
     }
 }

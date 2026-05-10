@@ -9,9 +9,9 @@
 
 local lobbyKey = KEYS[1]         -- 로비 메타 정보 (Hash)
 local participantsKey = KEYS[2]  -- 로비 참여자 명단 (Set)
-local orderKey = KEYS[3]        -- 로비 입장 순서 (List)
-local kickedKey = KEYS[4]     -- 로비 강퇴 명단 (Set)
-local publicListKey = KEYS[4]    -- 전역 공개 로비 목록 (Set)
+local orderKey = KEYS[3]         -- 로비 입장 순서 (List)
+local kickedKey = KEYS[4]        -- 로비 강퇴 명단 (Set)
+local publicListKey = KEYS[5]   -- 전역 공개 로비 목록 (Set)
 
 local userId = ARGV[1]           -- 퇴장하려는 유저 ID
 local lobbyCode = ARGV[2]        -- 퇴장하려는 로비 코드

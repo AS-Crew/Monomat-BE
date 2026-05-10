@@ -10,14 +10,18 @@ package io.github.ascrew.monomatbe.domain.lobby.controller;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.KickLobbyPlayerRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyEventService;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Controller;
+import org.springframework.util.StringUtils;
 
 import java.security.Principal;
+import java.util.Map;
 
 @Controller
 @RequiredArgsConstructor
@@ -50,9 +54,10 @@ public class LobbyEventController {
   @MessageMapping("/lobby/{code}/update")
   public void notifyLobbyInfoRefresh(
           @DestinationVariable String code,
-          Principal principal
+          SimpMessageHeaderAccessor accessor
   ) {
-    lobbyEventService.notifyLobbyInfoRefresh(code, principal);
+    String userIdentifier = extractUserIdentifier(accessor);
+    lobbyEventService.notifyLobbyInfoRefresh(code, userIdentifier);
   }
 
   /**
@@ -76,8 +81,37 @@ public class LobbyEventController {
   public void kickLobbyPlayer(
           @DestinationVariable String code,
           @Valid @Payload KickLobbyPlayerRequest request,
-          Principal principal
+          SimpMessageHeaderAccessor accessor
   ) {
-    lobbyEventService.kickLobbyPlayer(code, request, principal);
+    String requesterIdentifier = extractUserIdentifier(accessor);
+    lobbyEventService.kickLobbyPlayer(code, request, requesterIdentifier);
+  }
+
+  /**
+   * STOMP 세션 속성에서 인증된 userIdentifier를 추출합니다.
+   *
+   * [설계 의도]
+   * StompChannelInterceptor가 CONNECT 시점에 검증한 userIdentifier를
+   * sessionAttributes에 저장하므로, MessageMapping에서는 Principal 대신
+   * 해당 세션 속성을 신뢰 기준으로 사용합니다.
+   */
+  private String extractUserIdentifier(SimpMessageHeaderAccessor accessor) {
+    if (accessor == null) {
+      return null;
+    }
+
+    Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+
+    if (sessionAttributes == null) {
+      return null;
+    }
+
+    Object value = sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER);
+
+    if (value instanceof String userIdentifier && StringUtils.hasText(userIdentifier)) {
+      return userIdentifier;
+    }
+
+    return null;
   }
 }

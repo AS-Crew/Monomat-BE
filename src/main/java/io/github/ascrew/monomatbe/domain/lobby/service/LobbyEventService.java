@@ -25,8 +25,9 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.beans.factory.annotation.Qualifier;
+import tools.jackson.databind.json.JsonMapper;
 
-import java.security.Principal;
 import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 
@@ -57,6 +58,9 @@ public class LobbyEventService {
   private final LobbyRepository lobbyRepository;
   private final StringRedisTemplate stringRedisTemplate;
 
+  @Qualifier("pubSubJsonMapper")
+  private final JsonMapper pubSubJsonMapper;
+
   /**
    * 전역 로비 리스트를 보고 있는 클라이언트들에게 새로고침 신호를 전송합니다.
    * 로비 생성 또는 삭제(폭파) 이벤트 발생 시 호출됩니다.
@@ -76,20 +80,15 @@ public class LobbyEventService {
    * 2. 요청자 인증 확인
    * 3. Redis에서 로비 존재 여부 확인
    * 4. 요청자가 해당 로비의 참여자인지 확인
-   *
-   * @param code      로비 초대 코드
-   * @param principal 요청자 인증 정보
    */
-  public void notifyLobbyInfoRefresh(String code, Principal principal) {
+  public void notifyLobbyInfoRefresh(String code, String userIdentifier) {
     if (!StringUtils.hasText(code) || !LOBBY_CODE_PATTERN.matcher(code).matches()) {
       return;
     }
 
-    if (principal == null || !StringUtils.hasText(principal.getName())) {
+    if (!StringUtils.hasText(userIdentifier)) {
       return;
     }
-
-    String userIdentifier = principal.getName();
 
     if (!lobbyRepository.existsByCode(code)) {
       return;
@@ -125,11 +124,10 @@ public class LobbyEventService {
   public void kickLobbyPlayer(
           String code,
           KickLobbyPlayerRequest request,
-          Principal principal
+          String requesterIdentifier
   ) {
-    validateKickRequest(code, request, principal);
+    validateKickRequest(code, request, requesterIdentifier);
 
-    String requesterIdentifier = principal.getName();
     String targetUserIdentifier = request.targetUserIdentifier().trim();
 
     KickLobbyResult result = lobbyRepository.executeKickLobbyProcess(
@@ -249,7 +247,7 @@ public class LobbyEventService {
   private void validateKickRequest(
           String code,
           KickLobbyPlayerRequest request,
-          Principal principal
+          String requesterIdentifier
   ) {
     if (!StringUtils.hasText(code) || !LOBBY_CODE_PATTERN.matcher(code).matches()) {
       throw new ResponseStatusException(
@@ -258,7 +256,7 @@ public class LobbyEventService {
       );
     }
 
-    if (principal == null || !StringUtils.hasText(principal.getName())) {
+    if (!StringUtils.hasText(requesterIdentifier)) {
       throw new ResponseStatusException(
               HttpStatus.UNAUTHORIZED,
               ERROR_INVALID_PRINCIPAL
@@ -318,9 +316,20 @@ public class LobbyEventService {
             .timestamp(LocalDateTime.now().toString())
             .build();
 
-    messagingTemplate.convertAndSend(
-            StompDestinations.subscribeLobbyChat(lobbyCode),
-            message
-    );
+    try {
+      String payload = pubSubJsonMapper.writeValueAsString(message);
+
+      messagingTemplate.convertAndSend(
+              StompDestinations.subscribeLobbyChat(lobbyCode),
+              payload
+      );
+    } catch (Exception e) {
+      log.error(
+              "KICK 메시지 직렬화 또는 전송 실패 - lobbyCode: {}, targetUserIdentifier: {}",
+              lobbyCode,
+              targetUserIdentifier,
+              e
+      );
+    }
   }
 }

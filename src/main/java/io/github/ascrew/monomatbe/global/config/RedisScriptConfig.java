@@ -54,4 +54,24 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    /**
+     * 로비 유저 강퇴 처리 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - 방장 권한 검증
+     * - 자기 자신 강퇴 방지
+     * - 강퇴 대상 참여 여부 확인
+     * - participants Set에서 대상 제거
+     * - order List에서 대상 제거
+     * - 대상자의 로비 WebSocket 세션 매핑 제거
+     */
+    @Bean
+    public RedisScript<String> kickLobbyScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/kick_lobby.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

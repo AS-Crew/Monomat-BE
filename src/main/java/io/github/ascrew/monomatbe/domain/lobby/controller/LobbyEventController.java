@@ -3,14 +3,18 @@
  *
  * [책임]
  * - 로비 생성 및 로비 내부 정보 변경 이벤트를 수신하여 LobbyEventService에 위임
+ * - 방장의 유저 강퇴 이벤트를 수신하여 LobbyEventService에 위임
  * - 컨트롤러는 수신 경로 정의와 서비스 위임만 담당
  */
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 
+import io.github.ascrew.monomatbe.domain.lobby.dto.KickLobbyPlayerRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyEventService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
@@ -49,5 +53,31 @@ public class LobbyEventController {
           Principal principal
   ) {
     lobbyEventService.notifyLobbyInfoRefresh(code, principal);
+  }
+
+  /**
+   * 방장의 로비 유저 강퇴 이벤트 수신.
+   *
+   * 클라이언트 송신 경로: /app/lobby/{code}/kick
+   *
+   * 요청 payload 예시:
+   * {
+   *   "targetUserIdentifier": "강퇴 대상 UUID"
+   * }
+   *
+   * [처리 내용]
+   * - 요청자가 현재 로비 방장인지 검증
+   * - 강퇴 대상이 현재 로비 참여자인지 검증
+   * - Redis participants/order에서 강퇴 대상 제거
+   * - 강퇴 알림 메시지 브로드캐스트
+   * - 로비 정보 refresh 신호 브로드캐스트
+   */
+  @MessageMapping("/lobby/{code}/kick")
+  public void kickLobbyPlayer(
+          @DestinationVariable String code,
+          @Valid @Payload KickLobbyPlayerRequest request,
+          Principal principal
+  ) {
+    lobbyEventService.kickLobbyPlayer(code, request, principal);
   }
 }

@@ -124,6 +124,9 @@ public final class RedisKeys {
     /** 로비 Hash의 선택된 맵 ID 필드 (null 가능 — 맵 미선택 상태) */
     public static final String FIELD_MAP_ID = "map_id";
 
+    /** 로비 Hash의 선택된 맵 카테고리 필드 */
+    public static final String FIELD_MAP_CATEGORY = "map_category";
+
     /** 로비 Hash의 최대 참여 인원 필드 */
     public static final String FIELD_MAX_PLAYERS = "max_players";
 

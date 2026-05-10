@@ -58,6 +58,9 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private static final String ENTER_RESULT_STALE_SESSION_PREFIX = "STALE_SESSION:";
     private static final String ENTER_RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
     private static final String ENTER_RESULT_INVALID_SEQUENCE = "INVALID_SEQUENCE";
+    private static final String ENTER_RESULT_FULL = "FULL";
+    private static final String ENTER_RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
+    private static final String ENTER_RESULT_INVALID_LOBBY_CAPACITY = "INVALID_LOBBY_CAPACITY";
 
     // =========================================================
     // 실패 사유 상수
@@ -311,6 +314,21 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         return result;
                     }
 
+                    case FULL -> {
+                        cleanupWsConnection(wsSessionId);
+                        throw new IllegalStateException("로비 입장 실패: 최대 인원에 도달했습니다.");
+                    }
+
+                    case LOBBY_NOT_WAITING -> {
+                        cleanupWsConnection(wsSessionId);
+                        throw new IllegalStateException("로비 입장 실패: 게임이 이미 시작된 로비입니다.");
+                    }
+
+                    case INVALID_LOBBY_CAPACITY -> {
+                        cleanupWsConnection(wsSessionId);
+                        throw new IllegalStateException("로비 입장 실패: 로비 정원 정보가 유효하지 않습니다.");
+                    }
+
                     case STALE_SESSION -> {
                         cleanupWsConnection(wsSessionId);
                         throw new IllegalStateException("로비 입장 실패: 더 최신 WebSocket 세션이 이미 존재합니다.");
@@ -441,6 +459,18 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             return LobbyEnterResultType.INVALID_SEQUENCE;
         }
 
+        if (ENTER_RESULT_FULL.equals(result)) {
+            return LobbyEnterResultType.FULL;
+        }
+
+        if (ENTER_RESULT_LOBBY_NOT_WAITING.equals(result)) {
+            return LobbyEnterResultType.LOBBY_NOT_WAITING;
+        }
+
+        if (ENTER_RESULT_INVALID_LOBBY_CAPACITY.equals(result)) {
+            return LobbyEnterResultType.INVALID_LOBBY_CAPACITY;
+        }
+
         return LobbyEnterResultType.UNKNOWN;
     }
 
@@ -514,6 +544,9 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         STALE_SESSION,
         LOBBY_NOT_FOUND,
         INVALID_SEQUENCE,
+        FULL,
+        LOBBY_NOT_WAITING,
+        INVALID_LOBBY_CAPACITY,
         UNKNOWN
     }
 }

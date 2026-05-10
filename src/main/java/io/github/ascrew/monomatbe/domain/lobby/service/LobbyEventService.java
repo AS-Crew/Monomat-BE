@@ -61,6 +61,12 @@ public class LobbyEventService {
   @Qualifier("pubSubJsonMapper")
   private final JsonMapper pubSubJsonMapper;
 
+  private static final Pattern USER_IDENTIFIER_PATTERN =
+          Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+  private static final String ERROR_INVALID_KICK_TARGET_FORMAT =
+          "강퇴 대상 식별자 형식이 올바르지 않습니다.";
+
   /**
    * 전역 로비 리스트를 보고 있는 클라이언트들에게 새로고침 신호를 전송합니다.
    * 로비 생성 또는 삭제(폭파) 이벤트 발생 시 호출됩니다.
@@ -269,6 +275,13 @@ public class LobbyEventService {
               ERROR_INVALID_KICK_TARGET
       );
     }
+
+    if (!USER_IDENTIFIER_PATTERN.matcher(request.targetUserIdentifier().trim()).matches()) {
+      throw new ResponseStatusException(
+              HttpStatus.BAD_REQUEST,
+              ERROR_INVALID_KICK_TARGET_FORMAT
+      );
+    }
   }
 
   private void handleKickSuccess(KickLobbyResult.Kicked result) {
@@ -276,7 +289,15 @@ public class LobbyEventService {
     String targetUserIdentifier = result.targetUserIdentifier();
 
     deleteTargetWsConnection(result.targetWsSessionId());
-    publishKickMessage(lobbyCode, targetUserIdentifier);
+    boolean kickMessagePublished = publishKickMessage(lobbyCode, targetUserIdentifier);
+
+    if (!kickMessagePublished) {
+      log.error(
+              "KICK 메시지 전송 실패 - Redis 강퇴 상태는 반영되었으나 클라이언트 알림이 누락될 수 있음. lobbyCode: {}, targetUserIdentifier: {}",
+              lobbyCode,
+              targetUserIdentifier
+      );
+    }
 
     messagingTemplate.convertAndSend(
             StompDestinations.subscribeLobbyRefresh(lobbyCode),
@@ -307,7 +328,7 @@ public class LobbyEventService {
     }
   }
 
-  private void publishKickMessage(String lobbyCode, String targetUserIdentifier) {
+  private boolean publishKickMessage(String lobbyCode, String targetUserIdentifier) {
     ChatMessageDto message = ChatMessageDto.builder()
             .type(ChatMessageDto.MessageType.KICK)
             .roomId(lobbyCode)
@@ -323,6 +344,8 @@ public class LobbyEventService {
               StompDestinations.subscribeLobbyChat(lobbyCode),
               payload
       );
+
+      return true;
     } catch (Exception e) {
       log.error(
               "KICK 메시지 직렬화 또는 전송 실패 - lobbyCode: {}, targetUserIdentifier: {}",
@@ -330,6 +353,7 @@ public class LobbyEventService {
               targetUserIdentifier,
               e
       );
+      return false;
     }
   }
 }

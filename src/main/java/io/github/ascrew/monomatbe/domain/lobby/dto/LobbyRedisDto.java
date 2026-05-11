@@ -24,6 +24,7 @@ public class LobbyRedisDto {
     private String mapCategory;   // 선택된 맵의 카테고리 (미선택 시 null)
 
     private Integer maxPlayers;   // 최대 참여 가능 인원
+    private Integer currentPlayers; // 현재 참여 인원 수
     private Boolean isPrivate;    // 공개(false) / 비공개(true) 여부
     private String status;        // 로비 상태 (WAITING, PLAYING)
 }

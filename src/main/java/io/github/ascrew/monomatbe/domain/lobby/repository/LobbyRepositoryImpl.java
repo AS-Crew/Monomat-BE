@@ -9,6 +9,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
+import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -282,8 +283,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               .status((String) data.get(RedisKeys.FIELD_STATUS))
               .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
               .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
-              .mapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY))
-              .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
+              .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))              .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
               .currentPlayers(getCurrentPlayerCount(code))
               .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
               .build());
@@ -336,8 +336,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             .status((String) data.get(RedisKeys.FIELD_STATUS))
             .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
             .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
-            .mapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY))
-            .build());
+            .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))            .build());
   }
 
   /**
@@ -516,6 +515,27 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     } catch (NumberFormatException e) {
       log.warn("Redis Hash 필드 Integer 파싱 실패 - 값: {}", value);
       return null;
+    }
+  }
+
+  /**
+   * Redis에서 문자열을 직접 읽어 DTO에 넣으면 MapCategory의 @JsonValue가 적용되지 않으므로,
+   * 응답 생성 시점에 명시적으로 표시 값을 변환한다.
+   *
+   * [정책]
+   * - null 또는 blank는 맵 미선택 상태로 보고 null로 반환한다.
+   * - 정상 값은 MapCategory의 단일 정규화 규칙을 사용한다.
+   * - 알 수 없는 값은 데이터 손상을 숨기지 않기 위해 원본 값을 반환하고 경고 로그를 남긴다.
+   *
+   * @param rawCategory Redis Hash에서 읽은 원본 카테고리 값
+   * @return FE 응답에 사용할 카테고리 표시 값
+   */
+  private String toDisplayMapCategory(String rawCategory) {
+    try {
+      return MapCategory.toDisplayValue(rawCategory);
+    } catch (IllegalArgumentException e) {
+      log.warn("알 수 없는 맵 카테고리 값 - rawCategory: {}", rawCategory);
+      return rawCategory;
     }
   }
 

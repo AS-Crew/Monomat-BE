@@ -23,7 +23,22 @@ local inviteCode      = ARGV[3]   -- 초대 코드
 local title           = ARGV[4]   -- 로비 제목
 local maxPlayers      = ARGV[5]   -- 최대 인원
 local isPrivate       = ARGV[6]   -- "true" | "false"
-local status          = ARGV[7]   -- "WAITING"
+local status         = ARGV[7]  -- "WAITING"
+
+local mapId           = ARGV[8]   -- 선택된 맵 ID. 미선택 시 ""
+local mapTitle        = ARGV[9]   -- 선택된 맵 제목. 미선택 시 ""
+local mapCategory    = ARGV[10]  -- 선택된 맵 카테고리. 미선택 시 ""
+
+-- Redis Hash 필드명은 스크립트 상단에서 중앙 관리합니다.
+local FIELD_CODE         = 'code'
+local FIELD_HOST_USER_ID = 'host_user_id'
+local FIELD_TITLE        = 'title'
+local FIELD_MAX_PLAYERS  = 'max_players'
+local FIELD_IS_PRIVATE   = 'is_private'
+local FIELD_STATUS       = 'status'
+local FIELD_MAP_ID       = 'map_id'
+local FIELD_MAP_TITLE    = 'map_title'
+local FIELD_MAP_CATEGORY = 'map_category'
 
 -- 1. SETNX 선점 시도
 --    이미 동일한 코드가 선점되어 있으면 LOCK_FAILED 반환
@@ -43,7 +58,16 @@ redis.call('HSET', lobbyKey,
     'status',       status
 )
 
--- 3. 공개 로비인 경우 전역 공개 목록 Set에 코드 추가 (lobby:public)
+-- 3. 맵이 선택된 경우에만 맵 메타 정보 저장
+if mapId ~= "" then
+    redis.call('HSET', lobbyKey,
+        FIELD_MAP_ID,       mapId,
+        FIELD_MAP_TITLE,    mapTitle,
+        FIELD_MAP_CATEGORY, mapCategory
+    )
+end
+
+-- 4. 공개 로비인 경우 전역 공개 목록 Set에 코드 추가 (lobby:public)
 -- [isPrivate 값 보장]
 -- Java LobbyRepositoryImpl.normalizeIsPrivate()에서 반드시 소문자 "true"/"false"로
 -- 정규화하여 전달하므로, 이 비교는 항상 일관되게 동작한다.

@@ -9,6 +9,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
@@ -53,6 +54,10 @@ public class LobbyService {
             "삭제된 맵은 로비에 연결할 수 없습니다.";
     private static final String ERROR_PRIVATE_MAP_FORBIDDEN =
             "비공개 맵은 소유자만 로비에 연결할 수 있습니다.";
+    private static final String ERROR_READY_FORBIDDEN =
+            "로비 참여자만 준비 상태를 변경할 수 있습니다.";
+    private static final String ERROR_HOST_READY_NOT_ALLOWED =
+            "방장은 준비 상태를 변경하지 않고 시작 버튼을 사용합니다.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -84,6 +89,7 @@ public class LobbyService {
     private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
 
     private final LobbyRepository lobbyRepository;
+    private final LobbyEventService lobbyEventService;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final UserRepository userRepository;
     private final QuizMapJpaRepository quizMapJpaRepository;
@@ -243,6 +249,84 @@ public class LobbyService {
      */
     public List<LobbyRedisDto> getPublicLobbies() {
         return lobbyRepository.getPublicLobbies();
+    }
+
+    /**
+     * 로비 참여자의 준비 상태를 변경한다.
+     *
+     * [정책]
+     * - 인증된 사용자만 요청할 수 있다.
+     * - Redis에 존재하는 로비만 대상으로 한다.
+     * - WAITING 상태의 로비에서만 준비 상태를 변경할 수 있다.
+     * - 로비 참여자만 준비 상태를 변경할 수 있다.
+     * - 방장은 준비 대상에서 제외하고, 게임 시작 버튼으로 역할을 대체한다.
+     *
+     * @param code 로비 초대 코드
+     * @param request 준비 상태 변경 요청
+     * @param principal JWT에서 추출한 인증 주체
+     */
+    public void updateReadyStatus(
+            String code,
+            UpdateLobbyReadyRequest request,
+            CustomPrincipal principal
+    ) {
+        if (principal == null || principal.userId() == null) {
+            log.warn("로비 준비 상태 변경 거부 - principal 또는 userId가 null. code: {}", code);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+        }
+
+        JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(code)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_LOBBY_NOT_FOUND
+                ));
+
+        if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
+        }
+
+        String userIdentifier = principal.userIdentifier();
+
+        boolean participant = lobbyRepository.isParticipant(code, userIdentifier);
+
+        if (!participant) {
+            log.warn(
+                    "로비 준비 상태 변경 거부 - 참여자가 아님. code: {}, userIdentifier: {}, hostId: {}",
+                    code,
+                    userIdentifier,
+                    lobbyInfo.hostId()
+            );
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_READY_FORBIDDEN);
+        }
+
+        if (isLobbyHost(lobbyInfo, userIdentifier)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_HOST_READY_NOT_ALLOWED);
+        }
+
+        lobbyRepository.updateReadyStatus(
+                code,
+                userIdentifier,
+                Boolean.TRUE.equals(request.ready())
+        );
+
+        lobbyEventService.notifyLobbyInfoRefresh(code, userIdentifier);
+
+        log.info(
+                "로비 준비 상태 변경 완료 - code: {}, userIdentifier: {}, ready: {}",
+                code,
+                userIdentifier,
+                request.ready()
+        );
+    }
+
+    /**
+     * 요청자가 로비 방장인지 확인한다.
+     *
+     * Redis 로비 정보의 hostId는 userIdentifier 기준으로 저장되므로,
+     * JWT principal의 userIdentifier와 직접 비교한다.
+     */
+    private boolean isLobbyHost(JoinLobbyResponse lobbyInfo, String userIdentifier) {
+        return lobbyInfo.hostId() != null && lobbyInfo.hostId().equals(userIdentifier);
     }
 
     /**

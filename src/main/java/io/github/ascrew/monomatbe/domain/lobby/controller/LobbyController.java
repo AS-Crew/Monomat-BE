@@ -12,6 +12,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,6 +25,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -54,6 +57,10 @@ public class LobbyController {
             "요청 수신: 로비 입장 [POST /api/lobbies/join] - 초대 코드: {}, 식별자: {}";
     private static final String LOG_JOIN_LOBBY_RESPONSE =
             "로비 입장 사전 검증 완료 - 초대 코드: {}";
+    private static final String LOG_UPDATE_READY_REQUEST =
+            "요청 수신: 로비 준비 상태 변경 [PATCH /api/lobbies/{code}/ready] - 코드: {}, 식별자: {}, ready: {}";
+    private static final String LOG_UPDATE_READY_RESPONSE =
+            "로비 준비 상태 변경 완료 - 코드: {}";
 
     private final LobbyService lobbyService;
 
@@ -145,6 +152,44 @@ public class LobbyController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * 로비 참여자의 준비 상태 변경 API.
+     *
+     * [정책]
+     * - JWT 인증이 필요하다.
+     * - 로비 참여자만 준비 상태를 변경할 수 있다.
+     * - 방장은 ready 대상에서 제외하고 시작 버튼만 사용한다.
+     * - 준비 상태 변경 후 로비 내부 refresh 신호를 전송한다.
+     *
+     * @param code 로비 초대 코드
+     * @param request 준비 상태 변경 요청 DTO
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "로비 준비 상태 변경",
+            description = "로비 참여자의 ready 상태를 변경합니다. 방장은 ready 대상에서 제외됩니다."
+    )
+    @PatchMapping("/{code}/ready")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> updateReadyStatus(
+            @PathVariable String code,
+            @Valid @RequestBody UpdateLobbyReadyRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_UPDATE_READY_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null",
+                request.ready()
+        );
+
+        lobbyService.updateReadyStatus(code, request, principal);
+
+        log.info(LOG_UPDATE_READY_RESPONSE, code);
+
+        return ResponseEntity.noContent().build();
+    }
 
     /**
      * 공개 로비 목록 조회 API.

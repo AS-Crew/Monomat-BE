@@ -37,6 +37,9 @@ public final class RedisKeys {
     /** 로비별 강퇴 유저 Set 키 접미사 */
     private static final String KICKED_SUFFIX = ":kicked";
 
+    /** 로비별 준비 완료 유저 Set 키 접미사 */
+    private static final String READY_SUFFIX = ":ready";
+
     /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
     private static final String USER_SESSION_SUFFIX = ":user_session:";
 
@@ -190,6 +193,20 @@ public final class RedisKeys {
     }
 
     public static String lobbyKickedKey(String code) { return LOBBY_PREFIX + code + KICKED_SUFFIX; }
+
+    /**
+     * 로비별 준비 완료 유저 Set 키를 반환한다.
+     * 정책 : 방장은 준비 대상에서 제외하고, 일반 참여자만 ready 상태에 포함한다.
+     * 저장 구조:
+     * - Key   : lobby:{code}:ready
+     * - Type  : Set
+     * - Value : 준비 완료 상태인 userIdentifier 목록
+     * @param code 로비 초대 코드
+     * @return "lobby:{code}:ready"
+     */
+    public static String lobbyReadyKey(String code) {
+        return LOBBY_PREFIX + code + READY_SUFFIX;
+    }
 
     /**
      * 사용자 온라인 상태 키를 반환합니다.

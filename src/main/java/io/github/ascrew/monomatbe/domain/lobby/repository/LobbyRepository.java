@@ -20,6 +20,14 @@ public interface LobbyRepository {
   boolean isParticipant(String code, String userId);
 
   /**
+   * 로비 참여자의 준비 상태를 변경한다.
+   * @param code 로비 초대 코드
+   * @param userIdentifier 준비 상태를 변경할 사용자 식별자
+   * @param ready true면 준비 완료, false면 준비 해제
+   */
+  void updateReadyStatus(String code, String userIdentifier, boolean ready);
+
+  /**
    * Redis에 로비 데이터를 저장하고 초대 코드를 반환한다.
    *
    * @param request 로비 생성 요청

@@ -121,6 +121,18 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     );
   }
 
+  @Override
+  public void updateReadyStatus(String code, String userIdentifier, boolean ready) {
+    String readyKey = RedisKeys.lobbyReadyKey(code);
+
+    if (ready) {
+      redisTemplate.opsForSet().add(readyKey, userIdentifier);
+      return;
+    }
+
+    redisTemplate.opsForSet().remove(readyKey, userIdentifier);
+  }
+
   /**
    * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환한다.
    *
@@ -185,6 +197,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               RedisKeys.lobbyKey(inviteCode),
               RedisKeys.lobbyParticipantsKey(inviteCode),
               RedisKeys.lobbyOrderKey(inviteCode),
+              RedisKeys.lobbyKickedKey(inviteCode),
+              RedisKeys.lobbyReadyKey(inviteCode),
               RedisKeys.lobbyCodeLockKey(inviteCode)
       ));
 
@@ -211,7 +225,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
     try {
       String result = redisTemplate.execute(leaveLobbyScript, keys, userId, code);
-      return parseLuaResult(result, code, userId);
+      LeaveLobbyResult leaveResult = parseLuaResult(result, code, userId);
+
+      cleanupReadyStatusAfterLeave(code, userId, leaveResult);
+
+      return leaveResult;
     } catch (Exception e) {
       return new LeaveLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
     }
@@ -240,12 +258,17 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               targetUserIdentifier
       );
 
-      return parseKickLuaResult(
+      KickLobbyResult kickResult = parseKickLuaResult(
               result,
               code,
               requesterIdentifier,
               targetUserIdentifier
       );
+
+      cleanupReadyStatusAfterKick(code, targetUserIdentifier, kickResult);
+
+      return kickResult;
+
     } catch (Exception e) {
       log.error(
               "강퇴 Lua 스크립트 실행 중 예외 발생 - lobbyCode: {}, requester: {}, target: {}",
@@ -453,6 +476,68 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       return new LeaveLobbyResult.Delegated(code, newHostId);
     }
     return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
+  }
+
+  /**
+   * 퇴장 처리 결과에 따라 ready Set을 정리한다.
+   *
+   * [필요 이유]
+   * 참여자가 로비를 나가면 더 이상 준비 상태에 포함되면 안 된다.
+   * 로비가 폭파된 경우에는 ready Set 전체를 삭제한다.
+   *
+   * [주의]
+   * leave_lobby.lua의 원자 처리 이후 보조 정리로 수행한다.
+   * ready 정리 실패가 퇴장 자체를 실패로 되돌리면 안 되므로 예외는 로그만 남긴다.
+   */
+  private void cleanupReadyStatusAfterLeave(
+          String code,
+          String userId,
+          LeaveLobbyResult leaveResult
+  ) {
+    try {
+      if (leaveResult instanceof LeaveLobbyResult.Destroyed) {
+        redisTemplate.delete(RedisKeys.lobbyReadyKey(code));
+        return;
+      }
+
+      if (leaveResult instanceof LeaveLobbyResult.Left
+              || leaveResult instanceof LeaveLobbyResult.Delegated) {
+        redisTemplate.opsForSet().remove(RedisKeys.lobbyReadyKey(code), userId);
+      }
+    } catch (Exception e) {
+      log.warn("퇴장 후 ready 상태 정리 실패 - lobbyCode: {}, userId: {}", code, userId, e);
+    }
+  }
+
+  /**
+   * 강퇴 성공 후 강퇴 대상의 ready 상태를 제거한다.
+   *
+   * [필요 이유]
+   * 강퇴된 유저가 lobby:{code}:ready Set에 남아 있으면
+   * 이후 canStart 계산이나 준비 상태 표시가 왜곡될 수 있다.
+   */
+  private void cleanupReadyStatusAfterKick(
+          String code,
+          String targetUserIdentifier,
+          KickLobbyResult kickResult
+  ) {
+    if (!(kickResult instanceof KickLobbyResult.Kicked)) {
+      return;
+    }
+
+    try {
+      redisTemplate.opsForSet().remove(
+              RedisKeys.lobbyReadyKey(code),
+              targetUserIdentifier
+      );
+    } catch (Exception e) {
+      log.warn(
+              "강퇴 후 ready 상태 정리 실패 - lobbyCode: {}, targetUserIdentifier: {}",
+              code,
+              targetUserIdentifier,
+              e
+      );
+    }
   }
 
   private KickLobbyResult parseKickLuaResult(

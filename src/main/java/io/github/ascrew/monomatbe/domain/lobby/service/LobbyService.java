@@ -148,7 +148,7 @@ public class LobbyService {
                     .build());
 
             log.info(
-                    "로비 생성 완료 - 코드: {}, 방장: {}",
+                    "로비 생성 완료 - 코드: {}, 방장: {}, mapId: {}",
                     inviteCode,
                     principal.userIdentifier(),
                     mapMetadata != null ? mapMetadata.mapId() : null

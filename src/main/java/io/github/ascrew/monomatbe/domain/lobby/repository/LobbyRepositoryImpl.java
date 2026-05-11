@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -27,6 +28,12 @@ import java.util.Set;
 @Repository
 @RequiredArgsConstructor
 public class LobbyRepositoryImpl implements LobbyRepository {
+
+  /**
+   * Lua 스크립트에 선택 값이 없음을 표현하기 위한 값.
+   * Redis Hash에 "null" 문자열이 저장되는 것을 방지하기 위해 빈 문자열을 사용합니다.
+   */
+  private static final String EMPTY_REDIS_VALUE = "";
 
   private final StringRedisTemplate redisTemplate;
   private final RedisScript<String> leaveLobbyScript;
@@ -49,8 +56,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RESULT_DELEGATED_PREFIX = "DELEGATED:";
 
   // =========================================================
-// kick_lobby.lua 반환값 상수
-// =========================================================
+  // kick_lobby.lua 반환값 상수
+  // =========================================================
 
   private static final String RESULT_KICKED_PREFIX = "KICKED:";
   private static final String RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
@@ -128,12 +135,15 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    * - 최대 재시도 횟수 초과 시 503 반환
    */
   @Override
-  public String saveToRedis(CreateLobbyRequest request, String userIdentifier) {
+  public String saveToRedis(
+          CreateLobbyRequest request,
+          String userIdentifier,
+          LobbyMapMetadata mapMetadata
+  ) {
     for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
       String candidate = generateInviteCode();
-      String result = executeCreateLobbyScript(candidate, request, userIdentifier);
+      String result = executeCreateLobbyScript(candidate, request, userIdentifier, mapMetadata);
 
-      // null 반환은 코드 충돌이 아닌 Redis 오류이므로 즉시 503 반환
       if (result == null) {
         log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. 코드: {}", candidate);
         throw new ResponseStatusException(
@@ -141,11 +151,15 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       }
 
       if (RESULT_OK.equals(result)) {
-        log.info("로비 Redis 저장 완료 - 코드: {}, 방장: {}", candidate, userIdentifier);
+        log.info(
+                "로비 Redis 저장 완료 - 코드: {}, 방장: {}, mapId: {}",
+                candidate,
+                userIdentifier,
+                mapMetadata != null ? mapMetadata.mapId() : null
+        );
         return candidate;
       }
 
-      // LOCK_FAILED: 코드 충돌 → 새 코드로 재시도
       log.warn("초대 코드 충돌 - 재시도 {}/{}: {}",
               attempt + 1, LobbyDefaults.INVITE_CODE_MAX_RETRY, candidate);
     }
@@ -267,6 +281,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               .title((String) data.get(RedisKeys.FIELD_TITLE))
               .status((String) data.get(RedisKeys.FIELD_STATUS))
               .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
+              .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
               .mapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY))
               .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
               .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
@@ -318,6 +333,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             .maxPlayers(maxPlayers)
             .currentPlayers(currentPlayers)
             .status((String) data.get(RedisKeys.FIELD_STATUS))
+            .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
+            .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
             .mapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY))
             .build());
   }
@@ -347,19 +364,24 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   // =========================================================
 
   /**
-   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행한다.
+   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행합니다.
    *
-   * @return "OK" (성공) | "LOCK_FAILED" (코드 충돌) | null (Redis 오류)
+   * [맵 정보 저장 정책]
+   * mapMetadata가 null이면 빈 문자열을 Lua에 전달합니다.
+   * Lua는 mapId가 빈 문자열인 경우 map_id, map_title, map_category 필드를 저장하지 않습니다.
+   *
+   * @return "OK" | "LOCK_FAILED" | null
    */
   private String executeCreateLobbyScript(
           String inviteCode,
           CreateLobbyRequest request,
-          String userIdentifier
+          String userIdentifier,
+          LobbyMapMetadata mapMetadata
   ) {
     List<String> keys = List.of(
-            RedisKeys.lobbyCodeLockKey(inviteCode), // KEYS[1]
-            RedisKeys.lobbyKey(inviteCode),         // KEYS[2]
-            RedisKeys.LOBBY_PUBLIC                  // KEYS[3]
+            RedisKeys.lobbyCodeLockKey(inviteCode),
+            RedisKeys.lobbyKey(inviteCode),
+            RedisKeys.LOBBY_PUBLIC
     );
 
     String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
@@ -368,13 +390,18 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return redisTemplate.execute(
             createLobbyScript,
             keys,
-            userIdentifier,                         // ARGV[1]
-            lockTtlMs,                              // ARGV[2]
-            inviteCode,                             // ARGV[3]
-            request.title(),                        // ARGV[4]
-            String.valueOf(request.maxPlayers()),   // ARGV[5]
-            isPrivateValue,                         // ARGV[6]
-            LobbyStatus.WAITING.name()              // ARGV[7]
+            userIdentifier,
+            lockTtlMs,
+            inviteCode,
+            request.title(),
+            String.valueOf(request.maxPlayers()),
+            isPrivateValue,
+            LobbyStatus.WAITING.name(),
+
+            // 맵 미선택 시 빈 문자열을 전달하여 Redis에 "null" 문자열이 저장되지 않게 합니다.
+            mapMetadata != null ? String.valueOf(mapMetadata.mapId()) : EMPTY_REDIS_VALUE,
+            mapMetadata != null ? mapMetadata.mapTitle() : EMPTY_REDIS_VALUE,
+            mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE
     );
   }
 

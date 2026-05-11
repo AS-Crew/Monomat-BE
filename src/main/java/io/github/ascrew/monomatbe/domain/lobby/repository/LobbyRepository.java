@@ -5,9 +5,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
-import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
-import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.*;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 
 import java.util.List;
@@ -23,8 +21,16 @@ public interface LobbyRepository {
 
   /**
    * Redis에 로비 데이터를 저장하고 초대 코드를 반환한다.
+   *
+   * @param request 로비 생성 요청
+   * @param userIdentifier 방장 사용자 식별자
+   * @param mapMetadata 선택된 맵 메타데이터 (맵 미선택 시 null)
    */
-  String saveToRedis(CreateLobbyRequest request, String userIdentifier);
+  String saveToRedis(
+          CreateLobbyRequest request,
+          String userIdentifier,
+          LobbyMapMetadata mapMetadata
+  );
 
   /**
    * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.

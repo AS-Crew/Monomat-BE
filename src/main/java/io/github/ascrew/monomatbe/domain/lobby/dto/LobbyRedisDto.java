@@ -18,8 +18,11 @@ public class LobbyRedisDto {
     private String code;          // 로비 초대 코드 (6자리 고유 코드)
     private String hostId;        // 현재 방장의 사용자 식별자
     private String title;         // 로비 제목
-    private Long mapId;           // 선택된 맵 세트 ID
+
+    private Long mapId;           // 선택된 맵 세트 ID (미선택 시 null)
+    private String mapTitle;      // 선택된 맵 제목 (미선택 시 null)
     private String mapCategory;   // 선택된 맵의 카테고리 (미선택 시 null)
+
     private Integer maxPlayers;   // 최대 참여 가능 인원
     private Boolean isPrivate;    // 공개(false) / 비공개(true) 여부
     private String status;        // 로비 상태 (WAITING, PLAYING)

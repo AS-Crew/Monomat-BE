@@ -7,6 +7,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -30,6 +31,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private final StringRedisTemplate redisTemplate;
   private final RedisScript<String> leaveLobbyScript;
   private final RedisScript<String> createLobbyScript;
+  private final RedisScript<String> kickLobbyScript;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -45,6 +47,17 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RESULT_DESTROYED = "DESTROYED";
   private static final String RESULT_LEFT = "LEFT";
   private static final String RESULT_DELEGATED_PREFIX = "DELEGATED:";
+
+  // =========================================================
+// kick_lobby.lua 반환값 상수
+// =========================================================
+
+  private static final String RESULT_KICKED_PREFIX = "KICKED:";
+  private static final String RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
+  private static final String RESULT_HOST_NOT_FOUND = "HOST_NOT_FOUND";
+  private static final String RESULT_FORBIDDEN = "FORBIDDEN";
+  private static final String RESULT_CANNOT_KICK_SELF = "CANNOT_KICK_SELF";
+  private static final String RESULT_TARGET_NOT_PARTICIPANT = "TARGET_NOT_PARTICIPANT";
 
   // =========================================================
   // isPrivate 정규화 상수
@@ -177,6 +190,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             RedisKeys.lobbyKey(code),
             RedisKeys.lobbyParticipantsKey(code),
             RedisKeys.lobbyOrderKey(code),
+            RedisKeys.lobbyKickedKey(code),
             RedisKeys.LOBBY_PUBLIC
     );
 
@@ -185,6 +199,48 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       return parseLuaResult(result, code, userId);
     } catch (Exception e) {
       return new LeaveLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
+    }
+  }
+
+  @Override
+  public KickLobbyResult executeKickLobbyProcess(
+          String code,
+          String requesterIdentifier,
+          String targetUserIdentifier
+  ) {
+    List<String> keys = List.of(
+            RedisKeys.lobbyKey(code),
+            RedisKeys.lobbyParticipantsKey(code),
+            RedisKeys.lobbyOrderKey(code),
+            RedisKeys.lobbyKickedKey(code),
+            RedisKeys.lobbyUserSessionKey(code, targetUserIdentifier),
+            RedisKeys.lobbyUserSessionSequenceKey(code, targetUserIdentifier)
+    );
+
+    try {
+      String result = redisTemplate.execute(
+              kickLobbyScript,
+              keys,
+              requesterIdentifier,
+              targetUserIdentifier
+      );
+
+      return parseKickLuaResult(
+              result,
+              code,
+              requesterIdentifier,
+              targetUserIdentifier
+      );
+    } catch (Exception e) {
+      log.error(
+              "강퇴 Lua 스크립트 실행 중 예외 발생 - lobbyCode: {}, requester: {}, target: {}",
+              code,
+              requesterIdentifier,
+              targetUserIdentifier,
+              e
+      );
+
+      return new KickLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
     }
   }
 
@@ -370,6 +426,49 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       return new LeaveLobbyResult.Delegated(code, newHostId);
     }
     return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
+  }
+
+  private KickLobbyResult parseKickLuaResult(
+          String result,
+          String code,
+          String requesterIdentifier,
+          String targetUserIdentifier
+  ) {
+    if (result == null) {
+      return new KickLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
+    }
+
+    if (result.startsWith(RESULT_KICKED_PREFIX)) {
+      String targetWsSessionId = result.substring(RESULT_KICKED_PREFIX.length());
+
+      return new KickLobbyResult.Kicked(
+              code,
+              targetUserIdentifier,
+              targetWsSessionId
+      );
+    }
+
+    if (RESULT_LOBBY_NOT_FOUND.equals(result)) {
+      return new KickLobbyResult.LobbyNotFound(code);
+    }
+
+    if (RESULT_HOST_NOT_FOUND.equals(result)) {
+      return new KickLobbyResult.HostNotFound(code);
+    }
+
+    if (RESULT_FORBIDDEN.equals(result)) {
+      return new KickLobbyResult.Forbidden(code, requesterIdentifier);
+    }
+
+    if (RESULT_CANNOT_KICK_SELF.equals(result)) {
+      return new KickLobbyResult.CannotKickSelf(code, requesterIdentifier);
+    }
+
+    if (RESULT_TARGET_NOT_PARTICIPANT.equals(result)) {
+      return new KickLobbyResult.TargetNotParticipant(code, targetUserIdentifier);
+    }
+
+    return new KickLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
   }
 
   private Long parseNullableLong(Object value) {

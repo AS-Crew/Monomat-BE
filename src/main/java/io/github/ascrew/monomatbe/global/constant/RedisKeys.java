@@ -34,6 +34,9 @@ public final class RedisKeys {
     /** 로비별 입장 순서 List 키 접미사 */
     private static final String ORDER_SUFFIX = ":order";
 
+    /** 로비별 강퇴 유저 Set 키 접미사 */
+    private static final String KICKED_SUFFIX = ":kicked";
+
     /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
     private static final String USER_SESSION_SUFFIX = ":user_session:";
 
@@ -182,6 +185,8 @@ public final class RedisKeys {
     public static String lobbyOrderKey(String code) {
         return LOBBY_PREFIX + code + ORDER_SUFFIX;
     }
+
+    public static String lobbyKickedKey(String code) { return LOBBY_PREFIX + code + KICKED_SUFFIX; }
 
     /**
      * 사용자 온라인 상태 키를 반환합니다.

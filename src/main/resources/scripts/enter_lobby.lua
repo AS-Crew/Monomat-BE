@@ -29,9 +29,10 @@
 local lobbyKey                  = KEYS[1] -- lobby:{code}
 local participantsKey           = KEYS[2] -- lobby:{code}:participants
 local orderKey                  = KEYS[3] -- lobby:{code}:order
-local wsConnectionKey           = KEYS[4] -- ws:connection:{wsSessionId}
-local lobbyUserSessionKey       = KEYS[5] -- lobby:{code}:user_session:{userIdentifier}
-local lobbyUserSessionSeqKey    = KEYS[6] -- lobby:{code}:user_session_seq:{userIdentifier}
+local kickedKey                 = KEYS[4] -- lobby:{code}:kicked
+local wsConnectionKey           = KEYS[5] -- ws:connection:{wsSessionId}
+local lobbyUserSessionKey       = KEYS[6] -- lobby:{code}:user_session:{userIdentifier}
+local lobbyUserSessionSeqKey    = KEYS[7] -- lobby:{code}:user_session_seq:{userIdentifier}
 
 local userIdentifier            = ARGV[1] -- 사용자 식별자(UUID)
 local lobbyCode                 = ARGV[2] -- 로비 초대 코드
@@ -55,16 +56,21 @@ if lobbyStatus ~= 'WAITING' then
     return "LOBBY_NOT_WAITING"
 end
 
--- 3. sessionSequence가 숫자가 아니면 잘못된 서버 상태로 본다.
+-- 3. 강퇴된 유저는 같은 로비에 재입장할 수 없다.
+if redis.call('SISMEMBER', kickedKey, userIdentifier) == 1 then
+    return "KICKED_USER"
+end
+
+-- 4. sessionSequence가 숫자가 아니면 잘못된 서버 상태로 본다.
 if sessionSequence == nil then
     return "INVALID_SEQUENCE"
 end
 
--- 4. 기존 현재 유효 세션과 sequence를 조회한다.
+-- 5. 기존 현재 유효 세션과 sequence를 조회한다.
 local previousWsSessionId = redis.call('GET', lobbyUserSessionKey)
 local previousSequence = redis.call('GET', lobbyUserSessionSeqKey)
 
--- 5. 이미 더 최신 세션이 존재하면 현재 요청은 stale로 간주한다.
+-- 6. 이미 더 최신 세션이 존재하면 현재 요청은 stale로 간주한다.
 if previousSequence ~= false and tonumber(previousSequence) > sessionSequence then
     if previousWsSessionId ~= false and previousWsSessionId == wsSessionId then
         redis.call('HSET', wsConnectionKey,
@@ -82,12 +88,12 @@ if previousSequence ~= false and tonumber(previousSequence) > sessionSequence th
 end
 
 
--- 6. 이미 참여 중인 유저인지 먼저 확인한다.
+-- 7. 이미 참여 중인 유저인지 먼저 확인한다.
 --    재접속(SESSION_REPLACED, ALREADY_JOINED)인 경우에는 인원 초과 검증을 건너뛴다.
 --    participants Set에 이미 존재하므로 SADD 결과가 0이 되어 SCARD가 증가하지 않기 때문이다.
 local alreadyInLobby = redis.call('SISMEMBER', participantsKey, userIdentifier)
 
--- 7. 신규 입장자에 한해서만 최대 인원 초과를 검증한다.
+-- 8. 신규 입장자에 한해서만 최대 인원 초과를 검증한다.
 --    [Race Condition 방어]
 --    REST API의 인원 검증과 달리, SADD 직전에 검증하므로 원자적으로 처리된다.
 if alreadyInLobby == 0 then
@@ -103,26 +109,26 @@ if alreadyInLobby == 0 then
     end
 end
 
--- 8. 참여자 Set에 추가한다.
+-- 9. 참여자 Set에 추가한다.
 local added = redis.call('SADD', participantsKey, userIdentifier)
 
--- 9. 신규 참여자일 때만 order List에 추가한다.
+-- 10. 신규 참여자일 때만 order List에 추가한다.
 if added == 1 then
     redis.call('RPUSH', orderKey, userIdentifier)
 end
 
--- 10. 현재 WebSocket 세션 기준 역추적 정보를 저장한다.
+-- 11. 현재 WebSocket 세션 기준 역추적 정보를 저장한다.
 redis.call('HSET', wsConnectionKey,
     userField,  userIdentifier,
     lobbyField, lobbyCode
 )
 redis.call('PEXPIRE', wsConnectionKey, connectionTtlMs)
 
--- 11. userIdentifier 기준 현재 유효 세션을 최신 wsSessionId로 갱신한다.
+-- 12. userIdentifier 기준 현재 유효 세션을 최신 wsSessionId로 갱신한다.
 redis.call('SET', lobbyUserSessionKey,    wsSessionId,                 'PX', connectionTtlMs)
 redis.call('SET', lobbyUserSessionSeqKey, tostring(sessionSequence),  'PX', connectionTtlMs)
 
--- 12. 반환값 결정
+-- 13. 반환값 결정
 if added == 1 then
     return "ENTERED"
 end

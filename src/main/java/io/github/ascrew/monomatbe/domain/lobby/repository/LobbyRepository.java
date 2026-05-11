@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 
 import java.util.List;
 import java.util.Optional;
@@ -37,6 +38,20 @@ public interface LobbyRepository {
    * @return LeaveLobbyResult (Destroyed | Delegated | Left | Error)
    */
   LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId);
+
+  /**
+   * Lua 스크립트를 실행하여 방장의 로비 유저 강퇴를 원자적으로 수행한다.
+   *
+   * @param code 로비 초대 코드
+   * @param requesterIdentifier 강퇴 요청자 식별자
+   * @param targetUserIdentifier 강퇴 대상 식별자
+   * @return KickLobbyResult
+   */
+  KickLobbyResult executeKickLobbyProcess(
+          String code,
+          String requesterIdentifier,
+          String targetUserIdentifier
+  );
 
   /** Redis에서 공개 로비 목록을 필터링하여 반환한다. */
   List<LobbyRedisDto> getPublicLobbies();

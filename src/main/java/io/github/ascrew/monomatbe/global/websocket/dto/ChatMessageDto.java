@@ -28,12 +28,19 @@ public class ChatMessageDto {
 
     /**
      * 메시지 유형 열거형.
-     * - CHAT   : 일반 채팅 메시지
-     * - ANSWER : 정답 제출 메시지 (인게임 전용)
-     * - ENTER  : 입장 알림 시스템 메시지
-     * - LEAVE  : 퇴장 알림 시스템 메시지
+     * - CHAT         : 일반 채팅 메시지
+     * - ANSWER       : 정답 제출 메시지 (인게임 전용)
+     * - ENTER        : 입장 알림 시스템 메시지
+     * - LEAVE        : 퇴장 알림 시스템 메시지
+     * - KICK         : 강퇴 알림 시스템 메시지
+     * - ENTER_FAILED : 입장 실패 알림 메시지
      */
     public enum MessageType {
-        CHAT, ANSWER, ENTER, LEAVE
+        CHAT,
+        ANSWER,
+        ENTER,
+        LEAVE,
+        KICK,
+        ENTER_FAILED
     }
 }

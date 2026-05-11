@@ -7,8 +7,10 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -36,6 +38,12 @@ public class LobbyService {
             "사용자를 찾을 수 없습니다.";
     private static final String ERROR_CREATE_LOBBY_FAILED =
             "로비 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+    private static final String ERROR_LOBBY_NOT_FOUND =
+            "존재하지 않는 로비입니다.";
+    private static final String ERROR_LOBBY_NOT_WAITING =
+            "게임이 이미 시작된 로비에는 입장할 수 없습니다.";
+    private static final String ERROR_LOBBY_FULL =
+            "최대 인원에 도달한 로비입니다.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -49,6 +57,22 @@ public class LobbyService {
             "Redis 보상 삭제 완료 - 코드: {}";
     private static final String LOG_COMPENSATION_FAILED =
             "Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요. [모니터링 필요]";
+    private static final String LOG_JOIN_LOBBY_REQUEST =
+            "로비 입장 요청 - 초대 코드: {}, 식별자: {}";
+    private static final String LOG_JOIN_LOBBY_SUCCESS =
+            "로비 입장 사전 검증 통과 - 초대 코드: {}, 식별자: {}, 현재 인원: {}/{}";
+
+    // =========================================================
+    // 비즈니스 규칙 상수
+    // =========================================================
+
+    /**
+     * 입장 가능한 로비 상태
+     * PLAYING, FINISHED 상태의 로비에는 입장할 수 없다.
+     * LobbyStatus enum을 직접 비교하지 않고 Redis에서 읽은 문자열과 비교하므로
+     * name()으로 변환하여 상수로 관리한다.
+     */
+    private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
 
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
@@ -125,6 +149,59 @@ public class LobbyService {
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR, ERROR_CREATE_LOBBY_FAILED);
         }
+    }
+
+    /**
+     * 초대 코드 기반 로비 입장 사전 검증을 수행하고 로비 정보를 반환한다.
+     *
+     * [책임 범위]
+     * 이 메서드는 입장 허가 검증만 담당한다.
+     * 실제 Redis 참여자 등록은 클라이언트가 WebSocket을 연결하고,
+     * /topic/lobby/{code}를 구독하는 시점에 enter_lobby.lua로 처리된다.
+     *
+     * [검증 순서]
+     * Redis 조회 횟수를 최소화하기 위해 HGETALL (1회)로 로비 존재 여부와
+     * 상태를 동시에 확인하고, 이후 SCARD (1회)로 인원을 확인한다.
+     * 1. 로비 존재 여부 확인 -> 없으면 404
+     * 2. 로비 상태 확인 -> WAITING이 아니면 409
+     * 3. 인원 초과 확인 -> 초과면 409
+     *
+     * @param inviteCode 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 로비 응답 DTO
+     */
+    public JoinLobbyResponse joinLobby(String inviteCode, CustomPrincipal principal) {
+        if (principal == null || principal.userId() == null) {
+            log.warn("로비 입장 요청 거부 - principal 또는 userId가 null. inviteCode: {}", inviteCode);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+        }
+
+        log.info(LOG_JOIN_LOBBY_REQUEST, inviteCode, principal.userIdentifier());
+
+        JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(inviteCode)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, ERROR_LOBBY_NOT_FOUND));
+
+        if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
+        }
+
+        boolean alreadyParticipant = lobbyRepository.isParticipant(
+                inviteCode,
+                principal.userIdentifier()
+        );
+
+        if (!alreadyParticipant && lobbyInfo.currentPlayers() >= lobbyInfo.maxPlayers()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_FULL);
+        }
+
+        log.info(LOG_JOIN_LOBBY_SUCCESS,
+                inviteCode,
+                principal.userIdentifier(),
+                lobbyInfo.currentPlayers(),
+                lobbyInfo.maxPlayers());
+
+        return lobbyInfo;
     }
 
     /**

@@ -24,6 +24,7 @@ public class RegisterAuthService {
 
     private static final String ERR_DUPLICATE_LOGIN_ID = "이미 사용 중인 로그인 ID입니다.";
     private static final String ERR_DUPLICATE_NICKNAME = "이미 사용 중인 닉네임입니다.";
+    private static final int MAX_NICKNAME_LENGTH = 8;
 
     private final UserRepository userRepository;
     private final UserCredentialRepository userCredentialRepository;
@@ -31,10 +32,13 @@ public class RegisterAuthService {
 
     @Transactional
     public RegisterResponse register(String rawLoginId, String rawPassword, String rawNickname) {
-        String loginId = normalizeRequiredAtServiceBoundary(rawLoginId, "로그인 ID");
-        String password = normalizeRequiredAtServiceBoundary(rawPassword, "비밀번호");
-        String nickname = normalizeRequiredAtServiceBoundary(rawNickname, "닉네임");
+        String loginId = normalizeRequiredWithTrim(rawLoginId, "로그인 ID");
+        validateNoWhitespace(loginId, "로그인 ID");
 
+        String password = validateNoWhitespace(rawPassword, "비밀번호");
+
+        String nickname = normalizeRequiredWithTrim(rawNickname, "닉네임");
+        validateNicknameLength(nickname);
         validateDuplicate(loginId, nickname);
 
         User savedUser;
@@ -81,7 +85,7 @@ public class RegisterAuthService {
     /**
      * 서비스 직접 호출 경로를 위한 최소 방어선: trim + null/blank 차단.
      */
-    private String normalizeRequiredAtServiceBoundary(String value, String fieldName) {
+    private String normalizeRequiredWithTrim(String value, String fieldName) {
         if (value == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
         }
@@ -90,5 +94,21 @@ public class RegisterAuthService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
         }
         return normalized;
+    }
+
+    private String validateNoWhitespace(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
+        }
+        if (value.chars().anyMatch(Character::isWhitespace)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "에는 공백을 포함할 수 없습니다.");
+        }
+        return value;
+    }
+
+    private void validateNicknameLength(String nickname) {
+        if (nickname.length() > MAX_NICKNAME_LENGTH) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "닉네임은 8자를 초과할 수 없습니다.");
+        }
     }
 }

@@ -3,17 +3,25 @@
  *
  * [책임]
  * - 로비 생성 및 로비 내부 정보 변경 이벤트를 수신하여 LobbyEventService에 위임
+ * - 방장의 유저 강퇴 이벤트를 수신하여 LobbyEventService에 위임
  * - 컨트롤러는 수신 경로 정의와 서비스 위임만 담당
  */
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 
+import io.github.ascrew.monomatbe.domain.lobby.dto.KickLobbyPlayerRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyEventService;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Controller;
+import org.springframework.util.StringUtils;
 
 import java.security.Principal;
+import java.util.Map;
 
 @Controller
 @RequiredArgsConstructor
@@ -46,8 +54,64 @@ public class LobbyEventController {
   @MessageMapping("/lobby/{code}/update")
   public void notifyLobbyInfoRefresh(
           @DestinationVariable String code,
-          Principal principal
+          SimpMessageHeaderAccessor accessor
   ) {
-    lobbyEventService.notifyLobbyInfoRefresh(code, principal);
+    String userIdentifier = extractUserIdentifier(accessor);
+    lobbyEventService.notifyLobbyInfoRefresh(code, userIdentifier);
+  }
+
+  /**
+   * 방장의 로비 유저 강퇴 이벤트 수신.
+   *
+   * 클라이언트 송신 경로: /app/lobby/{code}/kick
+   *
+   * 요청 payload 예시:
+   * {
+   *   "targetUserIdentifier": "강퇴 대상 UUID"
+   * }
+   *
+   * [처리 내용]
+   * - 요청자가 현재 로비 방장인지 검증
+   * - 강퇴 대상이 현재 로비 참여자인지 검증
+   * - Redis participants/order에서 강퇴 대상 제거
+   * - 강퇴 알림 메시지 브로드캐스트
+   * - 로비 정보 refresh 신호 브로드캐스트
+   */
+  @MessageMapping("/lobby/{code}/kick")
+  public void kickLobbyPlayer(
+          @DestinationVariable String code,
+          @Valid @Payload KickLobbyPlayerRequest request,
+          SimpMessageHeaderAccessor accessor
+  ) {
+    String requesterIdentifier = extractUserIdentifier(accessor);
+    lobbyEventService.kickLobbyPlayer(code, request, requesterIdentifier);
+  }
+
+  /**
+   * STOMP 세션 속성에서 인증된 userIdentifier를 추출합니다.
+   *
+   * [설계 의도]
+   * StompChannelInterceptor가 CONNECT 시점에 검증한 userIdentifier를
+   * sessionAttributes에 저장하므로, MessageMapping에서는 Principal 대신
+   * 해당 세션 속성을 신뢰 기준으로 사용합니다.
+   */
+  private String extractUserIdentifier(SimpMessageHeaderAccessor accessor) {
+    if (accessor == null) {
+      return null;
+    }
+
+    Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+
+    if (sessionAttributes == null) {
+      return null;
+    }
+
+    Object value = sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER);
+
+    if (value instanceof String userIdentifier && StringUtils.hasText(userIdentifier)) {
+      return userIdentifier;
+    }
+
+    return null;
   }
 }

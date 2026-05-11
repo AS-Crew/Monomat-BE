@@ -50,30 +50,21 @@ POST /api/auth/guest
 - 정식 회원 닉네임과 충돌: `정식 회원이 이미 사용 중인 닉네임입니다.`
 - 기존 사용자 닉네임과 충돌: `이미 사용 중인 닉네임입니다.`
 
-#### (dev 전용) REGISTERED 토큰 발급
+---
 
-```
-POST /api/auth/dev/registered-token
-```
-
-dev 프로필에서만 노출됩니다. 입력한 username으로 REGISTERED 사용자를 만들거나 재사용해 Access/Refresh 토큰을 발급합니다.
 #### 회원가입
 
 ```
 POST /api/auth/register
 ```
 
-로그인 ID/비밀번호/닉네임으로 정식 회원 계정을 생성합니다.  
+로그인 ID/비밀번호/닉네임으로 정식 회원 계정을 생성합니다.
 회원가입 API는 계정 생성만 수행하며 토큰 발급은 로그인 API에서 처리됩니다.
 
 **Request**
 
 ```json
 {
-  "username": "dev-registered-user"
-}
-```
-
   "loginId": "member01",
   "password": "password123",
   "nickname": "registered-user"
@@ -93,12 +84,14 @@ POST /api/auth/register
 
 **Error**
 
-- `400 Bad Request`: 필수값 누락/비밀번호 길이 조건 불만족
+- `400 Bad Request`: 필수값 누락 / 비밀번호 길이 조건 불만족 / 비밀번호 공백 포함 / 닉네임 8자 초과
 - `409 Conflict`: 로그인 ID 또는 닉네임 중복
+
+---
 
 ### 로비 (Lobby)
 
-### 로비 생성
+#### 로비 생성
 
 ```
 POST /api/lobbies
@@ -164,6 +157,75 @@ JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 생성 �
 
 ---
 
+#### 초대 코드 기반 로비 입장
+
+```
+POST /api/lobbies/join
+```
+
+초대 코드로 로비 입장 가능 여부를 검증하고 로비 기본 정보를 반환합니다.
+JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 입장 가능합니다.
+
+> **중요:** 이 API는 입장 허가 사전 검증만 수행합니다.
+> 실제 참여자 등록은 응답 수신 후 WebSocket `/topic/lobby/{inviteCode}` 구독 시점에 처리됩니다.
+>
+> 클라이언트 처리 순서:
+> 1. `POST /api/lobbies/join` 호출 → 입장 가능 여부 확인
+> 2. WebSocket `SUBSCRIBE /topic/lobby/{inviteCode}` → 실제 입장 처리
+
+**Request Header**
+
+| 헤더 | 필수 | 설명 |
+|---|---|---|
+| `Authorization` | ✅ | `Bearer {accessToken}` |
+
+**Request Body**
+
+```json
+{
+  "inviteCode": "ABC123"
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `inviteCode` | String | ✅ | 6자리 초대 코드 (영문 대문자 + 숫자) |
+
+**Response `200 OK`**
+
+```json
+{
+  "inviteCode": "ABC123",
+  "title": "K-POP 퀴즈방",
+  "hostId": "f8f6aa1b-3dd8-4b20-8ec8-9f7c7e0dd0fc",
+  "maxPlayers": 8,
+  "currentPlayers": 3,
+  "status": "WAITING",
+  "mapCategory": "kpop"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `inviteCode` | String | 로비 초대 코드 (WebSocket 구독 경로에 사용) |
+| `title` | String | 로비 제목 |
+| `hostId` | String | 방장 사용자 식별자 |
+| `maxPlayers` | Integer | 최대 참여 인원 |
+| `currentPlayers` | Integer | 현재 참여 인원 (응답 시점 스냅샷) |
+| `status` | String | 로비 상태 (`WAITING`) |
+| `mapCategory` | String | 선택된 맵의 카테고리 (미선택 시 `null`) |
+
+**Error**
+
+| 상태 코드 | 설명 |
+|---|---|
+| `400 Bad Request` | 초대 코드 형식 오류 (6자리 영문 대문자 + 숫자 조합이 아닌 경우) |
+| `401 Unauthorized` | JWT 토큰 없음 또는 만료 |
+| `404 Not Found` | 존재하지 않는 초대 코드 |
+| `409 Conflict` | 게임이 이미 시작된 로비 또는 최대 인원 초과 |
+
+---
+
 #### 공개 로비 목록 조회
 
 ```
@@ -182,6 +244,7 @@ Redis에서 직접 필터링하여 고속 반환합니다.
     "hostId": "uuid-xxxx-xxxx",
     "title": "K-POP 퀴즈방",
     "mapId": 1,
+    "mapCategory": "kpop",
     "maxPlayers": 8,
     "isPrivate": false,
     "status": "WAITING"
@@ -194,7 +257,8 @@ Redis에서 직접 필터링하여 고속 반환합니다.
 | `code` | String | 로비 초대 코드 (6자리) |
 | `hostId` | String | 방장 사용자 식별자 |
 | `title` | String | 로비 제목 |
-| `mapId` | Long | 선택된 맵 ID (미선택 시 null) |
+| `mapId` | Long | 선택된 맵 ID (미선택 시 `null`) |
+| `mapCategory` | String | 선택된 맵의 카테고리 (미선택 시 `null`) |
 | `maxPlayers` | Integer | 최대 참여 인원 |
 | `isPrivate` | Boolean | 비공개 여부 (`true` = 비공개) |
 | `status` | String | 로비 상태 (`WAITING` \| `PLAYING`) |
@@ -454,6 +518,7 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 | `userIdentifier` 헤더 누락 | `STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다.` |
 | 유효하지 않은 `userIdentifier` 형식 | `STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다.` |
 | 인증 없이 SEND/SUBSCRIBE 시도 | `인증 정보가 존재하지 않습니다.` |
+| 최대 인원 초과 로비 구독 시도 | `로비 입장 실패: 최대 인원에 도달했습니다.` |
 
 ---
 
@@ -464,7 +529,6 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 | 분류 | 설명 |
 |---|---|
 | 로그인 | `POST /api/auth/login` |
-| 로비 초대 코드 입장 | `POST /api/lobbies/join` |
 | 맵 아이템(문제) CRUD | `GET/POST/PUT/DELETE /api/maps/{mapId}/items` |
 | YouTube URL 유효성 검증 | `POST /api/youtube/validate` |
 | 인게임 WebSocket | `/app/game/{code}/**` |

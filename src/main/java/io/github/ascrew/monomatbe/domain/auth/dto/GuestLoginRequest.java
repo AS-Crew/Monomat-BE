@@ -11,7 +11,7 @@ import jakarta.validation.constraints.Size;
  */
 public record GuestLoginRequest(
         @NotBlank(message = "닉네임은 비어 있을 수 없습니다.")
-        @Size(max = 50, message = "닉네임은 50자를 초과할 수 없습니다.")
+        @Size(max = 8, message = "닉네임은 8자를 초과할 수 없습니다.")
         String nickname
 ) {
 }

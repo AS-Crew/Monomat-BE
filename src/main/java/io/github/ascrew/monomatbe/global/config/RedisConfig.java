@@ -88,11 +88,17 @@ public class RedisConfig {
      * Redis Pub/Sub 전용 JsonMapper.
      *
      * [역할]
-     * WebSocket 클라이언트로 전달되는 Pub/Sub 메시지는
-     * Java 클래스 타입 정보가 포함되면 안 됩니다.
+     * WebSocket 클라이언트로 전달되는 Pub/Sub 메시지는 Java 클래스 타입 정보가 포함되면 안 된다.
      *
-     * 따라서 이 Mapper는 activateDefaultTyping을 적용하지 않고,
-     * 순수 JSON 직렬화에만 사용합니다.
+     * [Bean 이름 정책]
+     * 기존 Redis 직렬화용 jsonMapper Bean은 HTTP 응답 직렬화 오염을 방지하기 위해 제거함
+     * 현재 Bean으로 노출되는 JsonMapper는 Pub/Sub 메시지 직렬화 전용인 pubSubJsonMapper뿐임
+     *
+     * JsonMapper가 필요한 다른 코드에서는 목적에 맞는 Bean을 명시적으로 주입해야 함
+     * - Pub/Sub / WebSocket 메시지: @Qualifier("pubSubJsonMapper")
+     * - RedisTemplate 값 직렬화: RedisTemplate 내부 private createRedisJsonMapper() 사용
+     *
+     * 따라서 이 Mapper는 activateDefaultTyping를 적용하지 않고 순수 JSON 직렬화에만 사용한다.
      */
     @Bean
     public JsonMapper pubSubJsonMapper() {

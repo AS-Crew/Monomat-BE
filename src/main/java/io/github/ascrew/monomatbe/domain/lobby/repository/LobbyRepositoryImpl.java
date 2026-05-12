@@ -22,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -412,6 +413,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     );
 
     try {
+      cleanupStaleReadyParticipantsBeforeStart(code, requesterIdentifier);
+
       String result = redisTemplate.execute(
               startLobbyScript,
               keys,
@@ -912,6 +915,12 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       String notReadyUserIdentifier =
               StartLobbyLuaResultCode.extractNotReadyUserIdentifier(result);
 
+      logReadyConsistencyFailure(
+              code,
+              requesterIdentifier,
+              notReadyUserIdentifier
+      );
+
       return new StartLobbyResult.NotReady(code, notReadyUserIdentifier);
     }
 
@@ -930,6 +939,147 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
               return new StartLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
             });
+  }
+
+  /**
+   * 게임 시작 직전에 stale ready 데이터를 정리한다.
+   *
+   * 정리 대상 : ready Set에는 존재하지만 participants Set에는 없는 userIdentifier
+   *
+   * [정책]
+   * participants Set을 현재 로비 참여자의 source of truth로 사용한다.
+   * ready Set 잔여 데이터는 게임 시작 조건에 영향을 주면 안 되므로 start_lobby.lua 실행 전에 제거한다.
+   *
+   * [주의]
+   * participants에 남아 있지만 ready가 아닌 유저는 실제 미준비 유저일 수 있으므로
+   * 여기서 자동 제거하지 않는다.
+   */
+  private void cleanupStaleReadyParticipantsBeforeStart(
+          String code,
+          String requesterIdentifier
+  ) {
+    String participantsKey = RedisKeys.lobbyParticipantsKey(code);
+    String readyKey = RedisKeys.lobbyReadyKey(code);
+
+    try {
+      Set<String> participants = redisTemplate.opsForSet().members(participantsKey);
+      Set<String> readyParticipants = redisTemplate.opsForSet().members(readyKey);
+
+      if (readyParticipants == null || readyParticipants.isEmpty()) {
+        return;
+      }
+
+      Set<String> participantSet = participants != null ? participants : Set.of();
+
+      Set<String> staleReadyParticipants = new HashSet<>(readyParticipants);
+      staleReadyParticipants.removeAll(participantSet);
+
+      if (staleReadyParticipants.isEmpty()) {
+        return;
+      }
+
+      redisTemplate.opsForSet().remove(
+              readyKey,
+              staleReadyParticipants.toArray()
+      );
+
+      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_READY_STALE_CLEANUP);
+
+      log.warn(
+              "{} 게임 시작 전 stale ready 데이터 정리 - lobbyCode: {}, requester: {}, "
+                      + "participantsKey: {}, readyKey: {}, staleReadyParticipants: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              requesterIdentifier,
+              participantsKey,
+              readyKey,
+              staleReadyParticipants
+      );
+
+    } catch (Exception e) {
+      log.error(
+              "{} 게임 시작 전 ready 정합성 스캔 실패 - lobbyCode: {}, requester: {}, "
+                      + "participantsKey: {}, readyKey: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              requesterIdentifier,
+              participantsKey,
+              readyKey,
+              e
+      );
+    }
+  }
+
+  /**
+   * start_lobby.lua가 NOT_READY를 반환했을 때 ready/participants 정합성 진단 로그를 남긴다.
+   *
+   * [목적]
+   * 단순히 "준비 안 됨"으로만 남기면 실제 미준비 유저인지, 퇴장/강퇴 후 participants Set에 남은 stale 유저인지 추적하기 어렵다.
+   *
+   * 따라서 participants 포함 여부, ready 포함 여부, 로비 세션 키 존재 여부, stale ready 데이터 수를 함께 기록한다.
+   */
+  private void logReadyConsistencyFailure(
+          String code,
+          String requesterIdentifier,
+          String notReadyUserIdentifier
+  ) {
+    String participantsKey = RedisKeys.lobbyParticipantsKey(code);
+    String readyKey = RedisKeys.lobbyReadyKey(code);
+    String lobbyUserSessionKey = RedisKeys.lobbyUserSessionKey(code, notReadyUserIdentifier);
+
+    try {
+      Long participantCount = redisTemplate.opsForSet().size(participantsKey);
+      Long readyCount = redisTemplate.opsForSet().size(readyKey);
+
+      Boolean isParticipant = redisTemplate.opsForSet()
+              .isMember(participantsKey, notReadyUserIdentifier);
+
+      Boolean isReady = redisTemplate.opsForSet()
+              .isMember(readyKey, notReadyUserIdentifier);
+
+      boolean hasActiveLobbySession = Boolean.TRUE.equals(
+              redisTemplate.hasKey(lobbyUserSessionKey)
+      );
+
+      Set<String> participants = redisTemplate.opsForSet().members(participantsKey);
+      Set<String> readyParticipants = redisTemplate.opsForSet().members(readyKey);
+
+      Set<String> staleReadyParticipants = new HashSet<>(
+              readyParticipants != null ? readyParticipants : Set.of()
+      );
+      staleReadyParticipants.removeAll(participants != null ? participants : Set.of());
+
+      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_READY_CONSISTENCY_FAILURE);
+
+      log.warn(
+              "{} 게임 시작 실패 READY 정합성 진단 - lobbyCode: {}, requester: {}, "
+                      + "notReadyUserIdentifier: {}, participantCount: {}, readyCount: {}, "
+                      + "isParticipant: {}, isReady: {}, hasActiveLobbySession: {}, "
+                      + "staleReadyCount: {}, staleReadyParticipants: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              requesterIdentifier,
+              notReadyUserIdentifier,
+              participantCount,
+              readyCount,
+              isParticipant,
+              isReady,
+              hasActiveLobbySession,
+              staleReadyParticipants.size(),
+              staleReadyParticipants
+      );
+
+    } catch (Exception e) {
+      log.error(
+              "{} 게임 시작 실패 READY 정합성 진단 로그 생성 실패 - lobbyCode: {}, requester: {}, "
+                      + "notReadyUserIdentifier: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              requesterIdentifier,
+              notReadyUserIdentifier,
+              e
+      );
+    }
   }
 
   /**

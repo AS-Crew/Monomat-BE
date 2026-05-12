@@ -72,15 +72,20 @@ local nonHostPlayerCount = 0
 
 -- participants Set을 현재 로비 참여자의 source of truth로 사용한다.
 --
--- ready Set에만 남아 있는 잔여 데이터는 여기서 순회하지 않으므로 게임 시작 조건에 영향을 주지 않는다.
--- 반대로 participants에 남아 있는데 ready Set에 없는 유저는 "아직 준비하지 않은 현재 참여자"로 판단한다.
+-- ready Set에만 남아 있는 stale 데이터는 Java Repository 레이어에서
+-- start_lobby.lua 실행 직전에 정리한다.
 --
--- Lua 단계에서 participants/ready 불일치를 자동 보정하지 않는 이유:
--- participants에 존재하고 ready에 없는 유저는 실제 미준비 참여자일 수 있으므로,
+-- 이 Lua 스크립트는 participants에 존재하지만 ready Set에 없는 유저를
+-- "아직 준비하지 않은 현재 참여자"로 판단한다.
+--
+-- 단, 퇴장/강퇴 처리 실패 등으로 participants Set 자체가 stale 상태가 되면
+-- 정상 유저도 게임 시작 실패를 겪을 수 있다.
+-- 이 경우 Java Repository 레이어에서 NOT_READY 반환 시
+-- participants/ready/session 정합성 진단 로그를 남긴다.
+--
+-- Lua 내부에서 participants를 자동 제거하지 않는 이유:
+-- participants에 있고 ready에 없는 유저는 실제 미준비 참여자일 수 있으므로,
 -- start_lobby.lua가 임의로 제거하면 정상 참여자를 잘못 삭제할 수 있다.
---
--- 퇴장/강퇴 이후 participants가 남는 비정상 상황은 leave_lobby.lua / kick_lobby.lua 처리 실패에 가깝다.
--- 해당 정합성 문제는 Repository 레벨의 MONITORING_REQUIRED 로그와 후속 재처리/운영 정리 이슈에서 다룬다.
 
 for _, userIdentifier in ipairs(participants) do
     if userIdentifier ~= hostUserId then

@@ -235,6 +235,14 @@ public final class RedisKeys {
     public static final String METRIC_START_LOBBY_UNKNOWN_RESULT =
             "metric:lobby:start:unknown-result";
 
+    /** 게임 시작 전 stale ready 데이터 정리 횟수 */
+    public static final String METRIC_LOBBY_READY_STALE_CLEANUP =
+            "metric:lobby:ready:stale-cleanup";
+
+    /** 게임 시작 실패 시 ready/participants 정합성 진단 발생 횟수 */
+    public static final String METRIC_LOBBY_READY_CONSISTENCY_FAILURE =
+            "metric:lobby:ready:consistency-failure";
+
     /**
      * 사용자 온라인 상태 키를 반환합니다.
      * 저장 구조: String "ONLINE"

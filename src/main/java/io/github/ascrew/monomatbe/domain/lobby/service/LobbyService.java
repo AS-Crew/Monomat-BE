@@ -11,6 +11,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
@@ -61,6 +62,20 @@ public class LobbyService {
             "로비 참여자만 준비 상태를 변경할 수 있습니다.";
     private static final String ERROR_HOST_READY_NOT_ALLOWED =
             "방장은 준비 상태를 변경하지 않고 시작 버튼을 사용합니다.";
+    private static final String ERROR_START_FORBIDDEN =
+            "방장만 게임을 시작할 수 있습니다.";
+    private static final String ERROR_START_HOST_NOT_FOUND =
+            "로비 방장 정보가 유효하지 않습니다.";
+    private static final String ERROR_START_MAP_NOT_SELECTED =
+            "게임을 시작하려면 맵을 선택해야 합니다.";
+    private static final String ERROR_START_NO_PLAYER =
+            "게임을 시작하려면 방장을 제외한 참여자가 1명 이상 필요합니다.";
+    private static final String ERROR_START_NOT_READY =
+            "모든 참여자가 준비 완료 상태여야 합니다.";
+    private static final String ERROR_START_MAP_SONG_COUNT_NOT_ENOUGH =
+            "맵의 문제 수가 설정된 라운드 수보다 적습니다.";
+    private static final String ERROR_START_FAILED =
+            "게임 시작 처리에 실패했습니다.";
     private static final String ERROR_LOBBY_DETAIL_FORBIDDEN =
             "로비 참여자만 로비 상세 정보를 조회할 수 있습니다.";
 
@@ -332,6 +347,69 @@ public class LobbyService {
     }
 
     /**
+     * 로비 게임 시작 요청을 처리한다.
+     *
+     * [검증 순서]
+     * 1. 인증 정보 확인
+     * 2. Redis 로비 존재 여부 확인
+     * 3. DB 로비 스냅샷 조회
+     * 4. 선택된 맵 존재 및 삭제 여부 확인
+     * 5. 맵 문제 수가 roundCount 이상인지 확인
+     * 6. start_lobby.lua로 방장 권한, WAITING 상태, ready 상태를 원자 검증
+     * 7. DB 로비 상태를 PLAYING으로 변경
+     * 8. 로비 참여자에게 게임 시작 이벤트 브로드캐스트
+     *
+     * @param code 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     */
+    @Transactional
+    public void startLobbyGame(String code, CustomPrincipal principal) {
+        if (principal == null || principal.userId() == null) {
+            log.warn("게임 시작 요청 거부 - principal 또는 userId가 null. code: {}", code);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+        }
+
+        String requesterIdentifier = principal.userIdentifier();
+
+        if (lobbyRepository.findByInviteCode(code).isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    ERROR_LOBBY_NOT_FOUND
+            );
+        }
+
+        GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_LOBBY_NOT_FOUND
+                ));
+
+        QuizMap quizMap = validateStartMap(gameLobby);
+
+        validateMapSongCount(quizMap, gameLobby);
+
+        StartLobbyResult result = lobbyRepository.executeStartLobbyProcess(
+                code,
+                requesterIdentifier
+        );
+
+        handleStartLobbyResult(result);
+
+        gameLobby.changeStatus(LobbyStatus.PLAYING);
+
+        lobbyEventService.notifyGameStarted(code);
+        lobbyEventService.notifyLobbyInfoRefresh(code, requesterIdentifier);
+
+        log.info(
+                "게임 시작 처리 완료 - code: {}, requester: {}, mapId: {}, roundCount: {}",
+                code,
+                requesterIdentifier,
+                quizMap.getId(),
+                gameLobby.getRoundCount()
+        );
+    }
+
+    /**
      * 로비 참여자의 준비 상태를 변경한다.
      *
      * [정책]
@@ -397,6 +475,117 @@ public class LobbyService {
                 userIdentifier,
                 request.ready()
         );
+    }
+
+    /**
+     * 게임 시작에 사용할 맵을 검증한다.
+     *
+     * [검증]
+     * - 로비에 mapId가 있어야 한다.
+     * - 맵이 존재해야 한다.
+     * - 삭제된 맵이면 시작할 수 없다.
+     */
+    private QuizMap validateStartMap(GameLobby gameLobby) {
+        if (gameLobby.getMapId() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_START_MAP_NOT_SELECTED
+            );
+        }
+
+        QuizMap quizMap = quizMapJpaRepository.findById(gameLobby.getMapId())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
+
+        if (Boolean.TRUE.equals(quizMap.getIsDeleted())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_MAP_DELETED
+            );
+        }
+
+        return quizMap;
+    }
+
+    /**
+     * 맵의 문제 수가 로비 라운드 수 이상인지 검증한다.
+     *
+     * Data API 없이 게임을 운영하므로, 실제 출제 가능 여부는
+     * 맵에 저장된 문제 수(numOfSong)를 기준으로 판단한다.
+     */
+    private void validateMapSongCount(QuizMap quizMap, GameLobby gameLobby) {
+        Integer numOfSong = quizMap.getNumOfSong();
+        Integer roundCount = gameLobby.getRoundCount();
+
+        if (numOfSong == null || roundCount == null || numOfSong < roundCount) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_START_MAP_SONG_COUNT_NOT_ENOUGH
+            );
+        }
+    }
+
+    /**
+     * 게임 시작 Lua 결과를 HTTP 예외 또는 성공 흐름으로 변환한다.
+     */
+    private void handleStartLobbyResult(StartLobbyResult result) {
+        switch (result) {
+            case StartLobbyResult.Started ignored -> {
+                return;
+            }
+
+            case StartLobbyResult.LobbyNotFound ignored -> throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    ERROR_LOBBY_NOT_FOUND
+            );
+
+            case StartLobbyResult.HostNotFound ignored -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_START_HOST_NOT_FOUND
+            );
+
+            case StartLobbyResult.Forbidden ignored -> throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_START_FORBIDDEN
+            );
+
+            case StartLobbyResult.LobbyNotWaiting ignored -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_LOBBY_NOT_WAITING
+            );
+
+            case StartLobbyResult.MapNotSelected ignored -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_START_MAP_NOT_SELECTED
+            );
+
+            case StartLobbyResult.NoPlayer ignored -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_START_NO_PLAYER
+            );
+
+            case StartLobbyResult.NotReady notReady -> {
+                log.warn(
+                        "게임 시작 요청 거부 - 준비하지 않은 참여자 존재. code: {}, userIdentifier: {}",
+                        notReady.lobbyCode(),
+                        notReady.userIdentifier()
+                );
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        ERROR_START_NOT_READY
+                );
+            }
+
+            case StartLobbyResult.Error error -> {
+                log.error("게임 시작 처리 실패 - reason: {}", error.reason());
+                throw new ResponseStatusException(
+                        HttpStatus.INTERNAL_SERVER_ERROR,
+                        ERROR_START_FAILED
+                );
+            }
+        }
     }
 
     /**

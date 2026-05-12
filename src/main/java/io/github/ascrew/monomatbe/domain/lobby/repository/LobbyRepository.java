@@ -5,6 +5,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.*;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 
@@ -80,6 +81,19 @@ public interface LobbyRepository {
           String code,
           String requesterIdentifier,
           String targetUserIdentifier
+  );
+
+  /**
+   * Lua 스크립트를 실행하여 로비 게임 시작 조건을 원자적으로 검증하고
+   * Redis 로비 상태를 PLAYING으로 변경한다.
+   *
+   * @param code 로비 초대 코드
+   * @param requesterIdentifier 게임 시작 요청자 식별자
+   * @return StartLobbyResult
+   */
+  StartLobbyResult executeStartLobbyProcess(
+          String code,
+          String requesterIdentifier
   );
 
   /** Redis에서 공개 로비 목록을 필터링하여 반환한다. */

@@ -62,6 +62,7 @@ public final class StompDestinations {
 
     public static final String MSG_REFRESH_LOBBY_LIST = "REFRESH_LOBBY_LIST";
     public static final String MSG_REFRESH_LOBBY_INFO = "REFRESH_LOBBY_INFO";
+    public static final String MSG_GAME_STARTED = "GAME_STARTED";
 
     // =========================================================
     // 동적 경로 생성 팩토리 메서드
@@ -75,6 +76,11 @@ public final class StompDestinations {
     /** @return "/topic/lobby/{code}/refresh" */
     public static String subscribeLobbyRefresh(String code) {
         return LOBBY_CHANNEL_PREFIX + code + "/refresh";
+    }
+
+    /** @return "/topic/lobby/{code}/game" */
+    public static String subscribeLobbyGame(String code) {
+        return LOBBY_CHANNEL_PREFIX + code + "/game";
     }
 
     /** @return "/app/chat/lobby/{code}" */

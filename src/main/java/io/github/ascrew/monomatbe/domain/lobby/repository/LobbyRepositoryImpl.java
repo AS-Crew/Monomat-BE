@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
@@ -41,6 +42,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private final RedisScript<String> leaveLobbyScript;
   private final RedisScript<String> createLobbyScript;
   private final RedisScript<String> kickLobbyScript;
+  private final RedisScript<String> startLobbyScript;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -67,6 +69,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RESULT_FORBIDDEN = "FORBIDDEN";
   private static final String RESULT_CANNOT_KICK_SELF = "CANNOT_KICK_SELF";
   private static final String RESULT_TARGET_NOT_PARTICIPANT = "TARGET_NOT_PARTICIPANT";
+  private static final String RESULT_STARTED = "STARTED";
+  private static final String RESULT_MAP_NOT_SELECTED = "MAP_NOT_SELECTED";
+  private static final String RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
+  private static final String RESULT_NO_PLAYER = "NO_PLAYER";
+  private static final String RESULT_NOT_READY_PREFIX = "NOT_READY:";
 
   // =========================================================
   // isPrivate 정규화 상수
@@ -349,6 +356,45 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       );
 
       return new KickLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
+    }
+  }
+
+  @Override
+  public StartLobbyResult executeStartLobbyProcess(
+          String code,
+          String requesterIdentifier
+  ) {
+    List<String> keys = List.of(
+            RedisKeys.lobbyKey(code),
+            RedisKeys.lobbyParticipantsKey(code),
+            RedisKeys.lobbyReadyKey(code),
+            RedisKeys.LOBBY_PUBLIC
+    );
+
+    try {
+      String result = redisTemplate.execute(
+              startLobbyScript,
+              keys,
+              requesterIdentifier,
+              code,
+              RedisKeys.FIELD_HOST_USER_ID,
+              RedisKeys.FIELD_STATUS,
+              RedisKeys.FIELD_MAP_ID,
+              LobbyStatus.WAITING.name(),
+              LobbyStatus.PLAYING.name()
+      );
+
+      return parseStartLuaResult(result, code, requesterIdentifier);
+
+    } catch (Exception e) {
+      log.error(
+              "게임 시작 Lua 스크립트 실행 중 예외 발생 - lobbyCode: {}, requester: {}",
+              code,
+              requesterIdentifier,
+              e
+      );
+
+      return new StartLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
     }
   }
 
@@ -651,6 +697,51 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
 
     return new KickLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
+  }
+
+  private StartLobbyResult parseStartLuaResult(
+          String result,
+          String code,
+          String requesterIdentifier
+  ) {
+    if (result == null) {
+      return new StartLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
+    }
+
+    if (RESULT_STARTED.equals(result)) {
+      return new StartLobbyResult.Started(code);
+    }
+
+    if (RESULT_LOBBY_NOT_FOUND.equals(result)) {
+      return new StartLobbyResult.LobbyNotFound(code);
+    }
+
+    if (RESULT_HOST_NOT_FOUND.equals(result)) {
+      return new StartLobbyResult.HostNotFound(code);
+    }
+
+    if (RESULT_FORBIDDEN.equals(result)) {
+      return new StartLobbyResult.Forbidden(code, requesterIdentifier);
+    }
+
+    if (RESULT_LOBBY_NOT_WAITING.equals(result)) {
+      return new StartLobbyResult.LobbyNotWaiting(code);
+    }
+
+    if (RESULT_MAP_NOT_SELECTED.equals(result)) {
+      return new StartLobbyResult.MapNotSelected(code);
+    }
+
+    if (RESULT_NO_PLAYER.equals(result)) {
+      return new StartLobbyResult.NoPlayer(code);
+    }
+
+    if (result.startsWith(RESULT_NOT_READY_PREFIX)) {
+      String notReadyUserIdentifier = result.substring(RESULT_NOT_READY_PREFIX.length());
+      return new StartLobbyResult.NotReady(code, notReadyUserIdentifier);
+    }
+
+    return new StartLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
   }
 
   private Long parseNullableLong(Object value) {

@@ -66,6 +66,10 @@ public class LobbyController {
             "요청 수신: 로비 준비 상태 변경 [PATCH /api/lobbies/{code}/ready] - 코드: {}, 식별자: {}, ready: {}";
     private static final String LOG_UPDATE_READY_RESPONSE =
             "로비 준비 상태 변경 완료 - 코드: {}";
+    private static final String LOG_START_LOBBY_REQUEST =
+            "요청 수신: 게임 시작 [POST /api/lobbies/{code}/start] - 코드: {}, 식별자: {}";
+    private static final String LOG_START_LOBBY_RESPONSE =
+            "게임 시작 처리 완료 - 코드: {}";
 
     private final LobbyService lobbyService;
 
@@ -192,6 +196,44 @@ public class LobbyController {
         lobbyService.updateReadyStatus(code, request, principal);
 
         log.info(LOG_UPDATE_READY_RESPONSE, code);
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 로비 게임 시작 API
+     *
+     * [정책]
+     * - JWT 인증이 필요하다.
+     * - 방장만 게임을 시작할 수 있다.
+     * - 로비 상태가 WAITING일 때만 시작할 수 있다.
+     * - 유효한 맵이 선택되어 있어야 한다.
+     * - 맵의 문제 수가 설정된 라운드 수 이상이어야 한다.
+     * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
+     *
+     * @param code 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "로비 게임 시작",
+            description = "시작 조건을 검증하고 로비 상태를 PLAYING으로 변경한 뒤 게임 시작 이벤트를 브로드캐스트합니다."
+    )
+    @PostMapping("/{code}/start")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> startLobbyGame(
+            @PathVariable String code,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_START_LOBBY_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null"
+        );
+
+        lobbyService.startLobbyGame(code, principal);
+
+        log.info(LOG_START_LOBBY_RESPONSE, code);
 
         return ResponseEntity.noContent().build();
     }

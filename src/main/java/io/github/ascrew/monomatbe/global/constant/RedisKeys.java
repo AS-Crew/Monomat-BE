@@ -231,6 +231,10 @@ public final class RedisKeys {
     public static final String METRIC_LOBBY_START_RECONCILIATION_FAILED =
             "metric:lobby:start:reconciliation:failed";
 
+    /** start_lobby.lua 알 수 없는 반환값 발생 횟수 */
+    public static final String METRIC_START_LOBBY_UNKNOWN_RESULT =
+            "metric:lobby:start:unknown-result";
+
     /**
      * 사용자 온라인 상태 키를 반환합니다.
      * 저장 구조: String "ONLINE"

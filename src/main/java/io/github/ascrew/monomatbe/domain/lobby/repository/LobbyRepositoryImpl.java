@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.StartLobbyLuaResultCode;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -68,11 +69,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RESULT_FORBIDDEN = "FORBIDDEN";
   private static final String RESULT_CANNOT_KICK_SELF = "CANNOT_KICK_SELF";
   private static final String RESULT_TARGET_NOT_PARTICIPANT = "TARGET_NOT_PARTICIPANT";
-  private static final String RESULT_STARTED = "STARTED";
-  private static final String RESULT_MAP_NOT_SELECTED = "MAP_NOT_SELECTED";
-  private static final String RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
-  private static final String RESULT_NO_PLAYER = "NO_PLAYER";
-  private static final String RESULT_NOT_READY_PREFIX = "NOT_READY:";
 
   // =========================================================
   // 게임 시작 상태 재처리 상수
@@ -521,7 +517,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    */
   @Override
   public void enqueueStartReconciliation(String code, String reason) {
-    String payload = code + RECONCILIATION_PAYLOAD_DELIMITER + reason;
+    String payload = String.join(
+            RECONCILIATION_PAYLOAD_DELIMITER,
+            code,
+            reason,
+            "0",
+            String.valueOf(System.currentTimeMillis())
+    );
 
     try {
       redisTemplate.opsForList().rightPush(
@@ -894,50 +896,63 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           String requesterIdentifier
   ) {
     if (result == null) {
+      incrementStartReconciliationMetric(RedisKeys.METRIC_START_LOBBY_UNKNOWN_RESULT);
+
+      log.error(
+              "{} start_lobby.lua null 반환값 - lobbyCode: {}, requesterIdentifier: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              requesterIdentifier
+      );
+
       return new StartLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
     }
 
-    if (RESULT_STARTED.equals(result)) {
-      return new StartLobbyResult.Started(code);
-    }
+    if (StartLobbyLuaResultCode.isNotReadyResult(result)) {
+      String notReadyUserIdentifier =
+              StartLobbyLuaResultCode.extractNotReadyUserIdentifier(result);
 
-    if (RESULT_LOBBY_NOT_FOUND.equals(result)) {
-      return new StartLobbyResult.LobbyNotFound(code);
-    }
-
-    if (RESULT_HOST_NOT_FOUND.equals(result)) {
-      return new StartLobbyResult.HostNotFound(code);
-    }
-
-    if (RESULT_FORBIDDEN.equals(result)) {
-      return new StartLobbyResult.Forbidden(code, requesterIdentifier);
-    }
-
-    if (RESULT_LOBBY_NOT_WAITING.equals(result)) {
-      return new StartLobbyResult.LobbyNotWaiting(code);
-    }
-
-    if (RESULT_MAP_NOT_SELECTED.equals(result)) {
-      return new StartLobbyResult.MapNotSelected(code);
-    }
-
-    if (RESULT_NO_PLAYER.equals(result)) {
-      return new StartLobbyResult.NoPlayer(code);
-    }
-
-    if (result.startsWith(RESULT_NOT_READY_PREFIX)) {
-      String notReadyUserIdentifier = result.substring(RESULT_NOT_READY_PREFIX.length());
       return new StartLobbyResult.NotReady(code, notReadyUserIdentifier);
     }
 
-    log.error(
-            "start_lobby.lua 알 수 없는 반환값 - lobbyCode: {}, requesterIdentifier: {}, result: {}",
-            code,
-            requesterIdentifier,
-            result
-    );
+    return StartLobbyLuaResultCode.fromExactValue(result)
+            .map(resultCode -> toStartLobbyResult(resultCode, code, requesterIdentifier))
+            .orElseGet(() -> {
+              incrementStartReconciliationMetric(RedisKeys.METRIC_START_LOBBY_UNKNOWN_RESULT);
 
-    return new StartLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
+              log.error(
+                      "{} start_lobby.lua 알 수 없는 반환값 - lobbyCode: {}, requesterIdentifier: {}, result: {}",
+                      LOG_MONITORING_REQUIRED,
+                      code,
+                      requesterIdentifier,
+                      result
+              );
+
+              return new StartLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
+            });
+  }
+
+  /**
+   * start_lobby.lua 반환 코드를 도메인 결과 타입으로 변환한다.
+   * StartLobbyLuaResultCode는 Lua 스크립트 반환 문자열과 1:1로 매핑됩니다.
+   */
+  private StartLobbyResult toStartLobbyResult(
+          StartLobbyLuaResultCode resultCode,
+          String code,
+          String requesterIdentifier
+  ) {
+    return switch (resultCode) {
+      case STARTED -> new StartLobbyResult.Started(code);
+      case LOBBY_NOT_FOUND -> new StartLobbyResult.LobbyNotFound(code);
+      case HOST_NOT_FOUND -> new StartLobbyResult.HostNotFound(code);
+      case FORBIDDEN -> new StartLobbyResult.Forbidden(code, requesterIdentifier);
+      case LOBBY_NOT_WAITING -> new StartLobbyResult.LobbyNotWaiting(code);
+      case MAP_NOT_SELECTED -> new StartLobbyResult.MapNotSelected(code);
+      case NO_PLAYER -> new StartLobbyResult.NoPlayer(code);
+      case NOT_READY_PREFIX -> new StartLobbyResult.Error(
+              "NOT_READY_PREFIX는 동적 prefix 결과이므로 exact 매핑 대상이 아닙니다."
+      );
+    };
   }
 
   private Long parseNullableLong(Object value) {

@@ -86,6 +86,10 @@ public class LobbyService {
             "START_DB_SYNC_FAILED";
     private static final String ERROR_START_EVENT_TRANSACTION_REQUIRED =
             "게임 시작 이벤트 발행을 위한 트랜잭션 동기화가 활성화되어 있지 않습니다.";
+    private static final String ERROR_LOBBY_SNAPSHOT_NOT_FOUND =
+            "로비 상태 정보가 일치하지 않습니다. 로비를 다시 생성해주세요.";
+    private static final String RECONCILIATION_REASON_DB_SNAPSHOT_NOT_FOUND =
+            "START_DB_SNAPSHOT_NOT_FOUND";
 
     // =========================================================
     // 로그 메시지 상수
@@ -387,10 +391,7 @@ public class LobbyService {
         }
 
         GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_LOBBY_NOT_FOUND
-                ));
+                .orElseGet(() -> handleMissingGameLobbySnapshot(code, requesterIdentifier));
 
         QuizMap quizMap = validateStartMap(gameLobby);
 
@@ -437,6 +438,53 @@ public class LobbyService {
                 requesterIdentifier,
                 quizMap.getId(),
                 gameLobby.getRoundCount()
+        );
+    }
+
+    /**
+     * Redis에는 로비가 존재하지만 DB GAME_LOBBY 스냅샷이 없는 비정상 상태를 처리한다.
+     *
+     * [발생 가능한 상황]
+     * - 로비 생성 중 Redis 저장은 성공했지만 DB 저장 실패 후 Redis 보상 삭제가 실패한 경우
+     * - 운영 중 Redis/DB 정합성이 깨진 경우
+     *
+     * [처리 정책]
+     * 이 상태에서는 roundCount, timeLimitSeconds, DB 상태 동기화 대상이 없으므로
+     * 게임 시작을 진행할 수 없다.
+     *
+     * 따라서 Redis 잔존 로비를 보상 삭제하고, 삭제 실패 시 재처리 큐에 적재한다.
+     */
+    private GameLobby handleMissingGameLobbySnapshot(
+            String code,
+            String requesterIdentifier
+    ) {
+        log.error(
+                "{} Redis 로비는 존재하지만 DB GAME_LOBBY 스냅샷이 없습니다. "
+                        + "Redis 잔존 로비 보상 삭제를 시도합니다. code: {}, requester: {}",
+                "[ALERT_REQUIRED]",
+                code,
+                requesterIdentifier
+        );
+
+        boolean deleted = lobbyRepository.deleteFromRedis(code);
+
+        if (!deleted) {
+            lobbyRepository.enqueueStartReconciliation(
+                    code,
+                    RECONCILIATION_REASON_DB_SNAPSHOT_NOT_FOUND
+            );
+
+            log.error(
+                    "{} DB 스냅샷 누락 로비 Redis 삭제 실패 - 재처리 큐 적재 완료. code: {}, requester: {}",
+                    "[ALERT_REQUIRED]",
+                    code,
+                    requesterIdentifier
+            );
+        }
+
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                ERROR_LOBBY_SNAPSHOT_NOT_FOUND
         );
     }
 

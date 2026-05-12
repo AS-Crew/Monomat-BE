@@ -10,16 +10,24 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 /**
- * 게임 시작 상태 동기화 실패 재처리 서비스
+ * 게임 시작 상태 동기화 실패 재처리 서비스.
  *
  * [처리 대상]
  * Redis start_lobby.lua는 성공했지만 DB GAME_LOBBY 상태 변경 또는
  * Redis 보상 롤백이 실패하여 Redis-DB 상태가 불일치할 가능성이 있는 로비를 보정한다.
  *
+ * [재처리 사유별 보정 정책]
+ * - START_DB_SYNC_FAILED:
+ *   Redis는 PLAYING인데 DB는 WAITING일 수 있으므로 Redis 로비 상태를 WAITING으로 롤백한다.
+ *
+ * - START_DB_SNAPSHOT_NOT_FOUND:
+ *   Redis에는 로비가 있지만 DB GAME_LOBBY 스냅샷이 없는 orphan Redis lobby 상태이므로
+ *   Redis 잔존 로비를 삭제한다.
+ *
  * [재시도 정책]
  * - payload에 attempt와 nextRetryAtEpochMillis를 포함한다.
  * - 아직 재시도 시각이 아니면 다시 큐 뒤에 넣는다.
- * - 실패 시 exponential backoff로 재시도 간격을 늘힌다.
+ * - 실패 시 exponential backoff로 재시도 간격을 늘린다.
  * - 최대 재시도 횟수를 초과하면 재적재하지 않고 ALERT 로그를 남긴다.
  *
  * [payload 형식]
@@ -42,6 +50,9 @@ public class LobbyStartReconciliationService {
     private static final long MAX_BACKOFF_MS = 5 * 60_000L;
     private static final int MAX_RETRY_ATTEMPT = 5;
 
+    private static final String REASON_DB_SYNC_FAILED = "START_DB_SYNC_FAILED";
+    private static final String REASON_DB_SNAPSHOT_NOT_FOUND = "START_DB_SNAPSHOT_NOT_FOUND";
+
     private final LobbyRepository lobbyRepository;
 
     /**
@@ -51,7 +62,7 @@ public class LobbyStartReconciliationService {
      * 1. Redis 큐에서 payload를 하나 꺼낸다.
      * 2. payload 형식이 잘못되었으면 실패 metric을 증가시키고 종료한다.
      * 3. 아직 nextRetryAtEpochMillis에 도달하지 않았으면 다시 큐에 넣는다.
-     * 4. 재처리 대상 로비의 Redis 상태를 WAITING으로 롤백한다.
+     * 4. 재처리 사유에 따라 Redis 상태를 보정한다.
      * 5. 실패 시 backoff 정보를 갱신해 다시 큐에 넣는다.
      */
     @Scheduled(fixedDelayString = "${monomat.lobby.start-reconciliation.fixed-delay-ms:30000}")
@@ -83,7 +94,7 @@ public class LobbyStartReconciliationService {
             return;
         }
 
-        boolean reconciled = lobbyRepository.rollbackStartedLobbyStatus(parsedPayload.lobbyCode());
+        boolean reconciled = reconcileByReason(parsedPayload);
 
         if (reconciled) {
             lobbyRepository.incrementStartReconciliationMetric(
@@ -130,7 +141,39 @@ public class LobbyStartReconciliationService {
     }
 
     /**
-     * Redis 큐 payload를 파싱
+     * 재처리 사유에 따라 보정 정책을 선택한다.
+     *
+     * [START_DB_SYNC_FAILED]
+     * Redis start_lobby.lua 성공 이후 DB GAME_LOBBY 상태 변경에 실패한 경우다.
+     * 사용자는 /start 요청에서 실패 응답을 받았고, GAME_STARTED 이벤트도 afterCommit 이전에
+     * 발행되지 않았으므로 Redis 상태를 WAITING으로 되돌린다.
+     *
+     * [START_DB_SNAPSHOT_NOT_FOUND]
+     * Redis에는 로비가 있지만 DB GAME_LOBBY 스냅샷이 없는 orphan Redis lobby 상태다.
+     * 이 경우 roundCount, timeLimitSeconds, DB 상태 동기화 대상이 없으므로
+     * 유효한 로비로 볼 수 없다. Redis 잔존 로비를 삭제한다.
+     */
+    private boolean reconcileByReason(ReconciliationPayload payload) {
+        if (REASON_DB_SYNC_FAILED.equals(payload.reason())) {
+            return lobbyRepository.rollbackStartedLobbyStatus(payload.lobbyCode());
+        }
+
+        if (REASON_DB_SNAPSHOT_NOT_FOUND.equals(payload.reason())) {
+            return lobbyRepository.deleteFromRedis(payload.lobbyCode());
+        }
+
+        log.error(
+                "{} 알 수 없는 게임 시작 상태 재처리 사유 - lobbyCode: {}, reason: {}",
+                LOG_ALERT_REQUIRED,
+                payload.lobbyCode(),
+                payload.reason()
+        );
+
+        return false;
+    }
+
+    /**
+     * Redis 큐 payload를 파싱한다.
      *
      * payload 형식:
      * lobbyCode|reason|attempt|nextRetryAtEpochMillis

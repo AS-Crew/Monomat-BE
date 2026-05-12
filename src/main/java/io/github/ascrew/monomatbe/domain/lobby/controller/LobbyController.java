@@ -11,6 +11,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyService;
@@ -53,6 +54,10 @@ public class LobbyController {
             "요청 수신: 공개 로비 목록 조회 [GET /api/lobbies]";
     private static final String LOG_GET_PUBLIC_LOBBIES_RESPONSE =
             "조회 완료: 공개 로비 {}개 반환";
+    private static final String LOG_GET_LOBBY_DETAIL_REQUEST =
+            "요청 수신: 로비 상세 조회 [GET /api/lobbies/{code}] - 코드: {}, 식별자: {}";
+    private static final String LOG_GET_LOBBY_DETAIL_RESPONSE =
+            "로비 상세 조회 완료 - 코드: {}, canStart: {}";
     private static final String LOG_JOIN_LOBBY_REQUEST =
             "요청 수신: 로비 입장 [POST /api/lobbies/join] - 초대 코드: {}, 식별자: {}";
     private static final String LOG_JOIN_LOBBY_RESPONSE =
@@ -189,6 +194,43 @@ public class LobbyController {
         log.info(LOG_UPDATE_READY_RESPONSE, code);
 
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 로비 상세 조회 API
+     *
+     * [용도]
+     * 로비 대기실 화면에서 필요한 참여자 ready 상태와 canStart 값을 조회한다.
+     *
+     * [주의]
+     * 실제 최신 참여자 상태는 WebSocket 구독/해제 흐름에 의해 Redis에서 관리된다.
+     * 클라이언트는 REFRESH_LOBBY_INFO 신호를 받으면 이 API를 다시 호출하여 최신 상태를 동기화한다.
+     *
+     * @param code 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 로비 상세 정보
+     */
+    @Operation(
+            summary = "로비 상세 조회",
+            description = "로비 참여자 ready 상태와 canStart 값을 포함한 대기실 상세 정보를 조회합니다."
+    )
+    @GetMapping("/{code}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<LobbyDetailResponse> getLobbyDetail(
+            @PathVariable String code,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_GET_LOBBY_DETAIL_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null"
+        );
+
+        LobbyDetailResponse response = lobbyService.getLobbyDetail(code, principal);
+
+        log.info(LOG_GET_LOBBY_DETAIL_RESPONSE, code, response.canStart());
+
+        return ResponseEntity.ok(response);
     }
 
     /**

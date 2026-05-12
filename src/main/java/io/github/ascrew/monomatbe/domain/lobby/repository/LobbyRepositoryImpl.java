@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -131,6 +132,75 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
 
     redisTemplate.opsForSet().remove(readyKey, userIdentifier);
+  }
+
+  /**
+   * 로비 참여자 목록을 입장 순서 기준으로 조회한다.
+   *
+   * [조회 전략]
+   * - lobby:{code}:order List를 우선 사용하여 FE 표시 순서를 안정적으로 유지한다.
+   * - participants Set을 함께 조회하여 이미 퇴장했지만 order에 남은 값은 제거한다.
+   *
+   * @param code 로비 초대 코드
+   * @return 현재 로비에 참여 중인 userIdentifier 목록
+   */
+  @Override
+  public List<String> getParticipantIdentifiers(String code) {
+    Set<String> participantSet = redisTemplate.opsForSet()
+            .members(RedisKeys.lobbyParticipantsKey(code));
+
+    if (participantSet == null || participantSet.isEmpty()) {
+      return new ArrayList<>();
+    }
+
+    List<String> orderedParticipants = redisTemplate.opsForList()
+            .range(RedisKeys.lobbyOrderKey(code), 0, -1);
+
+    if (orderedParticipants == null || orderedParticipants.isEmpty()) {
+      return new ArrayList<>(participantSet);
+    }
+
+    List<String> result = new ArrayList<>();
+
+    for (String userIdentifier : orderedParticipants) {
+      if (participantSet.contains(userIdentifier)) {
+        result.add(userIdentifier);
+      }
+    }
+
+    /*
+     * order List에는 없지만 participants Set에는 존재하는 비정상 데이터를 보정한다.
+     * Redis 장애, 과거 데이터, Lua 계약 변경 상황에서도 상세 응답이 누락되지 않도록 한다.
+     */
+    for (String userIdentifier : participantSet) {
+      if (!result.contains(userIdentifier)) {
+        result.add(userIdentifier);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * ready 상태인 참여자 식별자 목록을 조회한다.
+   *
+   * [반환 정책]
+   * Redis Set 조회 결과가 null이면 빈 Set으로 반환하여
+   * 서비스 레이어에서 null 방어 로직을 반복하지 않도록 한다.
+   *
+   * @param code 로비 초대 코드
+   * @return ready 상태인 userIdentifier Set
+   */
+  @Override
+  public Set<String> getReadyParticipantIdentifiers(String code) {
+    Set<String> readyParticipants = redisTemplate.opsForSet()
+            .members(RedisKeys.lobbyReadyKey(code));
+
+    if (readyParticipants == null || readyParticipants.isEmpty()) {
+      return new HashSet<>();
+    }
+
+    return readyParticipants;
   }
 
   /**

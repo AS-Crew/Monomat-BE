@@ -10,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public interface LobbyRepository {
 
@@ -26,6 +27,20 @@ public interface LobbyRepository {
    * @param ready true면 준비 완료, false면 준비 해제
    */
   void updateReadyStatus(String code, String userIdentifier, boolean ready);
+
+  /**
+   * 로비 참여자 목록을 입장 순서를 기준으로 조회한다.
+   * @param code 로비 초대 코드
+   * @return 입장 순서가 반영된 userIdentifier 목록
+   */
+  List<String> getParticipantIdentifiers(String code);
+
+  /**
+   * 로비에서 ready 상태인 참여자 식별자 목록을 조회한다.
+   * @param code 로비 초대 코드
+   * @return ready Set에 저장된 userIdentifier 목록
+   */
+  Set<String> getReadyParticipantIdentifiers(String code);
 
   /**
    * Redis에 로비 데이터를 저장하고 초대 코드를 반환한다.

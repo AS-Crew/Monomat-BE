@@ -8,6 +8,8 @@ import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
@@ -26,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -58,6 +61,8 @@ public class LobbyService {
             "로비 참여자만 준비 상태를 변경할 수 있습니다.";
     private static final String ERROR_HOST_READY_NOT_ALLOWED =
             "방장은 준비 상태를 변경하지 않고 시작 버튼을 사용합니다.";
+    private static final String ERROR_LOBBY_DETAIL_FORBIDDEN =
+            "로비 참여자만 로비 상세 정보를 조회할 수 있습니다.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -252,6 +257,81 @@ public class LobbyService {
     }
 
     /**
+     * 로비 대기실 상세 정보를 조회한다.
+     *
+     * [조회 대상]
+     * - 로비 기본 정보
+     * - DB에 저장된 룰 정보(roundCount, timeLimitSeconds)
+     * - Redis 참여자 목록
+     * - Redis ready 상태
+     * - 현재 시작 가능 여부(canStart)
+     *
+     * [접근 정책]
+     * 로비 상세 정보에는 참여자 ready 상태가 포함되므로,
+     * 로비 참여자 또는 방장만 조회할 수 있도록 제한한다.
+     *
+     * @param code 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 로비 상세 응답
+     */
+    public LobbyDetailResponse getLobbyDetail(String code, CustomPrincipal principal) {
+        if (principal == null || principal.userId() == null) {
+            log.warn("로비 상세 조회 거부 - principal 또는 userId가 null. code: {}", code);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+        }
+
+        JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(code)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_LOBBY_NOT_FOUND
+                ));
+
+        String userIdentifier = principal.userIdentifier();
+
+        if (!canAccessLobbyDetail(code, lobbyInfo, userIdentifier)) {
+            log.warn(
+                    "로비 상세 조회 거부 - 참여자가 아님. code: {}, userIdentifier: {}, hostId: {}",
+                    code,
+                    userIdentifier,
+                    lobbyInfo.hostId()
+            );
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_LOBBY_DETAIL_FORBIDDEN);
+        }
+
+        List<String> participantIdentifiers = lobbyRepository.getParticipantIdentifiers(code);
+        Set<String> readyParticipantIdentifiers = lobbyRepository.getReadyParticipantIdentifiers(code);
+
+        List<LobbyPlayerResponse> players = participantIdentifiers.stream()
+                .map(participantIdentifier -> toLobbyPlayerResponse(
+                        participantIdentifier,
+                        lobbyInfo.hostId(),
+                        readyParticipantIdentifiers
+                ))
+                .toList();
+
+        GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
+                .orElse(null);
+
+        boolean canStart = calculateCanStart(lobbyInfo, players);
+
+        return LobbyDetailResponse.builder()
+                .inviteCode(lobbyInfo.inviteCode())
+                .title(lobbyInfo.title())
+                .hostId(lobbyInfo.hostId())
+                .maxPlayers(lobbyInfo.maxPlayers())
+                .currentPlayers(lobbyInfo.currentPlayers())
+                .status(lobbyInfo.status())
+                .mapId(lobbyInfo.mapId())
+                .mapTitle(lobbyInfo.mapTitle())
+                .mapCategory(lobbyInfo.mapCategory())
+                .roundCount(gameLobby != null ? gameLobby.getRoundCount() : null)
+                .timeLimitSeconds(gameLobby != null ? gameLobby.getTimeLimitSeconds() : null)
+                .players(players)
+                .canStart(canStart)
+                .build();
+    }
+
+    /**
      * 로비 참여자의 준비 상태를 변경한다.
      *
      * [정책]
@@ -327,6 +407,83 @@ public class LobbyService {
      */
     private boolean isLobbyHost(JoinLobbyResponse lobbyInfo, String userIdentifier) {
         return lobbyInfo.hostId() != null && lobbyInfo.hostId().equals(userIdentifier);
+    }
+
+    /**
+     * 로비 상세 조회 권한을 확인한다.
+     *
+     * [정책]
+     * - 방장은 참여자 Set 누락 여부와 관계없이 조회할 수 있다.
+     * - 일반 유저는 WebSocket 구독으로 participants Set에 등록된 이후 조회할 수 있다.
+     */
+    private boolean canAccessLobbyDetail(
+            String code,
+            JoinLobbyResponse lobbyInfo,
+            String userIdentifier
+    ) {
+        if (isLobbyHost(lobbyInfo, userIdentifier)) {
+            return true;
+        }
+
+        return lobbyRepository.isParticipant(code, userIdentifier);
+    }
+
+    /**
+     * 참여자 식별자를 로비 상세 응답용 플레이어 DTO로 변환한다.
+     *
+     * [방장 ready 정책]
+     * 방장은 ready 대상에서 제외하므로 ready=false로 내려간다.
+     * FE는 host=true 여부를 기준으로 ready 버튼을 숨김 처리
+     */
+    private LobbyPlayerResponse toLobbyPlayerResponse(
+            String participantIdentifier,
+            String hostId,
+            Set<String> readyParticipantIdentifiers
+    ) {
+        boolean host = hostId != null && hostId.equals(participantIdentifier);
+        boolean ready = !host && readyParticipantIdentifiers.contains(participantIdentifier);
+
+        return new LobbyPlayerResponse(
+                participantIdentifier,
+                host,
+                ready
+        );
+    }
+
+    /**
+     * 현재 로비가 게임 시작 가능한 상태인지 계산한다.
+     *
+     * [canStart 조건]
+     * - 로비 상태가 WAITING이어야 한다.
+     * - 맵이 선택되어 있어야 한다.
+     * - 방장을 제외한 일반 참여자가 최소 1명 이상 있어야 한다.
+     * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
+     *
+     * [주의]
+     * 맵 문제 수가 roundCount 이상인지 검증하는 최종 조건은
+     * 다음 단계의 게임 시작 요청 처리에서 DB 조회 기반으로 다시 검증한다.
+     */
+    private boolean calculateCanStart(
+            JoinLobbyResponse lobbyInfo,
+            List<LobbyPlayerResponse> players
+    ) {
+        if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
+            return false;
+        }
+
+        if (lobbyInfo.mapId() == null) {
+            return false;
+        }
+
+        List<LobbyPlayerResponse> nonHostPlayers = players.stream()
+                .filter(player -> !player.host())
+                .toList();
+
+        if (nonHostPlayers.isEmpty()) {
+            return false;
+        }
+
+        return nonHostPlayers.stream().allMatch(LobbyPlayerResponse::ready);
     }
 
     /**

@@ -217,7 +217,12 @@ public class LobbyController {
      */
     @Operation(
             summary = "로비 게임 시작",
-            description = "시작 조건을 검증하고 로비 상태를 PLAYING으로 변경한 뒤 게임 시작 이벤트를 브로드캐스트합니다."
+            description = """
+                시작 조건을 최종 검증하고 로비 상태를 PLAYING으로 변경한 뒤 게임 시작 이벤트를 브로드캐스트합니다.
+                로비 상세 응답의 canStart는 조회 시점의 버튼 활성화 기준이며,
+                실제 시작 가능 여부는 이 API에서 Redis Lua로 최종 검증됩니다.
+                따라서 canStart=true 이후에도 참여자 퇴장, ready 해제, 상태 변경이 발생하면 409 Conflict가 반환될 수 있습니다.
+                """
     )
     @PostMapping("/{code}/start")
     @PreAuthorize("isAuthenticated()")

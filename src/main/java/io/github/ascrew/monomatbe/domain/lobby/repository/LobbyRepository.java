@@ -96,6 +96,12 @@ public interface LobbyRepository {
           String requesterIdentifier
   );
 
+  /**
+   * 게임 시작 처리 중 DB 상태 변경 실패가 발생했을 때, Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   * @param code 로비 초대 코드
+   */
+  void rollbackStartedLobbyStatus(String code);
+
   /** Redis에서 공개 로비 목록을 필터링하여 반환한다. */
   List<LobbyRedisDto> getPublicLobbies();
 

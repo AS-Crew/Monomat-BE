@@ -436,6 +436,73 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
+  /**
+   * Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   *
+   * [필요 이유]
+   * 게임 시작 Lua가 성공하면 Redis 로비 상태는 PLAYING으로 바뀌고,
+   * 공개 로비 목록(lobby:public)에서도 제거된다.
+   *
+   * 이후 DB GAME_LOBBY 상태 변경이 실패하면 Redis는 PLAYING, DB는 WAITING인
+   * 불일치 상태가 될 수 있으므로 가능한 범위에서 Redis 상태를 되돌린다.
+   *
+   * [보상 범위]
+   * - lobby:{code}.status = WAITING
+   * - 공개 로비라면 lobby:public에 code 재등록
+   *
+   * [한계]
+   * Redis 보상 롤백도 실패할 수 있으므로, 실패 시 운영 확인 로그를 남긴다.
+   */
+  @Override
+  public void rollbackStartedLobbyStatus(String code) {
+    String lobbyKey = RedisKeys.lobbyKey(code);
+
+    try {
+      Map<Object, Object> lobbyData = redisTemplate.opsForHash().entries(lobbyKey);
+
+      if (lobbyData.isEmpty()) {
+        log.warn(
+                "{} 게임 시작 Redis 보상 롤백 생략 - 로비 데이터 없음. code: {}, lobbyKey: {}",
+                LOG_MONITORING_REQUIRED,
+                code,
+                lobbyKey
+        );
+        return;
+      }
+
+      redisTemplate.opsForHash().put(
+              lobbyKey,
+              RedisKeys.FIELD_STATUS,
+              LobbyStatus.WAITING.name()
+      );
+
+      boolean isPrivate = Boolean.parseBoolean(
+              (String) lobbyData.get(RedisKeys.FIELD_IS_PRIVATE)
+      );
+
+      if (!isPrivate) {
+        redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, code);
+      }
+
+      log.warn(
+              "게임 시작 Redis 보상 롤백 완료 - code: {}, status: {}, restoredPublic: {}",
+              code,
+              LobbyStatus.WAITING.name(),
+              !isPrivate
+      );
+
+    } catch (Exception e) {
+      log.error(
+              "{} 게임 시작 Redis 보상 롤백 실패 - code: {}, lobbyKey: {}. "
+                      + "Redis는 PLAYING인데 DB는 WAITING일 수 있으므로 수동 정리 또는 재처리가 필요합니다.",
+              LOG_MONITORING_REQUIRED,
+              code,
+              lobbyKey,
+              e
+      );
+    }
+  }
+
   @Override
   public List<LobbyRedisDto> getPublicLobbies() {
     Set<String> publicLobbyCodes =

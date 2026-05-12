@@ -26,6 +26,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
@@ -76,6 +78,8 @@ public class LobbyService {
             "맵의 문제 수가 설정된 라운드 수보다 적습니다.";
     private static final String ERROR_START_FAILED =
             "게임 시작 처리에 실패했습니다.";
+    private static final String ERROR_START_DB_SYNC_FAILED =
+            "게임 시작 상태 동기화에 실패했습니다. 잠시 후 다시 시도해주세요.";
     private static final String ERROR_LOBBY_DETAIL_FORBIDDEN =
             "로비 참여자만 로비 상세 정보를 조회할 수 있습니다.";
 
@@ -395,10 +399,26 @@ public class LobbyService {
 
         handleStartLobbyResult(result);
 
-        gameLobby.changeStatus(LobbyStatus.PLAYING);
+        try {
+            gameLobby.changeStatus(LobbyStatus.PLAYING);
+            gameLobbyJpaRepository.saveAndFlush(gameLobby);
+        } catch (Exception e) {
+            log.error(
+                    "게임 시작 DB 상태 변경 실패 - Redis 상태 보상 롤백 시도. code: {}, requester: {}",
+                    code,
+                    requesterIdentifier,
+                    e
+            );
 
-        lobbyEventService.notifyGameStarted(code);
-        lobbyEventService.notifyLobbyInfoRefresh(code, requesterIdentifier);
+            lobbyRepository.rollbackStartedLobbyStatus(code);
+
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    ERROR_START_DB_SYNC_FAILED
+            );
+        }
+
+        registerGameStartedEventAfterCommit(code, requesterIdentifier);
 
         log.info(
                 "게임 시작 처리 완료 - code: {}, requester: {}, mapId: {}, roundCount: {}",
@@ -407,6 +427,28 @@ public class LobbyService {
                 quizMap.getId(),
                 gameLobby.getRoundCount()
         );
+    }
+
+    /**
+     * 게임 시작 이벤트를 DB 트랜잭션 커밋 이후에 발행한다.
+     */
+    private void registerGameStartedEventAfterCommit(
+            String code,
+            String requesterIdentifier
+    ) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            lobbyEventService.notifyGameStarted(code);
+            lobbyEventService.notifyLobbyInfoRefresh(code, requesterIdentifier);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                lobbyEventService.notifyGameStarted(code);
+                lobbyEventService.notifyLobbyInfoRefresh(code, requesterIdentifier);
+            }
+        });
     }
 
     /**
@@ -643,16 +685,19 @@ public class LobbyService {
      * 현재 로비가 게임 시작 가능한 상태인지 계산한다.
      *
      * [canStart 조건]
-     * - 로비 상태가 WAITING이어야 한다.
-     * - 맵이 선택되어 있어야 한다.
-     * - 맵의 문제 수가 설정된 라운드 수 이상이어야 한다.
-     * - 방장을 제외한 일반 참여자가 최소 1명 이상 있어야 한다.
-     * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
+     * - Redis 로비 상태가 WAITING이어야 한다.
+     * - Redis 로비 메타데이터에 mapId가 존재해야 한다.
+     * - DB 기준 맵 문제 수가 설정된 라운드 수 이상이어야 한다.
+     * - Redis participants 기준 방장 제외 일반 참여자가 최소 1명 이상 있어야 한다.
+     * - Redis ready Set 기준 방장 제외 모든 참여자가 ready 상태여야 한다.
      *
      * [중요]
-     * canStart는 FE의 게임 시작 버튼 활성화 기준이다.
-     * 실제 /start API의 검증 조건과 불일치하면,
-     * FE에서는 버튼이 활성화되지만 서버에서는 409 Conflict가 발생하는 UX 문제가 생긴다.
+     * canStart는 FE의 게임 시작 버튼 활성화 기준으로 사용하는 조회 시점의 snapshot 값이다.
+     * 실제 게임 시작 가능 여부의 최종 권한은 POST /api/lobbies/{code}/start에 있다.
+     *
+     * 따라서 canStart=true여도 사용자가 동시에 퇴장하거나 ready를 해제하면,
+     * /start 요청은 Redis Lua 최종 검증에서 409 Conflict로 실패할 수 있다.
+     * FE는 /start 실패 응답을 버튼 재활성화 및 안내 메시지로 처리해야 한다.
      */
     private boolean calculateCanStart(
             JoinLobbyResponse lobbyInfo,

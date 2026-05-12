@@ -14,6 +14,7 @@ import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -45,8 +46,9 @@ public class MapService {
     private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final UserRepository userRepository;
+    private final MapCacheEvictor mapCacheEvictor;
     private final StringRedisTemplate redisTemplate;
-    private final JsonMapper jsonMapper;
+    @Qualifier("pubSubJsonMapper") private final JsonMapper jsonMapper;
 
     // 공개된 맵 목록을 페이징하여 조회 (Redis 캐싱 적용)
     @Transactional(readOnly = true)
@@ -145,7 +147,7 @@ public class MapService {
                 .isPublic(request.isPublic())
                 .build());
 
-        safeEvictMapCache(created.getId());
+        mapCacheEvictor.evictPublicMapCaches(created.getId());
         return toDetailResponse(created);
     }
 
@@ -160,7 +162,7 @@ public class MapService {
         validateOwnership(quizMap, principal);
         quizMap.update(request.title(), request.description(), request.category(), request.isPublic());
 
-        safeEvictMapCache(quizMap.getId());
+        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
         return toDetailResponse(quizMap);
     }
 
@@ -174,7 +176,7 @@ public class MapService {
 
         validateOwnership(quizMap, principal);
         quizMap.softDelete();
-        safeEvictMapCache(quizMap.getId());
+        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
     }
 
     private void validatePrincipal(CustomPrincipal principal) {
@@ -196,22 +198,6 @@ public class MapService {
         if (!quizMap.getOwner().getId().equals(principal.userId())) {
             throw new org.springframework.web.server.ResponseStatusException(
                     HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
-        }
-    }
-
-    private void safeEvictMapCache(Long mapId) {
-        try {
-            redisTemplate.opsForValue().increment(RedisKeys.mapPublicListVersionKey());
-        } catch (Exception e) {
-            log.warn("공개 맵 목록 캐시 버전 무효화 실패 - key: {}",
-                    RedisKeys.mapPublicListVersionKey(), e);
-        }
-
-        String detailKey = RedisKeys.mapPublicDetailKey(mapId);
-        try {
-            redisTemplate.delete(detailKey);
-        } catch (Exception e) {
-            log.warn("공개 맵 단건 캐시 무효화 실패 - key: {}", detailKey, e);
         }
     }
 

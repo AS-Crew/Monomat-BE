@@ -522,13 +522,38 @@ SUBSCRIBE /topic/lobby/{code}/refresh
 
 ---
 
-## 향후 추가 예정 API
+## Map Item / YouTube API
 
-현재 구현된 기능 외에 아래 API가 추가될 예정입니다.
+### 맵 아이템(문제) CRUD
+
+맵 소유자(정식 회원)만 접근할 수 있습니다.
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| `GET` | `/api/maps/{mapId}/items` | 맵 문제 목록 조회 |
+| `POST` | `/api/maps/{mapId}/items` | 맵 문제 생성 |
+| `PUT` | `/api/maps/{mapId}/items/{itemId}` | 맵 문제 수정 |
+| `DELETE` | `/api/maps/{mapId}/items/{itemId}` | 맵 문제 삭제 (Soft Delete) |
+
+생성/수정 시 공통 규칙:
+- `startTime >= 0`, `endTime > startTime`
+- 메인 정답 필수, 복수 정답은 배열로 입력
+- 힌트 미입력 시 정답 기반 초성 힌트 자동 생성
+- 문제 변경 시 맵 메타데이터(`numOfSong`, `totalPlayTime`) 자동 재계산
+
+### YouTube URL 유효성 검증
+
+```http
+POST /api/youtube/validate
+```
+
+- 맵 문제 관리용 검증 API로, 정식 회원(REGISTERED)만 호출할 수 있습니다.
+- URL에서 `videoId`를 파싱하고, YouTube oEmbed 호출로 임베드 가능 여부를 확인합니다.
+- 검증 결과는 Redis에 성공/실패(negative cache)로 캐싱합니다.
+
+## 향후 추가 예정 API
 
 | 분류 | 설명 |
 |---|---|
 | 로그인 | `POST /api/auth/login` |
-| 맵 아이템(문제) CRUD | `GET/POST/PUT/DELETE /api/maps/{mapId}/items` |
-| YouTube URL 유효성 검증 | `POST /api/youtube/validate` |
 | 인게임 WebSocket | `/app/game/{code}/**` |

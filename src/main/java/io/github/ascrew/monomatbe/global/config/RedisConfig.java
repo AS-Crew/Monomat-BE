@@ -24,6 +24,7 @@ package io.github.ascrew.monomatbe.global.config;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.redis.RedisSubscriber;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -116,6 +117,7 @@ public class RedisConfig {
      * 별도의 JsonMapper를 사용합니다.
      */
     @Bean
+    @Primary
     public JsonMapper pubSubJsonMapper() {
         return JsonMapper.builder().build();
     }

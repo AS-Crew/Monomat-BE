@@ -64,6 +64,12 @@ public final class RedisKeys {
     /** 공개 맵 단건 캐시 키 접두사 */
     private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:";
 
+    /** YouTube oEmbed 성공 캐시 키 접두사 */
+    private static final String YOUTUBE_OEMBED_SUCCESS_PREFIX = "youtube:oembed:success:";
+
+    /** YouTube oEmbed 실패 캐시 키 접두사 */
+    private static final String YOUTUBE_OEMBED_FAILURE_PREFIX = "youtube:oembed:failure:";
+
     // =========================================================
     // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
     // =========================================================
@@ -332,5 +338,25 @@ public final class RedisKeys {
      */
     public static String mapPublicDetailKey(Long mapId) {
         return MAP_PUBLIC_DETAIL_PREFIX + mapId;
+    }
+
+    /**
+     * YouTube oEmbed 성공 캐시 키를 반환합니다.
+     *
+     * @param videoId YouTube videoId
+     * @return "youtube:oembed:success:{videoId}"
+     */
+    public static String youtubeOembedSuccessKey(String videoId) {
+        return YOUTUBE_OEMBED_SUCCESS_PREFIX + videoId;
+    }
+
+    /**
+     * YouTube oEmbed 실패 캐시 키를 반환합니다.
+     *
+     * @param urlHash URL 해시
+     * @return "youtube:oembed:failure:{urlHash}"
+     */
+    public static String youtubeOembedFailureKey(String urlHash) {
+        return YOUTUBE_OEMBED_FAILURE_PREFIX + urlHash;
     }
 }

@@ -102,4 +102,9 @@ public class QuizMap {
     public void softDelete() {
         this.isDeleted = true;
     }
+
+    public void updateMetadata(int numOfSong, int totalPlayTime) {
+        this.numOfSong = numOfSong;
+        this.totalPlayTime = totalPlayTime;
+    }
 }

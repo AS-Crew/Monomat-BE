@@ -103,6 +103,14 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String ERROR_REDIS_SCRIPT_UNKNOWN_RESULT =
           "Redis 로비 생성 처리 결과가 유효하지 않습니다.";
 
+  /**
+   * 운영 확인이 필요한 Redis 정리 실패 로그 식별자
+   *
+   * 현재 프로젝트에 별도 알림/재처리 큐 인프라가 없으므로,
+   * 운영 로그 수집 시스템에서 이 키워드를 기준으로 알림을 연계할 수 있도록 한다.
+   */
+  private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
+
   // =========================================================
   // findByInviteCode 관련 상수
   // =========================================================
@@ -290,23 +298,32 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    */
   @Override
   public boolean deleteFromRedis(String inviteCode) {
-    try {
-      redisTemplate.delete(List.of(
-              RedisKeys.lobbyKey(inviteCode),
-              RedisKeys.lobbyParticipantsKey(inviteCode),
-              RedisKeys.lobbyOrderKey(inviteCode),
-              RedisKeys.lobbyKickedKey(inviteCode),
-              RedisKeys.lobbyReadyKey(inviteCode),
-              RedisKeys.lobbyCodeLockKey(inviteCode)
-      ));
+    List<String> keysToDelete = List.of(
+            RedisKeys.lobbyKey(inviteCode),
+            RedisKeys.lobbyParticipantsKey(inviteCode),
+            RedisKeys.lobbyOrderKey(inviteCode),
+            RedisKeys.lobbyKickedKey(inviteCode),
+            RedisKeys.lobbyReadyKey(inviteCode),
+            RedisKeys.lobbyCodeLockKey(inviteCode)
+    );
 
+    try {
+      redisTemplate.delete(keysToDelete);
       redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
 
-      log.info("Redis 보상 삭제 완료 - 코드: {}", inviteCode);
+      log.info("Redis 보상 삭제 완료 - code: {}, keys: {}", inviteCode, keysToDelete);
       return true;
 
     } catch (Exception e) {
-      log.error("Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요.", inviteCode, e);
+      log.error(
+              "{} Redis 보상 삭제 실패 - code: {}, keys: {}, publicLobbyKey: {}. "
+                      + "로비 잔여 데이터가 조회/ready/canStart 계산에 영향을 줄 수 있으므로 수동 정리 또는 재처리가 필요합니다.",
+              LOG_MONITORING_REQUIRED,
+              inviteCode,
+              keysToDelete,
+              RedisKeys.LOBBY_PUBLIC,
+              e
+      );
       return false;
     }
   }
@@ -633,18 +650,29 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           String userId,
           LeaveLobbyResult leaveResult
   ) {
+    String readyKey = RedisKeys.lobbyReadyKey(code);
+
     try {
       if (leaveResult instanceof LeaveLobbyResult.Destroyed) {
-        redisTemplate.delete(RedisKeys.lobbyReadyKey(code));
+        redisTemplate.delete(readyKey);
         return;
       }
 
       if (leaveResult instanceof LeaveLobbyResult.Left
               || leaveResult instanceof LeaveLobbyResult.Delegated) {
-        redisTemplate.opsForSet().remove(RedisKeys.lobbyReadyKey(code), userId);
+        redisTemplate.opsForSet().remove(readyKey, userId);
       }
     } catch (Exception e) {
-      log.warn("퇴장 후 ready 상태 정리 실패 - lobbyCode: {}, userId: {}", code, userId, e);
+      log.error(
+              "{} 퇴장 후 ready 상태 정리 실패 - lobbyCode: {}, userId: {}, readyKey: {}, leaveResult: {}. "
+                      + "ready Set 잔여 데이터가 canStart 계산을 왜곡할 수 있으므로 수동 정리 또는 재처리가 필요합니다.",
+              LOG_MONITORING_REQUIRED,
+              code,
+              userId,
+              readyKey,
+              leaveResult.getClass().getSimpleName(),
+              e
+      );
     }
   }
 
@@ -763,6 +791,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       String notReadyUserIdentifier = result.substring(RESULT_NOT_READY_PREFIX.length());
       return new StartLobbyResult.NotReady(code, notReadyUserIdentifier);
     }
+
+    log.error(
+            "start_lobby.lua 알 수 없는 반환값 - lobbyCode: {}, requesterIdentifier: {}, result: {}",
+            code,
+            requesterIdentifier,
+            result
+    );
 
     return new StartLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
   }

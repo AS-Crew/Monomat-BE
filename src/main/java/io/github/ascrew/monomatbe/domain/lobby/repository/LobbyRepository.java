@@ -97,10 +97,40 @@ public interface LobbyRepository {
   );
 
   /**
-   * 게임 시작 처리 중 DB 상태 변경 실패가 발생했을 때, Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   * 게임 시작 처리  DB 상태 변경 실패가 발생했을 때, Redis 로비 상태를 WAITING으로 보상 롤백한다.
    * @param code 로비 초대 코드
+   * @return Redis 보상 롤백 성공 여부
    */
-  void rollbackStartedLobbyStatus(String code);
+  boolean rollbackStartedLobbyStatus(String code);
+
+  /**
+   * Redis-DB 상태 불일치가 발생했을 때 후속 재처리를 위해 Redis 큐에 적재한다.
+   *
+   * @param code 로비 초대 코드
+   * @param reason 재처리 사유
+   */
+  void enqueueStartReconciliation(String code, String reason);
+
+  /**
+   * Redis-DB 상태 불일치 재처리 큐에서 payload를 하나 꺼낸다.
+   *
+   * @return "lobbyCode|reason" 형태의 payload. 없으면 null.
+   */
+  String pollStartReconciliation();
+
+  /**
+   * 재처리에 실패한 payload를 큐에 다시 적재한다.
+   *
+   * @param payload 재처리 payload
+   */
+  void requeueStartReconciliation(String payload);
+
+  /**
+   * 게임 시작 상태 재처리 metric counter를 증가시킨다.
+   *
+   * @param metricKey Redis metric key
+   */
+  void incrementStartReconciliationMetric(String metricKey);
 
   /** Redis에서 공개 로비 목록을 필터링하여 반환한다. */
   List<LobbyRedisDto> getPublicLobbies();

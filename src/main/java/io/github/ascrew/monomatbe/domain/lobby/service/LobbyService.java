@@ -82,6 +82,10 @@ public class LobbyService {
             "게임 시작 상태 동기화에 실패했습니다. 잠시 후 다시 시도해주세요.";
     private static final String ERROR_LOBBY_DETAIL_FORBIDDEN =
             "로비 참여자만 로비 상세 정보를 조회할 수 있습니다.";
+    private static final String RECONCILIATION_REASON_DB_SYNC_FAILED =
+            "START_DB_SYNC_FAILED";
+    private static final String ERROR_START_EVENT_TRANSACTION_REQUIRED =
+            "게임 시작 이벤트 발행을 위한 트랜잭션 동기화가 활성화되어 있지 않습니다.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -410,7 +414,14 @@ public class LobbyService {
                     e
             );
 
-            lobbyRepository.rollbackStartedLobbyStatus(code);
+            boolean rollbackSucceeded = lobbyRepository.rollbackStartedLobbyStatus(code);
+
+            if (!rollbackSucceeded) {
+                lobbyRepository.enqueueStartReconciliation(
+                        code,
+                        RECONCILIATION_REASON_DB_SYNC_FAILED
+                );
+            }
 
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
@@ -437,9 +448,15 @@ public class LobbyService {
             String requesterIdentifier
     ) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            lobbyEventService.notifyGameStarted(code);
-            lobbyEventService.notifyLobbyInfoRefresh(code, requesterIdentifier);
-            return;
+            log.error(
+                    "게임 시작 이벤트 발행 실패 - 트랜잭션 동기화 비활성. code: {}, requester: {}",
+                    code,
+                    requesterIdentifier
+            );
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    ERROR_START_EVENT_TRANSACTION_REQUIRED
+            );
         }
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -690,6 +707,10 @@ public class LobbyService {
      * - DB 기준 맵 문제 수가 설정된 라운드 수 이상이어야 한다.
      * - Redis participants 기준 방장 제외 일반 참여자가 최소 1명 이상 있어야 한다.
      * - Redis ready Set 기준 방장 제외 모든 참여자가 ready 상태여야 한다.
+     *
+     * [DB 기반 추가 조건]
+     * - DB 기준 맵 문제 수가 설정된 라운드 수 이상이어야 한다.
+     *   → start API 진입 전 validateMapSongCount()에서도 동일하게 검증한다.
      *
      * [중요]
      * canStart는 FE의 게임 시작 버튼 활성화 기준으로 사용하는 조회 시점의 snapshot 값이다.

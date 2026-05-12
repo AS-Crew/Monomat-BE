@@ -75,6 +75,12 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RESULT_NOT_READY_PREFIX = "NOT_READY:";
 
   // =========================================================
+  // 게임 시작 상태 재처리 상수
+  // =========================================================
+
+  private static final String RECONCILIATION_PAYLOAD_DELIMITER = "|";
+
+  // =========================================================
   // isPrivate 정규화 상수
   // =========================================================
 
@@ -454,20 +460,20 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    * Redis 보상 롤백도 실패할 수 있으므로, 실패 시 운영 확인 로그를 남긴다.
    */
   @Override
-  public void rollbackStartedLobbyStatus(String code) {
+  public boolean rollbackStartedLobbyStatus(String code) {
     String lobbyKey = RedisKeys.lobbyKey(code);
 
     try {
       Map<Object, Object> lobbyData = redisTemplate.opsForHash().entries(lobbyKey);
 
       if (lobbyData.isEmpty()) {
-        log.warn(
-                "{} 게임 시작 Redis 보상 롤백 생략 - 로비 데이터 없음. code: {}, lobbyKey: {}",
+        log.error(
+                "{} 게임 시작 Redis 보상 롤백 실패 - 로비 데이터 없음. code: {}, lobbyKey: {}",
                 LOG_MONITORING_REQUIRED,
                 code,
                 lobbyKey
         );
-        return;
+        return false;
       }
 
       redisTemplate.opsForHash().put(
@@ -491,15 +497,80 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               !isPrivate
       );
 
+      return true;
+
     } catch (Exception e) {
       log.error(
               "{} 게임 시작 Redis 보상 롤백 실패 - code: {}, lobbyKey: {}. "
-                      + "Redis는 PLAYING인데 DB는 WAITING일 수 있으므로 수동 정리 또는 재처리가 필요합니다.",
+                      + "Redis는 PLAYING인데 DB는 WAITING일 수 있으므로 재처리 큐 확인이 필요합니다.",
               LOG_MONITORING_REQUIRED,
               code,
               lobbyKey,
               e
       );
+      return false;
+    }
+  }
+
+  /**
+   * Redis-DB 상태 불일치 재처리 요청을 Redis 큐에 적재한다.
+   *
+   * [사용 목적]
+   * Redis 게임 시작 상태는 PLAYING으로 전환되었지만 DB 상태 변경 또는 Redis 롤백이 실패한 경우,
+   * 후속 백그라운드 리컨실리에이션 작업이 처리할 수 있도록 최소 정보를 남긴다.
+   */
+  @Override
+  public void enqueueStartReconciliation(String code, String reason) {
+    String payload = code + RECONCILIATION_PAYLOAD_DELIMITER + reason;
+
+    try {
+      redisTemplate.opsForList().rightPush(
+              RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
+              payload
+      );
+      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_START_RECONCILIATION_ENQUEUED);
+
+      log.error(
+              "{} 게임 시작 상태 재처리 큐 적재 완료 - code: {}, reason: {}, queueKey: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              reason,
+              RedisKeys.LOBBY_START_RECONCILIATION_QUEUE
+      );
+    } catch (Exception e) {
+      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_START_RECONCILIATION_FAILED);
+
+      log.error(
+              "{} 게임 시작 상태 재처리 큐 적재 실패 - code: {}, reason: {}, queueKey: {}. "
+                      + "Redis-DB 불일치 수동 확인이 필요합니다.",
+              LOG_MONITORING_REQUIRED,
+              code,
+              reason,
+              RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
+              e
+      );
+    }
+  }
+
+  @Override
+  public String pollStartReconciliation() {
+    return redisTemplate.opsForList().leftPop(RedisKeys.LOBBY_START_RECONCILIATION_QUEUE);
+  }
+
+  @Override
+  public void requeueStartReconciliation(String payload) {
+    redisTemplate.opsForList().rightPush(
+            RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
+            payload
+    );
+  }
+
+  @Override
+  public void incrementStartReconciliationMetric(String metricKey) {
+    try {
+      redisTemplate.opsForValue().increment(metricKey);
+    } catch (Exception e) {
+      log.warn("게임 시작 상태 재처리 metric 증가 실패 - metricKey: {}", metricKey, e);
     }
   }
 

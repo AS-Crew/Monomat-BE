@@ -209,6 +209,29 @@ public final class RedisKeys {
     }
 
     /**
+     * 게임 시작 상태 동기화 실패 재처리 큐.
+     *
+     * 저장 구조:
+     * - Key  : lobby:start:reconciliation
+     * - Type : List
+     * - Value: "lobbyCode|reason"
+     */
+    public static final String LOBBY_START_RECONCILIATION_QUEUE =
+            "lobby:start:reconciliation";
+
+    /** 게임 시작 상태 재처리 큐 적재 횟수 metric counter */
+    public static final String METRIC_LOBBY_START_RECONCILIATION_ENQUEUED =
+            "metric:lobby:start:reconciliation:enqueued";
+
+    /** 게임 시작 상태 재처리 성공 횟수 metric counter */
+    public static final String METRIC_LOBBY_START_RECONCILIATION_SUCCESS =
+            "metric:lobby:start:reconciliation:success";
+
+    /** 게임 시작 상태 재처리 실패 횟수 metric counter */
+    public static final String METRIC_LOBBY_START_RECONCILIATION_FAILED =
+            "metric:lobby:start:reconciliation:failed";
+
+    /**
      * 사용자 온라인 상태 키를 반환합니다.
      * 저장 구조: String "ONLINE"
      *

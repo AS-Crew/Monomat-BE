@@ -21,7 +21,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -99,6 +98,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   /** Lua 스크립트 null 반환 시 에러 메시지 */
   private static final String ERROR_REDIS_SCRIPT_NULL =
           "Redis 스크립트 실행 결과가 null입니다. Redis 연결 상태를 확인해주세요.";
+
+  /** Lua 스크립트가 예상하지 못한 값을 반환했을 때의 에러 메시지 */
+  private static final String ERROR_REDIS_SCRIPT_UNKNOWN_RESULT =
+          "Redis 로비 생성 처리 결과가 유효하지 않습니다.";
 
   // =========================================================
   // findByInviteCode 관련 상수
@@ -204,7 +207,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             .members(RedisKeys.lobbyReadyKey(code));
 
     if (readyParticipants == null || readyParticipants.isEmpty()) {
-      return new HashSet<>();
+      return Set.of();
     }
 
     return readyParticipants;
@@ -250,8 +253,26 @@ public class LobbyRepositoryImpl implements LobbyRepository {
         return candidate;
       }
 
-      log.warn("초대 코드 충돌 - 재시도 {}/{}: {}",
-              attempt + 1, LobbyDefaults.INVITE_CODE_MAX_RETRY, candidate);
+      if (RESULT_LOCK_FAILED.equals(result)) {
+        log.warn(
+                "초대 코드 충돌 - 재시도 {}/{}: {}",
+                attempt + 1,
+                LobbyDefaults.INVITE_CODE_MAX_RETRY,
+                candidate
+        );
+        continue;
+      }
+
+      log.error(
+              "create_lobby.lua 알 수 없는 반환값 - code: {}, result: {}",
+              candidate,
+              result
+      );
+
+      throw new ResponseStatusException(
+              HttpStatus.SERVICE_UNAVAILABLE,
+              ERROR_REDIS_SCRIPT_UNKNOWN_RESULT
+      );
     }
 
     throw new ResponseStatusException(
@@ -422,7 +443,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               .status((String) data.get(RedisKeys.FIELD_STATUS))
               .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
               .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
-              .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))              .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
+              .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))
+              .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
               .currentPlayers(getCurrentPlayerCount(code))
               .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
               .build());
@@ -475,7 +497,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             .status((String) data.get(RedisKeys.FIELD_STATUS))
             .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
             .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
-            .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))            .build());
+            .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))
+            .build());
   }
 
   /**

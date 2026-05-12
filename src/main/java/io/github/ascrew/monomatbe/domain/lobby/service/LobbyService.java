@@ -327,7 +327,7 @@ public class LobbyService {
         GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
                 .orElse(null);
 
-        boolean canStart = calculateCanStart(lobbyInfo, players);
+        boolean canStart = calculateCanStart(lobbyInfo, players, gameLobby);
 
         return LobbyDetailResponse.builder()
                 .inviteCode(lobbyInfo.inviteCode())
@@ -645,22 +645,29 @@ public class LobbyService {
      * [canStart 조건]
      * - 로비 상태가 WAITING이어야 한다.
      * - 맵이 선택되어 있어야 한다.
+     * - 맵의 문제 수가 설정된 라운드 수 이상이어야 한다.
      * - 방장을 제외한 일반 참여자가 최소 1명 이상 있어야 한다.
      * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
      *
-     * [주의]
-     * 맵 문제 수가 roundCount 이상인지 검증하는 최종 조건은
-     * 다음 단계의 게임 시작 요청 처리에서 DB 조회 기반으로 다시 검증한다.
+     * [중요]
+     * canStart는 FE의 게임 시작 버튼 활성화 기준이다.
+     * 실제 /start API의 검증 조건과 불일치하면,
+     * FE에서는 버튼이 활성화되지만 서버에서는 409 Conflict가 발생하는 UX 문제가 생긴다.
      */
     private boolean calculateCanStart(
             JoinLobbyResponse lobbyInfo,
-            List<LobbyPlayerResponse> players
+            List<LobbyPlayerResponse> players,
+            GameLobby gameLobby
     ) {
         if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
             return false;
         }
 
         if (lobbyInfo.mapId() == null) {
+            return false;
+        }
+
+        if (!hasEnoughSongsForRound(gameLobby)) {
             return false;
         }
 
@@ -673,6 +680,31 @@ public class LobbyService {
         }
 
         return nonHostPlayers.stream().allMatch(LobbyPlayerResponse::ready);
+    }
+
+    /**
+     * 로비에 연결된 맵의 문제 수가 설정된 라운드 수 이상인지 확인한다.
+     *
+     * [필요 이유]
+     * Data API 없이 저장된 맵 문제 수(numOfSong)를 기준으로 출제 가능 여부를 판단한다.
+     * 이 조건은 실제 게임 시작 API에서도 검증하므로,
+     * canStart 계산에서도 동일하게 반영해야 한다.
+     *
+     * @param gameLobby DB에 저장된 로비 스냅샷
+     * @return 맵 문제 수가 라운드 수 이상이면 true
+     */
+    private boolean hasEnoughSongsForRound(GameLobby gameLobby) {
+        if (gameLobby == null || gameLobby.getMapId() == null || gameLobby.getRoundCount() == null) {
+            return false;
+        }
+
+        return quizMapJpaRepository.findById(gameLobby.getMapId())
+                .filter(quizMap -> !Boolean.TRUE.equals(quizMap.getIsDeleted()))
+                .map(quizMap -> {
+                    Integer numOfSong = quizMap.getNumOfSong();
+                    return numOfSong != null && numOfSong >= gameLobby.getRoundCount();
+                })
+                .orElse(false);
     }
 
     /**

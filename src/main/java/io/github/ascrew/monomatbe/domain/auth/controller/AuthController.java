@@ -2,11 +2,15 @@ package io.github.ascrew.monomatbe.domain.auth.controller;
 
 import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginResponse;
+import io.github.ascrew.monomatbe.domain.auth.dto.LoginRequest;
+import io.github.ascrew.monomatbe.domain.auth.dto.LoginResponse;
 import io.github.ascrew.monomatbe.domain.auth.dto.RegisterRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.RegisterResponse;
 import io.github.ascrew.monomatbe.domain.auth.service.GuestAuthService;
+import io.github.ascrew.monomatbe.domain.auth.service.LoginAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.RegisterAuthService;
 import io.swagger.v3.oas.annotations.Operation;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -23,6 +27,7 @@ public class AuthController {
 
     private final GuestAuthService guestAuthService;
     private final RegisterAuthService registerAuthService;
+    private final LoginAuthService loginAuthService;
 
     /**
      * 게스트 로그인 엔드포인트
@@ -47,5 +52,31 @@ public class AuthController {
                 request.nickname()
         );
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * 자체 로그인 엔드포인트.
+     */
+    @Operation(summary = "자체 로그인", description = "로그인 ID/비밀번호로 인증하고 토큰/세션 정보를 발급합니다.")
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        LoginResponse response = loginAuthService.login(
+                request.loginId(),
+                request.password(),
+                resolveClientIp(httpServletRequest),
+                httpServletRequest.getHeader("User-Agent")
+        );
+        return ResponseEntity.ok(response);
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            return forwardedFor.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 }

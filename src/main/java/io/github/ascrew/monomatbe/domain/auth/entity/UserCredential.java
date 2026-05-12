@@ -79,4 +79,24 @@ public class UserCredential {
         // 인증정보 변경 시각 자동 갱신
         this.updatedAt = LocalDateTime.now();
     }
+
+    public boolean isLockedAt(LocalDateTime now) {
+        return this.lockedUntil != null && this.lockedUntil.isAfter(now);
+    }
+
+    public void increaseFailedLoginCount() {
+        if (this.failedLoginCount == null) {
+            this.failedLoginCount = 0;
+        }
+        this.failedLoginCount += 1;
+    }
+
+    public void resetFailedLoginState() {
+        this.failedLoginCount = 0;
+        this.lockedUntil = null;
+    }
+
+    public void lockUntil(LocalDateTime lockedUntil) {
+        this.lockedUntil = lockedUntil;
+    }
 }

@@ -90,6 +90,48 @@ POST /api/auth/register
 
 ---
 
+#### 자체 로그인
+
+```http
+POST /api/auth/login
+```
+
+가입한 로그인 ID/비밀번호로 인증 후 Access/Refresh 토큰을 발급합니다.  
+로그인 성공 시 `user_sessions`에 세션 추적 정보를 저장하며, Refresh Token은 Redis에 저장됩니다.
+
+**Request**
+
+```json
+{
+  "loginId": "member01",
+  "password": "password123"
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "userId": 2,
+  "loginId": "member01",
+  "nickname": "registered-user",
+  "userType": "REGISTERED",
+  "userIdentifier": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
+  "accessToken": "eyJhbGciOi...",
+  "accessTokenExpiresAt": "2026-05-03T07:45:00Z",
+  "refreshToken": "eyJhbGciOi...",
+  "refreshTokenExpiresAt": "2026-06-02T07:30:00Z"
+}
+```
+
+**Error**
+
+- `400 Bad Request`: 필수값 누락 / 공백 포함
+- `401 Unauthorized`: 로그인 ID 또는 비밀번호 불일치
+- `423 Locked`: 로그인 실패 5회 누적 계정 잠금 (15분)
+
+---
+
 ### 로비 (Lobby)
 
 #### 로비 생성
@@ -656,7 +698,6 @@ SEND /app/lobby/{code}/kick
 
 | 분류 | 설명 |
 |---|---|
-| 로그인 | `POST /api/auth/login` |
 | 맵 아이템(문제) CRUD | `GET/POST/PUT/DELETE /api/maps/{mapId}/items` |
 | YouTube URL 유효성 검증 | `POST /api/youtube/validate` |
 | 로비 맵 변경 | `PATCH /api/lobbies/{inviteCode}/map` |

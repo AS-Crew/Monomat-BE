@@ -14,6 +14,9 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
+import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -44,6 +47,12 @@ public class LobbyService {
             "게임이 이미 시작된 로비에는 입장할 수 없습니다.";
     private static final String ERROR_LOBBY_FULL =
             "최대 인원에 도달한 로비입니다.";
+    private static final String ERROR_MAP_NOT_FOUND =
+            "존재하지 않는 맵입니다.";
+    private static final String ERROR_MAP_DELETED =
+            "삭제된 맵은 로비에 연결할 수 없습니다.";
+    private static final String ERROR_PRIVATE_MAP_FORBIDDEN =
+            "비공개 맵은 소유자만 로비에 연결할 수 있습니다.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -77,6 +86,7 @@ public class LobbyService {
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final UserRepository userRepository;
+    private final QuizMapJpaRepository quizMapJpaRepository;
 
     /**
      * 로비를 생성한다.
@@ -108,11 +118,27 @@ public class LobbyService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, ERROR_USER_NOT_FOUND));
 
-        String inviteCode = lobbyRepository.saveToRedis(request, principal.userIdentifier());
+        /**
+         * 맵 연결 정책 :
+         * - mapId가 없으면 맵 미선택 로비로 생성한다.
+         * - mapId가 있으면 존재 여부, 삭제 여부, 접근 권한을 검증한다.
+         * - 검증된 최소 맵 정보만 Redis 저장 계층으로 전달한다.
+         */
+        LobbyMapMetadata mapMetadata = resolveLobbyMapMetadata(
+                request.mapId(),
+                principal.userId()
+        );
+
+        String inviteCode = lobbyRepository.saveToRedis(
+                request,
+                principal.userIdentifier(),
+                mapMetadata
+        );
 
         try {
             GameLobby gameLobby = gameLobbyJpaRepository.save(GameLobby.builder()
                     .host(host)
+                    .mapId(mapMetadata != null ? mapMetadata.mapId() : null)
                     .inviteCode(inviteCode)
                     .title(request.title())
                     .maxPlayers(request.maxPlayers())
@@ -121,7 +147,12 @@ public class LobbyService {
                     .isPrivate(request.isPrivate())
                     .build());
 
-            log.info("로비 생성 완료 - 코드: {}, 방장: {}", inviteCode, principal.userIdentifier());
+            log.info(
+                    "로비 생성 완료 - 코드: {}, 방장: {}, mapId: {}",
+                    inviteCode,
+                    principal.userIdentifier(),
+                    mapMetadata != null ? mapMetadata.mapId() : null
+            );
 
             return CreateLobbyResponse.builder()
                     .lobbyId(gameLobby.getId())
@@ -130,19 +161,19 @@ public class LobbyService {
                     .maxPlayers(gameLobby.getMaxPlayers())
                     .isPrivate(gameLobby.getIsPrivate())
                     .status(gameLobby.getStatus().name())
+                    .mapId(mapMetadata != null ? mapMetadata.mapId() : null)
+                    .mapTitle(mapMetadata != null ? mapMetadata.mapTitle() : null)
+                    .mapCategory(mapMetadata != null ? mapMetadata.mapCategory() : null)
                     .build();
 
         } catch (Exception e) {
-            // 보상 삭제 성공/실패를 구분하여 모니터링 가능한 로그 기록
             log.error(LOG_DB_SAVE_FAILED, inviteCode, e);
 
             boolean compensationSuccess = lobbyRepository.deleteFromRedis(inviteCode);
 
             if (compensationSuccess) {
-                // 보상 삭제 성공: 데이터 정합성 유지됨
                 log.info(LOG_COMPENSATION_SUCCESS, inviteCode);
             } else {
-                // 보상 삭제 실패: Redis에 좀비 로비 데이터가 남아있을 수 있음
                 log.error(LOG_COMPENSATION_FAILED, inviteCode);
             }
 
@@ -212,5 +243,66 @@ public class LobbyService {
      */
     public List<LobbyRedisDto> getPublicLobbies() {
         return lobbyRepository.getPublicLobbies();
+    }
+
+    /**
+     * 로비 생성 시 선택된 맵의 접근 가능 여부를 검증하고,
+     * Redis 저장에 필요한 최소 메타데이터로 변환합니다.
+     *
+     * [정책]
+     * - mapId가 null이면 맵 미선택 로비로 생성한다.
+     * - 삭제된 맵은 선택할 수 없다.
+     * - 공개 맵은 누구나 로비에 연결할 수 있다.
+     * - 비공개 맵은 소유자만 로비에 연결할 수 있다.
+     *
+     * @param mapId 요청으로 전달된 맵 ID
+     * @param requesterUserId 로비 생성 요청자의 DB userId
+     * @return 선택된 맵 메타데이터. 맵 미선택 시 null.
+     */
+    private LobbyMapMetadata resolveLobbyMapMetadata(Long mapId, Long requesterUserId) {
+        if (mapId == null) {
+            return null;
+        }
+
+        QuizMap quizMap = quizMapJpaRepository.findById(mapId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
+
+        if (Boolean.TRUE.equals(quizMap.getIsDeleted())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_MAP_DELETED
+            );
+        }
+
+        if (!canUseMap(quizMap, requesterUserId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_PRIVATE_MAP_FORBIDDEN
+            );
+        }
+
+        return new LobbyMapMetadata(
+                quizMap.getId(),
+                quizMap.getTitle(),
+                quizMap.getCategory().value()
+        );
+    }
+
+    /**
+     * 요청자가 해당 맵을 로비에 연결할 수 있는지 검증한다.
+     *
+     * 공개 맵은 누구나 사용할 수 있고, 비공개 맵은 맵 소유자만 사용할 수 있다.
+     */
+    private boolean canUseMap(QuizMap quizMap, Long requesterUserId) {
+        if (Boolean.TRUE.equals(quizMap.getIsPublic())) {
+            return true;
+        }
+
+        return quizMap.getOwner() != null
+                && quizMap.getOwner().getId() != null
+                && quizMap.getOwner().getId().equals(requesterUserId);
     }
 }

@@ -1,13 +1,14 @@
 package io.github.ascrew.monomatbe.domain.lobby.dto;
 
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.*;
 
 /**
  * 로비 생성 요청 DTO.
+ *
+ * [맵 선택 정책]
+ * mapId는 선택 사항이다.
+ * 로비는 맵 없이 먼저 생성될 수 있으며, 게임 시작 시점에 맵 선택 여부를 검증한다.
  *
  * [기본값 처리]
  * roundCount, timeLimitSeconds는 클라이언트가 null로 생략하면 LobbyDefaults 상수값으로 자동 적용된다.
@@ -15,6 +16,7 @@ import jakarta.validation.constraints.Size;
  * [검증 규칙 — 기능명세서 기준]
  * - title      : 필수, 최대 255자
  * - maxPlayers : 2~8명
+ * - mapId      : 선택 사항 (맵 없는 로비 허용), 전달 시 양수
  * - roundCount : 1~20 (생략 시 기본값 5)
  * - timeLimitSeconds : 10~120초 (생략 시 기본값 30)
  */
@@ -29,6 +31,15 @@ public record CreateLobbyRequest(
         int maxPlayers,
 
         boolean isPrivate,
+
+        /**
+         * 로비에 연결할 맵 ID
+         *
+         * null이면 맵 미선택 로비로 생성한다.
+         * 실제 맵 존재 여부, 삭제 여부, 접근 권한은 LobbyService에서 검증한다.
+         */
+        @Positive(message = "맵 ID는 양수여야 합니다.")
+        Long mapId,
 
         @Min(value = 1, message = "라운드 수는 1 이상이어야 합니다.")
         @Max(value = 20, message = "라운드 수는 20 이하이어야 합니다.")

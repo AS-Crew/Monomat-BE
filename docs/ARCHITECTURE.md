@@ -12,7 +12,9 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   │   └── AuthController.java                 # REST 인증 엔드포인트 (/api/auth/**)
 │   │   ├── dto/
 │   │   │   ├── GuestLoginRequest.java              # 게스트 로그인 요청 DTO
-│   │   │   └── GuestLoginResponse.java             # 게스트 로그인 응답 DTO (JWT 포함)
+│   │   │   ├── GuestLoginResponse.java             # 게스트 로그인 응답 DTO (JWT 포함)
+│   │   │   ├── LoginRequest.java                   # 자체 로그인 요청 DTO
+│   │   │   └── LoginResponse.java                  # 자체 로그인 응답 DTO (JWT + 세션 식별자)
 │   │   ├── entity/
 │   │   │   ├── User.java                           # 사용자 엔티티 (게스트/회원 통합)
 │   │   │   ├── GuestSession.java                   # 게스트 세션 엔티티
@@ -24,7 +26,9 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   │   ├── UserCredentialRepository.java
 │   │   │   └── UserSessionRepository.java
 │   │   └── service/
-│   │       └── GuestAuthService.java               # 게스트 로그인/세션 발급 로직
+│   │       ├── GuestAuthService.java               # 게스트 로그인/세션 발급 로직
+│   │       ├── RegisterAuthService.java            # 회원가입 로직
+│   │       └── LoginAuthService.java               # 자체 로그인/잠금 정책/세션 발급 로직
 │   │
 │   ├── chat/                                       # 채팅 도메인
 │   │   ├── controller/
@@ -662,7 +666,7 @@ JWT 클레임 키는 `JwtClaims` 상수 클래스로 중앙 관리하여
 
 ### 정식 회원 (Member)
 
-로그인 성공 시 JWT 또는 Redis 세션을 발급받아 인증합니다.  
+로그인 성공 시 JWT를 발급하고 `user_sessions`에 서버 세션 추적 정보를 저장합니다.  
 맵 생성, 로비 호스팅 등 전체 기능에 접근할 수 있습니다.
 
 ### 게스트 (Guest)
@@ -673,7 +677,7 @@ JWT 클레임 키는 `JwtClaims` 상수 클래스로 중앙 관리하여
 ### WebSocket 인증 흐름
 
 ```text
-STOMP CONNECT 헤더: { userIdentifier: "UUID 또는 회원 ID" }
+STOMP CONNECT 헤더: { userIdentifier: "UUID" }
     │
     ▼
 StompChannelInterceptor.handleConnect()

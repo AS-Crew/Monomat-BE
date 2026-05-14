@@ -19,7 +19,8 @@ public enum StartLobbyLuaResultCode {
     LOBBY_NOT_WAITING("LOBBY_NOT_WAITING"),
     MAP_NOT_SELECTED("MAP_NOT_SELECTED"),
     NO_PLAYER("NO_PLAYER"),
-    NOT_READY_PREFIX("NOT_READY:");
+    NOT_READY_PREFIX("NOT_READY:"),
+    STALE_PARTICIPANT_PREFIX("STALE_PARTICIPANT:");
 
     private final String wireValue;
 
@@ -34,6 +35,7 @@ public enum StartLobbyLuaResultCode {
     public static Optional<StartLobbyLuaResultCode> fromExactValue(String value) {
         return Arrays.stream(values())
                 .filter(code -> !code.equals(NOT_READY_PREFIX))
+                .filter(code -> !code.equals(STALE_PARTICIPANT_PREFIX))
                 .filter(code -> code.wireValue.equals(value))
                 .findFirst();
     }
@@ -44,5 +46,13 @@ public enum StartLobbyLuaResultCode {
 
     public static String extractNotReadyUserIdentifier(String value) {
         return value.substring(NOT_READY_PREFIX.wireValue.length());
+    }
+
+    public static boolean isStaleParticipantResult(String value) {
+        return value != null && value.startsWith(STALE_PARTICIPANT_PREFIX.wireValue);
+    }
+
+    public static String extractStaleParticipantUserIdentifier(String value) {
+        return value.substring(STALE_PARTICIPANT_PREFIX.wireValue.length());
     }
 }

@@ -16,6 +16,7 @@ public sealed interface StartLobbyResult permits
         StartLobbyResult.MapNotSelected,
         StartLobbyResult.NoPlayer,
         StartLobbyResult.NotReady,
+        StartLobbyResult.StaleParticipant,
         StartLobbyResult.Error {
 
     /**
@@ -61,5 +62,14 @@ public sealed interface StartLobbyResult permits
 
     /** Lua 실행 실패 또는 알 수 없는 반환값 */
     record Error(String reason) implements StartLobbyResult {
+    }
+
+    /**
+     * participants Set에는 있으나 활성 로비 세션 키가 없는 stale 참여자.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param userIdentifier stale 참여자 식별자
+     */
+    record StaleParticipant(String lobbyCode, String userIdentifier) implements StartLobbyResult {
     }
 }

@@ -12,6 +12,7 @@
 -- 5. 맵이 선택되어 있음
 -- 6. 방장 제외 참여자가 1명 이상 존재
 -- 7. 방장 제외 모든 참여자가 ready 상태
+-- 8. 방장 제외 참여자의 활설 로비 세션 키 존재 여부
 --
 -- [KEYS]
 -- KEYS[1] = lobby:{code}
@@ -89,6 +90,12 @@ local nonHostPlayerCount = 0
 
 for _, userIdentifier in ipairs(participants) do
     if userIdentifier ~= hostUserId then
+        local sessionKey = 'lobby:' .. lobbyCode .. ':user_session:' .. userIdentifier
+
+        if redis.call('EXISTS', sessionKey) == 0 then
+            return 'STALE_PARTICIPANT:' .. userIdentifier
+        end
+
         nonHostPlayerCount = nonHostPlayerCount + 1
 
         if redis.call('SISMEMBER', readyKey, userIdentifier) == 0 then

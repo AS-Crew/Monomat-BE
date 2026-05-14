@@ -692,6 +692,18 @@ public class LobbyService {
                         ERROR_START_FAILED
                 );
             }
+
+            case StartLobbyResult.StaleParticipant staleParticipant -> {
+                log.warn(
+                        "게임 시작 요청 거부 - stale 참여자 감지. code: {}, userIdentifier: {}",
+                        staleParticipant.lobbyCode(),
+                        staleParticipant.userIdentifier()
+                );
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        ERROR_START_NOT_READY
+                );
+            }
         }
     }
 

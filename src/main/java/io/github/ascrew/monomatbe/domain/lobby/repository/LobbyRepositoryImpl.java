@@ -924,6 +924,29 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       return new StartLobbyResult.NotReady(code, notReadyUserIdentifier);
     }
 
+    if (StartLobbyLuaResultCode.isStaleParticipantResult(result)) {
+      String staleParticipantUserIdentifier =
+              StartLobbyLuaResultCode.extractStaleParticipantUserIdentifier(result);
+
+      logReadyConsistencyFailure(
+              code,
+              requesterIdentifier,
+              staleParticipantUserIdentifier
+      );
+
+      log.error(
+              "{} 게임 시작 실패 - stale participant 감지. lobbyCode: {}, requester: {}, staleParticipant: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              requesterIdentifier,
+              staleParticipantUserIdentifier
+      );
+
+      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_READY_CONSISTENCY_FAILURE);
+
+      return new StartLobbyResult.StaleParticipant(code, staleParticipantUserIdentifier);
+    }
+
     return StartLobbyLuaResultCode.fromExactValue(result)
             .map(resultCode -> toStartLobbyResult(resultCode, code, requesterIdentifier))
             .orElseGet(() -> {
@@ -1101,6 +1124,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       case NO_PLAYER -> new StartLobbyResult.NoPlayer(code);
       case NOT_READY_PREFIX -> new StartLobbyResult.Error(
               "NOT_READY_PREFIX는 동적 prefix 결과이므로 exact 매핑 대상이 아닙니다."
+      );
+      case STALE_PARTICIPANT_PREFIX -> new StartLobbyResult.Error(
+              "STALE_PARTICIPANT_PREFIX는 동적 prefix 결과이므로 exact 매핑 대상이 아닙니다."
       );
     };
   }

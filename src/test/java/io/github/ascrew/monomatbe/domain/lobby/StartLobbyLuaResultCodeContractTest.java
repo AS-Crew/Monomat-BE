@@ -25,6 +25,7 @@ class StartLobbyLuaResultCodeContractTest {
         assertThat(script).contains(returnLiteral(StartLobbyLuaResultCode.NO_PLAYER));
 
         assertThat(script).contains("'NOT_READY:'");
+        assertThat(script).contains("'STALE_PARTICIPANT:'");
     }
 
     private String returnLiteral(StartLobbyLuaResultCode resultCode) {

@@ -111,6 +111,32 @@ public class LobbyEventService {
   }
 
   /**
+   * 로비 참여자에게 게임 시작 이벤트를 브로드캐스트한다.
+   *
+   * [사용 목적]
+   * 시작 조건을 모두 충족해 로비 상태가 PLAYING으로 바뀐 후,
+   * FE가 대기실 화면에서 인게임 화면으로 전환할 수 있도록 알린다.
+   *
+   * [검증]
+   * 게임 시작 이벤트는 서버 내부에서만 호출하므로,
+   * userIdentifier 참여자 검증 없이 로비 코드 형식과 로비 존재 여부만 확인한다.
+   */
+  public void notifyGameStarted(String code) {
+    if (!StringUtils.hasText(code) || !LOBBY_CODE_PATTERN.matcher(code).matches()) {
+      return;
+    }
+
+    if (!lobbyRepository.existsByCode(code)) {
+      return;
+    }
+
+    messagingTemplate.convertAndSend(
+            StompDestinations.subscribeLobbyGame(code),
+            StompDestinations.MSG_GAME_STARTED
+    );
+  }
+
+  /**
    * 방장의 로비 유저 강퇴 요청을 처리한다.
    *
    * [처리 흐름]

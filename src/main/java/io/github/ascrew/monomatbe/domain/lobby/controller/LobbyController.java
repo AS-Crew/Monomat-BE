@@ -11,7 +11,9 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,6 +26,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -50,10 +54,22 @@ public class LobbyController {
             "요청 수신: 공개 로비 목록 조회 [GET /api/lobbies]";
     private static final String LOG_GET_PUBLIC_LOBBIES_RESPONSE =
             "조회 완료: 공개 로비 {}개 반환";
+    private static final String LOG_GET_LOBBY_DETAIL_REQUEST =
+            "요청 수신: 로비 상세 조회 [GET /api/lobbies/{code}] - 코드: {}, 식별자: {}";
+    private static final String LOG_GET_LOBBY_DETAIL_RESPONSE =
+            "로비 상세 조회 완료 - 코드: {}, canStart: {}";
     private static final String LOG_JOIN_LOBBY_REQUEST =
             "요청 수신: 로비 입장 [POST /api/lobbies/join] - 초대 코드: {}, 식별자: {}";
     private static final String LOG_JOIN_LOBBY_RESPONSE =
             "로비 입장 사전 검증 완료 - 초대 코드: {}";
+    private static final String LOG_UPDATE_READY_REQUEST =
+            "요청 수신: 로비 준비 상태 변경 [PATCH /api/lobbies/{code}/ready] - 코드: {}, 식별자: {}, ready: {}";
+    private static final String LOG_UPDATE_READY_RESPONSE =
+            "로비 준비 상태 변경 완료 - 코드: {}";
+    private static final String LOG_START_LOBBY_REQUEST =
+            "요청 수신: 게임 시작 [POST /api/lobbies/{code}/start] - 코드: {}, 식별자: {}";
+    private static final String LOG_START_LOBBY_RESPONSE =
+            "게임 시작 처리 완료 - 코드: {}";
 
     private final LobbyService lobbyService;
 
@@ -145,6 +161,124 @@ public class LobbyController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * 로비 참여자의 준비 상태 변경 API.
+     *
+     * [정책]
+     * - JWT 인증이 필요하다.
+     * - 로비 참여자만 준비 상태를 변경할 수 있다.
+     * - 방장은 ready 대상에서 제외하고 시작 버튼만 사용한다.
+     * - 준비 상태 변경 후 로비 내부 refresh 신호를 전송한다.
+     *
+     * @param code 로비 초대 코드
+     * @param request 준비 상태 변경 요청 DTO
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "로비 준비 상태 변경",
+            description = "로비 참여자의 ready 상태를 변경합니다. 방장은 ready 대상에서 제외됩니다."
+    )
+    @PatchMapping("/{code}/ready")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> updateReadyStatus(
+            @PathVariable String code,
+            @Valid @RequestBody UpdateLobbyReadyRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_UPDATE_READY_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null",
+                request.ready()
+        );
+
+        lobbyService.updateReadyStatus(code, request, principal);
+
+        log.info(LOG_UPDATE_READY_RESPONSE, code);
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 로비 게임 시작 API
+     *
+     * [정책]
+     * - JWT 인증이 필요하다.
+     * - 방장만 게임을 시작할 수 있다.
+     * - 로비 상태가 WAITING일 때만 시작할 수 있다.
+     * - 유효한 맵이 선택되어 있어야 한다.
+     * - 맵의 문제 수가 설정된 라운드 수 이상이어야 한다.
+     * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
+     *
+     * @param code 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "로비 게임 시작",
+            description = """
+                시작 조건을 최종 검증하고 로비 상태를 PLAYING으로 변경한 뒤 게임 시작 이벤트를 브로드캐스트합니다.
+                로비 상세 응답의 canStart는 조회 시점의 버튼 활성화 기준이며,
+                실제 시작 가능 여부는 이 API에서 Redis Lua로 최종 검증됩니다.
+                따라서 canStart=true 이후에도 참여자 퇴장, ready 해제, 상태 변경이 발생하면 409 Conflict가 반환될 수 있습니다.
+                """
+    )
+    @PostMapping("/{code}/start")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> startLobbyGame(
+            @PathVariable String code,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_START_LOBBY_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null"
+        );
+
+        lobbyService.startLobbyGame(code, principal);
+
+        log.info(LOG_START_LOBBY_RESPONSE, code);
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 로비 상세 조회 API
+     *
+     * [용도]
+     * 로비 대기실 화면에서 필요한 참여자 ready 상태와 canStart 값을 조회한다.
+     *
+     * [주의]
+     * 실제 최신 참여자 상태는 WebSocket 구독/해제 흐름에 의해 Redis에서 관리된다.
+     * 클라이언트는 REFRESH_LOBBY_INFO 신호를 받으면 이 API를 다시 호출하여 최신 상태를 동기화한다.
+     *
+     * @param code 로비 초대 코드
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 로비 상세 정보
+     */
+    @Operation(
+            summary = "로비 상세 조회",
+            description = "로비 참여자 ready 상태와 canStart 값을 포함한 대기실 상세 정보를 조회합니다."
+    )
+    @GetMapping("/{code}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<LobbyDetailResponse> getLobbyDetail(
+            @PathVariable String code,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_GET_LOBBY_DETAIL_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null"
+        );
+
+        LobbyDetailResponse response = lobbyService.getLobbyDetail(code, principal);
+
+        log.info(LOG_GET_LOBBY_DETAIL_RESPONSE, code, response.canStart());
+
+        return ResponseEntity.ok(response);
+    }
 
     /**
      * 공개 로비 목록 조회 API.

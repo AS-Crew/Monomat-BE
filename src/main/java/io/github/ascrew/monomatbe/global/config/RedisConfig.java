@@ -16,7 +16,8 @@
  *   따라서 Redis 역직렬화에 필요한 타입 정보는 유지하면서,
  *   HTTP 응답 JSON 계약은 순수 DTO 형태로 분리합니다.
  *
- * - Pub/Sub 메시지는 프론트 계약을 위해 타입 정보 없는 순수 JSON JsonMapper를 사용합니다.
+ * - Pub/Sub 메시지와 Redis 문자열 캐시는 각각 타입 정보 없는 순수 JSON JsonMapper를 사용합니다.
+ *   두 Mapper 모두 activateDefaultTyping을 적용하지 않으며, 역할별 Bean 이름으로 분리합니다.
  */
 package io.github.ascrew.monomatbe.global.config;
 
@@ -25,6 +26,7 @@ import io.github.ascrew.monomatbe.global.redis.RedisSubscriber;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisPassword;
@@ -88,20 +90,37 @@ public class RedisConfig {
      * Redis Pub/Sub 전용 JsonMapper.
      *
      * [역할]
-     * WebSocket 클라이언트로 전달되는 Pub/Sub 메시지는 Java 클래스 타입 정보가 포함되면 안 된다.
+     * WebSocket 클라이언트로 전달되는 Pub/Sub 메시지는 Java 클래스 타입 정보가 포함되면 안 됩니다.
      *
      * [Bean 이름 정책]
-     * 기존 Redis 직렬화용 jsonMapper Bean은 HTTP 응답 직렬화 오염을 방지하기 위해 제거함
-     * 현재 Bean으로 노출되는 JsonMapper는 Pub/Sub 메시지 직렬화 전용인 pubSubJsonMapper뿐임
+     * Redis 직렬화용 JsonMapper는 HTTP 응답 직렬화 오염을 방지하기 위해 Bean으로 노출하지 않습니다.
+     * Pub/Sub 메시지 직렬화가 필요한 코드는 @Qualifier("pubSubJsonMapper")를 명시해서 주입받습니다.
      *
-     * JsonMapper가 필요한 다른 코드에서는 목적에 맞는 Bean을 명시적으로 주입해야 함
-     * - Pub/Sub / WebSocket 메시지: @Qualifier("pubSubJsonMapper")
-     * - RedisTemplate 값 직렬화: RedisTemplate 내부 private createRedisJsonMapper() 사용
-     *
-     * 따라서 이 Mapper는 activateDefaultTyping를 적용하지 않고 순수 JSON 직렬화에만 사용한다.
+     * [주의]
+     * 이 Mapper는 activateDefaultTyping을 적용하지 않고 순수 JSON 직렬화에만 사용합니다.
      */
-    @Bean
+    @Bean("pubSubJsonMapper")
     public JsonMapper pubSubJsonMapper() {
+        return JsonMapper.builder().build();
+    }
+
+    /**
+     * Redis 문자열 캐시 및 애플리케이션 기본 JSON 직렬화용 JsonMapper.
+     *
+     * [역할]
+     * MapService 등에서 Redis 문자열 캐시에 DTO를 저장/조회할 때 사용합니다.
+     *
+     * [Primary 지정 이유]
+     * JsonMapper Bean이 pubSubJsonMapper, cacheJsonMapper로 2개 이상 존재하면
+     * Spring 내부 자동 설정 또는 명시 Qualifier가 없는 주입 지점에서
+     * NoUniqueBeanDefinitionException이 발생할 수 있습니다.
+     *
+     * cacheJsonMapper는 activateDefaultTyping을 사용하지 않는 순수 JSON Mapper이므로
+     * 기본 JsonMapper로 선택되어도 HTTP 응답에 타입 정보가 노출되지 않습니다.
+     */
+    @Primary
+    @Bean("cacheJsonMapper")
+    public JsonMapper cacheJsonMapper() {
         return JsonMapper.builder().build();
     }
 

@@ -30,6 +30,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -326,7 +327,12 @@ public class LobbyService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_LOBBY_DETAIL_FORBIDDEN);
         }
 
-        List<String> participantIdentifiers = lobbyRepository.getParticipantIdentifiers(code);
+        List<String> participantIdentifiers = includeHostIfMissing(
+                lobbyRepository.getParticipantIdentifiers(code),
+                lobbyInfo.hostId(),
+                code
+        );
+
         Set<String> readyParticipantIdentifiers = lobbyRepository.getReadyParticipantIdentifiers(code);
 
         List<LobbyPlayerResponse> players = participantIdentifiers.stream()
@@ -347,8 +353,7 @@ public class LobbyService {
                 .title(lobbyInfo.title())
                 .hostId(lobbyInfo.hostId())
                 .maxPlayers(lobbyInfo.maxPlayers())
-                .currentPlayers(lobbyInfo.currentPlayers())
-                .status(lobbyInfo.status())
+                .currentPlayers(Math.max(lobbyInfo.currentPlayers(), players.size()))                .status(lobbyInfo.status())
                 .mapId(lobbyInfo.mapId())
                 .mapTitle(lobbyInfo.mapTitle())
                 .mapCategory(lobbyInfo.mapCategory())
@@ -945,5 +950,39 @@ public class LobbyService {
         return quizMap.getOwner() != null
                 && quizMap.getOwner().getId() != null
                 && quizMap.getOwner().getId().equals(requesterUserId);
+    }
+
+    /**
+     * 로비 상세 응답에서 방장 정보가 누락되지 않도록 보정한다.
+     *
+     * [필요 이유]
+     * 정상 흐름에서는 로비 생성 시 방장이 participants Set에 포함되어야 한다.
+     * 다만 Redis 데이터 손상, 과거 데이터, WebSocket 입장 상태 불일치가 있으면
+     * participants Set에서 방장이 누락될 수 있다.
+     *
+     * FE 대기실 UI는 players 목록의 host=true 값을 기준으로 방장 표시/시작 버튼/ready 버튼을 분기하므로,
+     * 상세 응답에서는 hostId가 존재하면 players 목록에 방장을 보장한다.
+     */
+    private List<String> includeHostIfMissing(
+            List<String> participantIdentifiers,
+            String hostId,
+            String code
+    ) {
+        if (hostId == null || hostId.isBlank() || participantIdentifiers.contains(hostId)) {
+            return participantIdentifiers;
+        }
+
+        List<String> result = new ArrayList<>(participantIdentifiers);
+        result.add(0, hostId);
+
+        log.warn(
+                "{} 로비 상세 응답 보정 - participants Set에 방장이 없어 응답 목록에 추가. "
+                        + "code: {}, hostId: {}",
+                LOG_ALERT_REQUIRED,
+                code,
+                hostId
+        );
+
+        return result;
     }
 }

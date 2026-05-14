@@ -107,6 +107,7 @@ public class LobbyService {
             "로비 입장 요청 - 초대 코드: {}, 식별자: {}";
     private static final String LOG_JOIN_LOBBY_SUCCESS =
             "로비 입장 사전 검증 통과 - 초대 코드: {}, 식별자: {}, 현재 인원: {}/{}";
+    private static final String LOG_ALERT_REQUIRED = "[ALERT_REQUIRED]";
 
     // =========================================================
     // 비즈니스 규칙 상수
@@ -397,6 +398,15 @@ public class LobbyService {
 
         validateMapSongCount(quizMap, gameLobby);
 
+        /*
+         * Redis Lua가 status=PLAYING으로 변경하기 전에 트랜잭션 동기화 활성 여부를 확인한다.
+         *
+         * 이 검증이 없으면 Redis는 PLAYING으로 바뀐 뒤
+         * afterCommit 이벤트 등록 단계에서 500이 발생할 수 있다.
+         * 그 경우 클라이언트는 GAME_STARTED를 받지 못하고, Redis/DB 상태 불일치도 남을 수 있다.
+         */
+        validateTransactionSynchronizationForGameStart(code, requesterIdentifier);
+
         StartLobbyResult result = lobbyRepository.executeStartLobbyProcess(
                 code,
                 requesterIdentifier
@@ -489,6 +499,43 @@ public class LobbyService {
     }
 
     /**
+     * 게임 시작 처리 전 트랜잭션 동기화 활성 여부를 검증한다.
+     *
+     * [이유]
+     * GAME_STARTED 이벤트는 DB GAME_LOBBY 상태가 PLAYING으로 커밋된 이후에만 발행되어야 한다.
+     * 따라서 afterCommit 등록이 가능한 트랜잭션 동기화 상태가 아니면 게임 시작 처리를 진행하면 안 된다.
+     *
+     * [중요]
+     * 이 검증은 Redis start_lobby.lua 실행 전에 수행해야 한다.
+     * Redis가 먼저 PLAYING으로 바뀐 뒤 이벤트 등록이 실패하면 클라이언트가 GAME_STARTED를 받지 못하고,
+     * Redis-DB 상태 불일치가 남을 수 있다.
+     */
+    private void validateTransactionSynchronizationForGameStart(
+            String code,
+            String requesterIdentifier
+    ) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+
+        log.error(
+                "{} 게임 시작 요청 거부 - 트랜잭션 동기화 비활성. "
+                        + "Redis 상태 변경 전에 차단합니다. code: {}, requester: {}",
+                LOG_ALERT_REQUIRED,
+                code,
+                requesterIdentifier
+        );
+
+        throw new ResponseStatusException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                ERROR_START_EVENT_TRANSACTION_REQUIRED
+        );
+    }
+
+    /**
+     * 게임 시작 이벤트를 DB 트랜잭션 커밋 이후에 발행한다.
+     */
+    /**
      * 게임 시작 이벤트를 DB 트랜잭션 커밋 이후에 발행한다.
      */
     private void registerGameStartedEventAfterCommit(
@@ -497,7 +544,9 @@ public class LobbyService {
     ) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             log.error(
-                    "게임 시작 이벤트 발행 실패 - 트랜잭션 동기화 비활성. code: {}, requester: {}",
+                    "{} 게임 시작 이벤트 afterCommit 등록 실패 - 트랜잭션 동기화 비활성. "
+                            + "code: {}, requester: {}",
+                    LOG_ALERT_REQUIRED,
                     code,
                     requesterIdentifier
             );
@@ -515,7 +564,7 @@ public class LobbyService {
             }
         });
     }
-
+    
     /**
      * 로비 참여자의 준비 상태를 변경한다.
      *

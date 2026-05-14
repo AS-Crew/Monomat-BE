@@ -1,8 +1,12 @@
 package io.github.ascrew.monomatbe.domain.auth.repository;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -17,4 +21,14 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
      * 세션 토큰으로 세션 조회.
      */
     Optional<UserSession> findBySessionToken(String sessionToken);
+
+    Optional<UserSession> findBySessionId(String sessionId);
+
+    Optional<UserSession> findBySessionIdAndStatus(String sessionId, UserSessionStatus status);
+
+    List<UserSession> findByUser_IdAndStatusOrderByCreatedAtAsc(Long userId, UserSessionStatus status);
+
+    List<UserSession> findByStatusAndExpiresAtBefore(UserSessionStatus status, LocalDateTime now);
+
+    List<UserSession> findByStatusInAndUpdatedAtBefore(Collection<UserSessionStatus> statuses, LocalDateTime threshold);
 }

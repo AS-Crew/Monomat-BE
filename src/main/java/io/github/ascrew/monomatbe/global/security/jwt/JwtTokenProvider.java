@@ -1,7 +1,9 @@
 package io.github.ascrew.monomatbe.global.security.jwt;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
@@ -153,6 +155,25 @@ public class JwtTokenProvider {
 
     public Duration refreshTokenTtl() {
         return Duration.ofSeconds(refreshTokenValiditySeconds);
+    }
+
+    public Duration accessTokenTtl() {
+        return Duration.ofSeconds(accessTokenValiditySeconds);
+    }
+
+    public Claims parseClaims(String token) throws JwtException {
+        return Jwts.parser()
+                .verifyWith(secretKey)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+    }
+
+    public Duration accessTokenRemainingTtl(String accessToken) {
+        Claims claims = parseClaims(accessToken);
+        Instant expiration = claims.getExpiration().toInstant();
+        Duration remaining = Duration.between(Instant.now(), expiration);
+        return remaining.isNegative() ? Duration.ZERO : remaining;
     }
 
     // =========================================================

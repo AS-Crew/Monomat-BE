@@ -52,6 +52,9 @@ public final class RedisKeys {
     /** Refresh Token 저장 키 접두사 */
     private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
 
+    /** Access Token 블랙리스트 키 접두사 */
+    private static final String ACCESS_BLACKLIST_PREFIX = "auth:blacklist:access:";
+
     /** 초대 코드 중복 방지 SETNX 락 키 접두사 */
     private static final String LOBBY_CODE_LOCK_PREFIX = "lobby:code:lock:";
 
@@ -251,6 +254,16 @@ public final class RedisKeys {
      */
     public static String refreshTokenKey(String sessionId) {
         return REFRESH_TOKEN_PREFIX + sessionId;
+    }
+
+    /**
+     * Access Token 블랙리스트 키를 반환합니다.
+     *
+     * @param accessTokenHash access token의 SHA-256 해시
+     * @return "auth:blacklist:access:{accessTokenHash}"
+     */
+    public static String accessTokenBlacklistKey(String accessTokenHash) {
+        return ACCESS_BLACKLIST_PREFIX + accessTokenHash;
     }
 
     /**

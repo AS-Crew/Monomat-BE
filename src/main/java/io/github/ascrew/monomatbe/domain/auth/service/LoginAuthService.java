@@ -4,6 +4,7 @@ import io.github.ascrew.monomatbe.domain.auth.dto.LoginResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserCredential;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
@@ -40,6 +41,7 @@ public class LoginAuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final StringRedisTemplate redisTemplate;
+    private final UserSessionLifecycleService userSessionLifecycleService;
 
     @Value("${auth.redis.refresh-store-enabled:true}")
     private boolean refreshStoreEnabled;
@@ -85,12 +87,17 @@ public class LoginAuthService {
 
         userSessionRepository.save(UserSession.builder()
                 .user(user)
+                .sessionId(userIdentifier)
                 .sessionToken(refreshToken.token())
                 .ipAddress(normalizeOptionalLength(ipAddress, 45))
                 .userAgent(normalizeOptionalLength(userAgent, 500))
                 .expiresAt(LocalDateTime.ofInstant(refreshToken.expiresAt(), ZoneId.systemDefault()))
                 .createdAt(now)
+                .updatedAt(now)
+                .status(UserSessionStatus.ACTIVE)
                 .build());
+
+        userSessionLifecycleService.enforceActiveSessionLimit(user.getId(), userIdentifier, now);
 
         if (refreshStoreEnabled) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

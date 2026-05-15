@@ -141,8 +141,8 @@ public class MapItemService {
 
     private void recalculateMapMetadata(QuizMap quizMap) {
         int numOfSong = (int) mapItemJpaRepository.countByMapIdAndIsDeletedFalse(quizMap.getId());
-        Integer sum = mapItemJpaRepository.sumPlayTimeByMapId(quizMap.getId());
-        int totalPlayTime = sum == null ? 0 : sum;
+        Long sum = mapItemJpaRepository.sumPlayTimeByMapId(quizMap.getId());
+        int totalPlayTime = sum == null ? 0 : Math.toIntExact(sum);
         quizMap.updateMetadata(numOfSong, totalPlayTime);
     }
 

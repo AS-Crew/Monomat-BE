@@ -25,5 +25,5 @@ public interface MapItemJpaRepository extends JpaRepository<MapItem, Long> {
             from MapItem mi
             where mi.map.id = :mapId and mi.isDeleted = false
             """)
-    Integer sumPlayTimeByMapId(@Param("mapId") Long mapId);
+    Long sumPlayTimeByMapId(@Param("mapId") Long mapId);
 }

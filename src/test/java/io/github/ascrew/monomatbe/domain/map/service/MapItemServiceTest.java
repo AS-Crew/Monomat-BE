@@ -121,7 +121,7 @@ class MapItemServiceTest {
                     .build();
         });
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30);
+        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
 
         var response = mapItemService.createMapItem(1L, request, principal(10L));
 

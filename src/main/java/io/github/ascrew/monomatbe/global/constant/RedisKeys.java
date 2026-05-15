@@ -407,11 +407,12 @@ public final class RedisKeys {
 
     /**
      * YouTube oEmbed 실패 캐시 키를 반환합니다.
+     * videoId 기반으로 캐시하므로 동일 영상의 다른 URL 형식(watch/youtu.be/shorts/embed)에 대해 캐시가 공유됩니다.
      *
-     * @param urlHash URL 해시
-     * @return "youtube:oembed:failure:{urlHash}"
+     * @param videoId YouTube videoId
+     * @return "youtube:oembed:failure:{videoId}"
      */
-    public static String youtubeOembedFailureKey(String urlHash) {
-        return YOUTUBE_OEMBED_FAILURE_PREFIX + urlHash;
+    public static String youtubeOembedFailureKey(String videoId) {
+        return YOUTUBE_OEMBED_FAILURE_PREFIX + videoId;
     }
 }

@@ -15,14 +15,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
@@ -37,8 +32,6 @@ public class YoutubeValidationService {
     private static final Duration OEMBED_SUCCESS_TTL = Duration.ofHours(6);
     private static final Duration OEMBED_FAILURE_TTL = Duration.ofMinutes(30);
     private static final Pattern VIDEO_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{11}$");
-    private static final Pattern FALLBACK_WATCH_PATTERN = Pattern.compile("[?&]v=([A-Za-z0-9_-]{11})");
-    private static final Pattern FALLBACK_YOUTU_BE_PATTERN = Pattern.compile("youtu\\.be/([A-Za-z0-9_-]{11})");
 
     private final StringRedisTemplate redisTemplate;
     @Qualifier("pubSubJsonMapper") private final JsonMapper jsonMapper;
@@ -53,22 +46,24 @@ public class YoutubeValidationService {
         String normalizedUrl = normalizeUrl(youtubeUrl);
         String videoId = extractVideoId(normalizedUrl)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_URL));
-        String failureKey = RedisKeys.youtubeOembedFailureKey(hashUrl(normalizedUrl));
+
         String successKey = RedisKeys.youtubeOembedSuccessKey(videoId);
+        String failureKey = RedisKeys.youtubeOembedFailureKey(videoId);
 
         String successCached = redisTemplate.opsForValue().get(successKey);
         if (successCached != null) {
             return deserializeMetadata(successCached);
         }
-        boolean hadFailureCache = redisTemplate.hasKey(failureKey) == Boolean.TRUE;
+
+        // Negative cache hit 시 외부 호출을 차단하고 즉시 거절한다.
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(failureKey))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
+        }
 
         try {
             String body = youtubeOEmbedClient.fetchByVideoId(videoId);
             YoutubeMetadata metadata = parseMetadata(videoId, body);
             redisTemplate.opsForValue().set(successKey, serializeMetadata(metadata), OEMBED_SUCCESS_TTL);
-            if (hadFailureCache) {
-                redisTemplate.delete(failureKey);
-            }
             return metadata;
         } catch (ResponseStatusException e) {
             if (e.getStatusCode().equals(HttpStatus.BAD_REQUEST)) {
@@ -91,7 +86,18 @@ public class YoutubeValidationService {
         String title = readText(root, "title");
         String artist = readText(root, "author_name");
         String thumbnailUrl = readText(root, "thumbnail_url");
+
+        // oEmbed 응답에서 title/author_name이 비어있으면 사용 불가능한 영상으로 간주한다.
+        // 그대로 저장 시 맵 문제의 제목/아티스트가 null/blank로 노출되므로 검증 단계에서 차단한다.
+        if (isBlank(title) || isBlank(artist)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
+        }
+
         return new YoutubeMetadata(videoId, title, artist, thumbnailUrl);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private String readText(JsonNode root, String fieldName) {
@@ -107,66 +113,56 @@ public class YoutubeValidationService {
     }
 
     private Optional<String> extractVideoId(String youtubeUrl) {
+        URI uri;
         try {
-            URI uri = URI.create(youtubeUrl);
-            String host = Optional.ofNullable(uri.getHost()).orElse("").toLowerCase(Locale.ROOT);
-            if (host.startsWith("www.")) {
-                host = host.substring(4);
+            uri = URI.create(youtubeUrl);
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+
+        String host = Optional.ofNullable(uri.getHost()).orElse("").toLowerCase(Locale.ROOT);
+        if (host.startsWith("www.")) {
+            host = host.substring(4);
+        }
+
+        if ("youtu.be".equals(host)) {
+            String path = Optional.ofNullable(uri.getPath()).orElse("");
+            String candidate = path.startsWith("/") ? path.substring(1) : path;
+            if (candidate.contains("/")) {
+                candidate = candidate.substring(0, candidate.indexOf('/'));
+            }
+            return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
+        }
+
+        if ("youtube.com".equals(host) || "m.youtube.com".equals(host)) {
+            String path = Optional.ofNullable(uri.getPath()).orElse("");
+
+            if (path.startsWith("/watch")) {
+                String query = Optional.ofNullable(uri.getRawQuery()).orElse("");
+                for (String part : query.split("&")) {
+                    if (part.startsWith("v=")) {
+                        String candidate = part.substring(2);
+                        return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
+                    }
+                }
+                return Optional.empty();
             }
 
-            if ("youtu.be".equals(host)) {
-                String path = Optional.ofNullable(uri.getPath()).orElse("");
-                String candidate = path.startsWith("/") ? path.substring(1) : path;
+            if (path.startsWith("/shorts/")) {
+                String candidate = path.substring("/shorts/".length());
                 if (candidate.contains("/")) {
                     candidate = candidate.substring(0, candidate.indexOf('/'));
                 }
                 return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
             }
 
-            if ("youtube.com".equals(host) || "m.youtube.com".equals(host)) {
-                String path = Optional.ofNullable(uri.getPath()).orElse("");
-
-                if (path.startsWith("/watch")) {
-                    String query = Optional.ofNullable(uri.getRawQuery()).orElse("");
-                    for (String part : query.split("&")) {
-                        if (part.startsWith("v=")) {
-                            String candidate = part.substring(2);
-                            return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
-                        }
-                    }
+            if (path.startsWith("/embed/")) {
+                String candidate = path.substring("/embed/".length());
+                if (candidate.contains("/")) {
+                    candidate = candidate.substring(0, candidate.indexOf('/'));
                 }
-
-                if (path.startsWith("/shorts/")) {
-                    String candidate = path.substring("/shorts/".length());
-                    if (candidate.contains("/")) {
-                        candidate = candidate.substring(0, candidate.indexOf('/'));
-                    }
-                    return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
-                }
-
-                if (path.startsWith("/embed/")) {
-                    String candidate = path.substring("/embed/".length());
-                    if (candidate.contains("/")) {
-                        candidate = candidate.substring(0, candidate.indexOf('/'));
-                    }
-                    return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
-                }
+                return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
             }
-        } catch (Exception ignored) {
-            // URL 파싱 실패 시 하위 fallback 로직으로 진행
-        }
-
-        // fallback: 원본 URL에서 케이스 보존 상태로 추출 (소문자화 금지 — videoId는 대소문자 구분)
-        Matcher watchMatcher = FALLBACK_WATCH_PATTERN.matcher(youtubeUrl);
-        if (watchMatcher.find()) {
-            String candidate = watchMatcher.group(1);
-            return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
-        }
-
-        Matcher youtubeBeMatcher = FALLBACK_YOUTU_BE_PATTERN.matcher(youtubeUrl);
-        if (youtubeBeMatcher.find()) {
-            String candidate = youtubeBeMatcher.group(1);
-            return isValidVideoId(candidate) ? Optional.of(candidate) : Optional.empty();
         }
 
         return Optional.empty();
@@ -174,16 +170,6 @@ public class YoutubeValidationService {
 
     private boolean isValidVideoId(String value) {
         return value != null && VIDEO_ID_PATTERN.matcher(value).matches();
-    }
-
-    private String hashUrl(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashed = digest.digest(value.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hashed);
-        } catch (NoSuchAlgorithmException e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "URL 해시 생성에 실패했습니다.");
-        }
     }
 
     private void validateRegisteredPrincipal(CustomPrincipal principal) {

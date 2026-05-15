@@ -482,41 +482,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       );
 
       String rawIsPrivate = (String) lobbyData.get(RedisKeys.FIELD_IS_PRIVATE);
-
-      if (rawIsPrivate == null || rawIsPrivate.isBlank()) {
-        log.error(
-                "{} 게임 시작 Redis 보상 롤백 중 is_private 필드 누락 - public 복구 생략. "
-                        + "code: {}, lobbyKey: {}",
-                LOG_MONITORING_REQUIRED,
-                code,
-                lobbyKey
-        );
-
-        log.warn(
-                "게임 시작 Redis 보상 롤백 완료 - code: {}, status: {}, restoredPublic: {}",
-                code,
-                LobbyStatus.WAITING.name(),
-                false
-        );
-
-        return true;
-      }
-
-      boolean restoredPublic = false;
-
-      if (IS_PRIVATE_FALSE.equals(rawIsPrivate)) {
-        redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, code);
-        restoredPublic = true;
-      } else if (!IS_PRIVATE_TRUE.equals(rawIsPrivate)) {
-        log.error(
-                "{} 게임 시작 Redis 보상 롤백 중 알 수 없는 is_private 값 - public 복구 생략. "
-                        + "code: {}, lobbyKey: {}, rawIsPrivate: {}",
-                LOG_MONITORING_REQUIRED,
-                code,
-                lobbyKey,
-                rawIsPrivate
-        );
-      }
+      boolean restoredPublic = restorePublicLobbyIfClearlyPublic(
+              code,
+              lobbyKey,
+              rawIsPrivate
+      );
 
       log.warn(
               "게임 시작 Redis 보상 롤백 완료 - code: {}, status: {}, restoredPublic: {}, rawIsPrivate: {}",
@@ -539,6 +509,41 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       );
       return false;
     }
+  }
+
+  private boolean restorePublicLobbyIfClearlyPublic(
+          String code,
+          String lobbyKey,
+          String rawIsPrivate
+  ) {
+    if (rawIsPrivate == null || rawIsPrivate.isBlank()) {
+      log.error(
+              "{} 게임 시작 Redis 보상 롤백 중 is_private 필드 누락 - public 복구 생략. "
+                      + "code: {}, lobbyKey: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              lobbyKey
+      );
+      return false;
+    }
+
+    if (IS_PRIVATE_FALSE.equals(rawIsPrivate)) {
+      redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, code);
+      return true;
+    }
+
+    if (!IS_PRIVATE_TRUE.equals(rawIsPrivate)) {
+      log.error(
+              "{} 게임 시작 Redis 보상 롤백 중 알 수 없는 is_private 값 - public 복구 생략. "
+                      + "code: {}, lobbyKey: {}, rawIsPrivate: {}",
+              LOG_MONITORING_REQUIRED,
+              code,
+              lobbyKey,
+              rawIsPrivate
+      );
+    }
+
+    return false;
   }
 
   /**

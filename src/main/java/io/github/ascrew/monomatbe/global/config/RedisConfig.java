@@ -95,13 +95,10 @@ public class RedisConfig {
      * [Bean 이름 정책]
      * Redis 직렬화용 JsonMapper는 HTTP 응답 직렬화 오염을 방지하기 위해 Bean으로 노출하지 않습니다.
      * Pub/Sub 메시지 직렬화가 필요한 코드는 @Qualifier("pubSubJsonMapper")를 명시해서 주입받습니다.
-     *
-     * [주의]
-     * 이 Mapper는 activateDefaultTyping을 적용하지 않고 순수 JSON 직렬화에만 사용합니다.
      */
     @Bean("pubSubJsonMapper")
     public JsonMapper pubSubJsonMapper() {
-        return JsonMapper.builder().build();
+        return createPlainJsonMapper();
     }
 
     /**
@@ -121,6 +118,24 @@ public class RedisConfig {
     @Primary
     @Bean("cacheJsonMapper")
     public JsonMapper cacheJsonMapper() {
+        return createPlainJsonMapper();
+    }
+
+    /**
+     * 타입 정보 없는 순수 JSON JsonMapper를 생성한다.
+     *
+     * [사용 대상]
+     * - Pub/Sub 메시지 직렬화
+     * - Redis 문자열 캐시 직렬화
+     *
+     * [주의]
+     * 이 Mapper에는 activateDefaultTyping을 적용하지 않는다.
+     * WebSocket 메시지와 REST 응답 JSON 계약에 Java 클래스 타입 정보가 섞이지 않도록
+     * RedisTemplate 내부 전용 Mapper와 명확히 분리한다.
+     *
+     * @return 타입 정보 없는 순수 JSON JsonMapper
+     */
+    private JsonMapper createPlainJsonMapper() {
         return JsonMapper.builder().build();
     }
 

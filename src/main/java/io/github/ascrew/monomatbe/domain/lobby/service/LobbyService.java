@@ -109,6 +109,7 @@ public class LobbyService {
     private static final String LOG_JOIN_LOBBY_SUCCESS =
             "로비 입장 사전 검증 통과 - 초대 코드: {}, 식별자: {}, 현재 인원: {}/{}";
     private static final String LOG_ALERT_REQUIRED = "[ALERT_REQUIRED]";
+    private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
 
     // =========================================================
     // 비즈니스 규칙 상수
@@ -214,7 +215,12 @@ public class LobbyService {
             if (compensationSuccess) {
                 log.info(LOG_COMPENSATION_SUCCESS, inviteCode);
             } else {
-                log.error(LOG_COMPENSATION_FAILED, inviteCode);
+                log.error(
+                        "{} {} code: {}",
+                        LOG_MONITORING_REQUIRED,
+                        LOG_COMPENSATION_FAILED,
+                        inviteCode
+                );
             }
 
             throw new ResponseStatusException(

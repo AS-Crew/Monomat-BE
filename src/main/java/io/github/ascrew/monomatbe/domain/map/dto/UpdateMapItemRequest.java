@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.map.dto;
 
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -36,6 +37,7 @@ public record UpdateMapItemRequest(
         String hint,
 
         @Min(value = 1, message = "힌트 공개 시간은 1초 이상이어야 합니다.")
+        @Max(value = 100, message = "힌트 공개 시간은 100초 이하여야 합니다.")
         Integer hintTime
 ) {
 }

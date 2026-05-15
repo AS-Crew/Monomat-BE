@@ -167,17 +167,22 @@ public class MapItemService {
         return toResponse(updated);
     }
 
-    @Transactional
     public void deleteMapItem(Long mapId, Long itemId, CustomPrincipal principal) {
         validateRegisteredPrincipal(principal);
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, principal.userId());
 
-        MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
+        // 트랜잭션이 커밋된 이후에 캐시를 무효화해야 롤백 시 DB↔캐시 불일치가 발생하지 않는다.
+        // TransactionTemplate.executeWithoutResult가 반환된 시점은 이미 커밋이 완료된 상태이다.
+        transactionTemplate.executeWithoutResult(status -> {
+            QuizMap quizMap = getOwnedMapOrThrow(mapId, principal.userId());
 
-        mapItem.softDelete();
-        recalculateMapMetadata(quizMap);
-        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
+            MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
+
+            mapItem.softDelete();
+            recalculateMapMetadata(quizMap);
+        });
+
+        mapCacheEvictor.evictPublicMapCaches(mapId);
     }
 
     private void recalculateMapMetadata(QuizMap quizMap) {

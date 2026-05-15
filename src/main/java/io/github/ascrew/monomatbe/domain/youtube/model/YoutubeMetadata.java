@@ -1,4 +1,4 @@
-package io.github.ascrew.monomatbe.domain.youtube.service;
+package io.github.ascrew.monomatbe.domain.youtube.model;
 
 public record YoutubeMetadata(
         String videoId,

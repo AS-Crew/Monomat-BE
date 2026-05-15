@@ -9,7 +9,7 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
-import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeMetadata;
+import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeValidationService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -43,6 +44,8 @@ class MapItemServiceTest {
     private MapCacheEvictor mapCacheEvictor;
     @Mock
     private JsonMapper jsonMapper;
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     private MapItemService mapItemService;
 
@@ -53,7 +56,8 @@ class MapItemServiceTest {
                 mapItemJpaRepository,
                 youtubeValidationService,
                 mapCacheEvictor,
-                jsonMapper
+                jsonMapper,
+                transactionManager
         );
     }
 
@@ -70,15 +74,12 @@ class MapItemServiceTest {
                 15
         );
 
-        User owner = owner(10L);
-        QuizMap quizMap = quizMap(1L, owner);
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
-
         assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("재생 구간은 시작 시간보다 종료 시간이 커야 합니다.");
 
         verify(mapItemJpaRepository, never()).save(any());
+        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
     }
 
     @Test

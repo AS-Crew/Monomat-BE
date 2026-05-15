@@ -1,6 +1,8 @@
 package io.github.ascrew.monomatbe.domain.youtube.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.youtube.client.YoutubeOEmbedClient;
+import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;

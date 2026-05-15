@@ -1,4 +1,4 @@
-package io.github.ascrew.monomatbe.domain.youtube.service;
+package io.github.ascrew.monomatbe.domain.youtube.client;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;

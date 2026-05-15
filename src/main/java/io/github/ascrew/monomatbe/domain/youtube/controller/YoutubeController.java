@@ -2,7 +2,7 @@ package io.github.ascrew.monomatbe.domain.youtube.controller;
 
 import io.github.ascrew.monomatbe.domain.youtube.dto.YoutubeValidateRequest;
 import io.github.ascrew.monomatbe.domain.youtube.dto.YoutubeValidateResponse;
-import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeMetadata;
+import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeValidationService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;

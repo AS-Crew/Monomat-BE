@@ -11,6 +11,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -22,7 +23,13 @@ import java.time.LocalDateTime;
 @Getter
 @Entity
 @Builder
-@Table(name = "map_item")
+@Table(
+        name = "map_item",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_map_item_active_order",
+                columnNames = {"map_id", "active_order_num"}
+        )
+)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class MapItem {
@@ -79,6 +86,16 @@ public class MapItem {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    // MySQL이 active 행에 대해서만 order_num을 채워주는 generated 컬럼.
+    // (map_id, active_order_num) UNIQUE 제약과 결합해 동시 INSERT race를 DB 레벨에서 차단한다.
+    @Column(
+            name = "active_order_num",
+            insertable = false,
+            updatable = false,
+            columnDefinition = "INT GENERATED ALWAYS AS (CASE WHEN is_deleted = FALSE THEN order_num ELSE NULL END) STORED"
+    )
+    private Integer activeOrderNum;
 
     @PrePersist
     public void prePersist() {

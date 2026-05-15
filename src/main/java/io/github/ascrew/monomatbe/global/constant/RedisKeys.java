@@ -37,6 +37,9 @@ public final class RedisKeys {
     /** 로비별 강퇴 유저 Set 키 접미사 */
     private static final String KICKED_SUFFIX = ":kicked";
 
+    /** 로비별 준비 완료 유저 Set 키 접미사 */
+    private static final String READY_SUFFIX = ":ready";
+
     /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
     private static final String USER_SESSION_SUFFIX = ":user_session:";
 
@@ -196,6 +199,55 @@ public final class RedisKeys {
     }
 
     public static String lobbyKickedKey(String code) { return LOBBY_PREFIX + code + KICKED_SUFFIX; }
+
+    /**
+     * 로비별 준비 완료 유저 Set 키를 반환한다.
+     * 정책 : 방장은 준비 대상에서 제외하고, 일반 참여자만 ready 상태에 포함한다.
+     * 저장 구조:
+     * - Key   : lobby:{code}:ready
+     * - Type  : Set
+     * - Value : 준비 완료 상태인 userIdentifier 목록
+     * @param code 로비 초대 코드
+     * @return "lobby:{code}:ready"
+     */
+    public static String lobbyReadyKey(String code) {
+        return LOBBY_PREFIX + code + READY_SUFFIX;
+    }
+
+    /**
+     * 게임 시작 상태 동기화 실패 재처리 큐.
+     *
+     * 저장 구조:
+     * - Key  : lobby:start:reconciliation
+     * - Type : List
+     * - Value: "lobbyCode|reason"
+     */
+    public static final String LOBBY_START_RECONCILIATION_QUEUE =
+            "lobby:start:reconciliation";
+
+    /** 게임 시작 상태 재처리 큐 적재 횟수 metric counter */
+    public static final String METRIC_LOBBY_START_RECONCILIATION_ENQUEUED =
+            "metric:lobby:start:reconciliation:enqueued";
+
+    /** 게임 시작 상태 재처리 성공 횟수 metric counter */
+    public static final String METRIC_LOBBY_START_RECONCILIATION_SUCCESS =
+            "metric:lobby:start:reconciliation:success";
+
+    /** 게임 시작 상태 재처리 실패 횟수 metric counter */
+    public static final String METRIC_LOBBY_START_RECONCILIATION_FAILED =
+            "metric:lobby:start:reconciliation:failed";
+
+    /** start_lobby.lua 알 수 없는 반환값 발생 횟수 */
+    public static final String METRIC_START_LOBBY_UNKNOWN_RESULT =
+            "metric:lobby:start:unknown-result";
+
+    /** 게임 시작 전 stale ready 데이터 정리 횟수 */
+    public static final String METRIC_LOBBY_READY_STALE_CLEANUP =
+            "metric:lobby:ready:stale-cleanup";
+
+    /** 게임 시작 실패 시 ready/participants 정합성 진단 발생 횟수 */
+    public static final String METRIC_LOBBY_READY_CONSISTENCY_FAILURE =
+            "metric:lobby:ready:consistency-failure";
 
     /**
      * 사용자 온라인 상태 키를 반환합니다.

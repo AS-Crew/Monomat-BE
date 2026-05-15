@@ -12,17 +12,17 @@ import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -31,7 +31,6 @@ import java.util.List;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MapService {
 
     private static final Duration MAP_CACHE_TTL = Duration.ofMinutes(5);
@@ -44,13 +43,25 @@ public class MapService {
     private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 수정/삭제할 수 있습니다.";
     private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
+
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final UserRepository userRepository;
-    private final MapCacheEvictor mapCacheEvictor;
     private final StringRedisTemplate redisTemplate;
-    @Qualifier("pubSubJsonMapper") private final JsonMapper jsonMapper;
+    private final JsonMapper jsonMapper;
 
-    // 공개된 맵 목록을 페이징하여 조회 (Redis 캐싱 적용)
+    public MapService(
+            QuizMapJpaRepository quizMapJpaRepository,
+            UserRepository userRepository,
+            StringRedisTemplate redisTemplate,
+            @Qualifier("cacheJsonMapper") JsonMapper jsonMapper
+    ) {
+        this.quizMapJpaRepository = quizMapJpaRepository;
+        this.userRepository = userRepository;
+        this.redisTemplate = redisTemplate;
+        this.jsonMapper = jsonMapper;
+    }
+
+    // 공개된 맵 목록을 페이징하여 조회합니다. Redis 캐싱을 적용합니다.
     @Transactional(readOnly = true)
     public PublicMapPageResponse getPublicMaps(Integer page, Integer size) {
         // 파라미터 정규화 및 유효성 검사
@@ -60,12 +71,17 @@ public class MapService {
         // 캐시 키 생성 및 조회
         String version = getPublicListCacheVersion();
         String cacheKey = RedisKeys.mapPublicListKey(version, normalizedPage, normalizedSize);
-        // 캐시 조회/역직렬화 실패는 DB fallback으로 처리한다.
+
+        // 캐시 조회/역직렬화 실패는 DB fallback으로 처리합니다.
         try {
             String cachedValue = redisTemplate.opsForValue().get(cacheKey);
             if (cachedValue != null) {
                 try {
-                    return jsonMapper.readValue(cachedValue, new TypeReference<PublicMapPageResponse>() {});
+                    return jsonMapper.readValue(
+                            cachedValue,
+                            new TypeReference<PublicMapPageResponse>() {
+                            }
+                    );
                 } catch (Exception e) {
                     log.warn("공개 맵 목록 캐시 역직렬화 실패 - key: {}. 캐시 삭제 후 DB fallback", cacheKey, e);
                     safeDeleteCache(cacheKey);
@@ -75,13 +91,15 @@ public class MapService {
             log.warn("공개 맵 목록 캐시 조회 실패 - key: {}. DB fallback", cacheKey, e);
         }
 
-        // 캐시 미스시 DB에서 데이터 조회
+        // 캐시 미스 시 DB에서 데이터 조회
         Pageable pageable = PageRequest.of(
                 normalizedPage,
                 normalizedSize,
                 Sort.by(Sort.Direction.DESC, "updatedAt")
         );
+
         Page<QuizMap> pageResult = quizMapJpaRepository.findAllByIsDeletedFalseAndIsPublicTrue(pageable);
+
         List<MapSummaryResponse> content = pageResult.getContent()
                 .stream()
                 .map(this::toSummaryResponse)
@@ -97,13 +115,15 @@ public class MapService {
                 .build();
 
         safeWriteCache(cacheKey, response);
+
         return response;
     }
 
     @Transactional(readOnly = true)
     public MapDetailResponse getPublicMap(Long mapId) {
         String cacheKey = RedisKeys.mapPublicDetailKey(mapId);
-        // 캐시 조회/역직렬화 실패는 DB fallback으로 처리한다.
+
+        // 캐시 조회/역직렬화 실패는 DB fallback으로 처리합니다.
         try {
             String cachedValue = redisTemplate.opsForValue().get(cacheKey);
             if (cachedValue != null) {
@@ -119,11 +139,14 @@ public class MapService {
         }
 
         QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalseAndIsPublicTrue(mapId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
 
         MapDetailResponse response = toDetailResponse(quizMap);
         safeWriteCache(cacheKey, response);
+
         return response;
     }
 
@@ -132,11 +155,16 @@ public class MapService {
         validateRegisteredPrincipal(principal);
 
         User owner = userRepository.findById(principal.userId())
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        HttpStatus.NOT_FOUND, ERROR_USER_NOT_FOUND));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_USER_NOT_FOUND
+                ));
+
         if (owner.getUserType() != UserType.REGISTERED) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    HttpStatus.FORBIDDEN, ERROR_REGISTERED_ONLY);
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_REGISTERED_ONLY
+            );
         }
 
         QuizMap created = quizMapJpaRepository.save(QuizMap.builder()
@@ -147,7 +175,8 @@ public class MapService {
                 .isPublic(request.isPublic())
                 .build());
 
-        mapCacheEvictor.evictPublicMapCaches(created.getId());
+        safeEvictMapCache(created.getId());
+
         return toDetailResponse(created);
     }
 
@@ -156,13 +185,22 @@ public class MapService {
         validatePrincipal(principal);
 
         QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
 
         validateOwnership(quizMap, principal);
-        quizMap.update(request.title(), request.description(), request.category(), request.isPublic());
 
-        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
+        quizMap.update(
+                request.title(),
+                request.description(),
+                request.category(),
+                request.isPublic()
+        );
+
+        safeEvictMapCache(quizMap.getId());
+
         return toDetailResponse(quizMap);
     }
 
@@ -171,38 +209,69 @@ public class MapService {
         validatePrincipal(principal);
 
         QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
 
         validateOwnership(quizMap, principal);
+
         quizMap.softDelete();
-        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
+        safeEvictMapCache(quizMap.getId());
     }
 
     private void validatePrincipal(CustomPrincipal principal) {
         if (principal == null || principal.userId() == null) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    ERROR_INVALID_PRINCIPAL
+            );
         }
     }
 
     private void validateRegisteredPrincipal(CustomPrincipal principal) {
         validatePrincipal(principal);
+
         if (principal.userType() != UserType.REGISTERED) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    HttpStatus.FORBIDDEN, ERROR_REGISTERED_ONLY);
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_REGISTERED_ONLY
+            );
         }
     }
 
     private void validateOwnership(QuizMap quizMap, CustomPrincipal principal) {
         if (!quizMap.getOwner().getId().equals(principal.userId())) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_MAP_FORBIDDEN
+            );
+        }
+    }
+
+    private void safeEvictMapCache(Long mapId) {
+        try {
+            redisTemplate.opsForValue().increment(RedisKeys.mapPublicListVersionKey());
+        } catch (Exception e) {
+            log.warn(
+                    "공개 맵 목록 캐시 버전 무효화 실패 - key: {}",
+                    RedisKeys.mapPublicListVersionKey(),
+                    e
+            );
+        }
+
+        String detailKey = RedisKeys.mapPublicDetailKey(mapId);
+
+        try {
+            redisTemplate.delete(detailKey);
+        } catch (Exception e) {
+            log.warn("공개 맵 단건 캐시 무효화 실패 - key: {}", detailKey, e);
         }
     }
 
     private String getPublicListCacheVersion() {
         String key = RedisKeys.mapPublicListVersionKey();
+
         try {
             String version = redisTemplate.opsForValue().get(key);
             if (version != null) {

@@ -5,11 +5,13 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.*;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public interface LobbyRepository {
 
@@ -18,6 +20,28 @@ public interface LobbyRepository {
 
   /** 해당 유저가 해당 로비의 참여자인지 확인합니다. */
   boolean isParticipant(String code, String userId);
+
+  /**
+   * 로비 참여자의 준비 상태를 변경한다.
+   * @param code 로비 초대 코드
+   * @param userIdentifier 준비 상태를 변경할 사용자 식별자
+   * @param ready true면 준비 완료, false면 준비 해제
+   */
+  void updateReadyStatus(String code, String userIdentifier, boolean ready);
+
+  /**
+   * 로비 참여자 목록을 입장 순서를 기준으로 조회한다.
+   * @param code 로비 초대 코드
+   * @return 입장 순서가 반영된 userIdentifier 목록
+   */
+  List<String> getParticipantIdentifiers(String code);
+
+  /**
+   * 로비에서 ready 상태인 참여자 식별자 목록을 조회한다.
+   * @param code 로비 초대 코드
+   * @return ready Set에 저장된 userIdentifier 목록
+   */
+  Set<String> getReadyParticipantIdentifiers(String code);
 
   /**
    * Redis에 로비 데이터를 저장하고 초대 코드를 반환한다.
@@ -58,6 +82,55 @@ public interface LobbyRepository {
           String requesterIdentifier,
           String targetUserIdentifier
   );
+
+  /**
+   * Lua 스크립트를 실행하여 로비 게임 시작 조건을 원자적으로 검증하고
+   * Redis 로비 상태를 PLAYING으로 변경한다.
+   *
+   * @param code 로비 초대 코드
+   * @param requesterIdentifier 게임 시작 요청자 식별자
+   * @return StartLobbyResult
+   */
+  StartLobbyResult executeStartLobbyProcess(
+          String code,
+          String requesterIdentifier
+  );
+
+  /**
+   * 게임 시작 처리  DB 상태 변경 실패가 발생했을 때, Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   * @param code 로비 초대 코드
+   * @return Redis 보상 롤백 성공 여부
+   */
+  boolean rollbackStartedLobbyStatus(String code);
+
+  /**
+   * Redis-DB 상태 불일치가 발생했을 때 후속 재처리를 위해 Redis 큐에 적재한다.
+   *
+   * @param code 로비 초대 코드
+   * @param reason 재처리 사유
+   */
+  void enqueueStartReconciliation(String code, String reason);
+
+  /**
+   * Redis-DB 상태 불일치 재처리 큐에서 payload를 하나 꺼낸다.
+   *
+   * @return "lobbyCode|reason" 형태의 payload. 없으면 null.
+   */
+  String pollStartReconciliation();
+
+  /**
+   * 재처리에 실패한 payload를 큐에 다시 적재한다.
+   *
+   * @param payload 재처리 payload
+   */
+  void requeueStartReconciliation(String payload);
+
+  /**
+   * 게임 시작 상태 재처리 metric counter를 증가시킨다.
+   *
+   * @param metricKey Redis metric key
+   */
+  void incrementStartReconciliationMetric(String metricKey);
 
   /** Redis에서 공개 로비 목록을 필터링하여 반환한다. */
   List<LobbyRedisDto> getPublicLobbies();

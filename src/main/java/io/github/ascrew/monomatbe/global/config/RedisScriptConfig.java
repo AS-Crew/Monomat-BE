@@ -74,4 +74,24 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    /**
+     * 로비 게임 시작 처리 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - 방장 권한 검증
+     * - WAITING 상태 검증
+     * - 맵 선택 여부 검증
+     * - 방장 제외 참여자 ready 상태 검증
+     * - 로비 상태 PLAYING 전환
+     * - 공개 로비 목록에서 제거
+     */
+    @Bean
+    public RedisScript<String> startLobbyScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/start_lobby.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

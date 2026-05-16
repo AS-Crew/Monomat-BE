@@ -8,7 +8,7 @@
  * - KICK 시스템 메시지 생성 및 브로드캐스트
  *
  * [설계 의도]
- * 기존 LobbyEventService는 강퇴 유스케이스, 퇴장 이벤트 처리, STOMP 브로드캐스트를 함께 담당했다.
+ * 기존 단일 로비 이벤트 서비스는 강퇴 유스케이스, 퇴장 이벤트 처리, STOMP 브로드캐스트를 함께 담당했다.
  * 이 클래스는 STOMP 알림 책임만 분리하여, 강퇴/퇴장/시작 서비스가 "무엇을 알릴지"만 결정하고
  * "어떻게 보낼지"는 이 컴포넌트에 위임하도록 만든다.
  *
@@ -39,7 +39,7 @@ public class LobbyRealtimeNotifier {
 
     /*
      * 로비 코드 검증 패턴
-     * 기존 LobbyEventService에서 사용하던 검증 규칙을 그대로 유지한다.
+     * 기존 로비 이벤트 처리 흐름에서 사용하던 검증 규칙을 그대로 유지한다.
      */
     private static final Pattern LOBBY_CODE_PATTERN = Pattern.compile("^[A-Z0-9]{6,12}$");
 

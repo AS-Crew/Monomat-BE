@@ -4,13 +4,17 @@
  * [책임]
  * - 인증 주체 검증
  * - 방장 User 조회
- * - 선택된 맵 접근 가능 여부 검증
+ * - 선택된 맵 접근 가능 여부 검증 위임
  * - Redis 로비 상태 생성
  * - DB GAME_LOBBY 스냅샷 저장
  * - DB 저장 실패 시 Redis 보상 삭제
  *
+ * [분리 이유]
+ * 기존 LobbyService는 로비 생성, 입장, 조회, ready, 시작 로직을 모두 포함하고 있어
+ * 기능 추가 시 변경 범위가 과도하게 커질 수 있었습니다.
+ *
  * 로비 생성은 Redis 선저장 + DB 스냅샷 저장 + 보상 삭제라는 별도 트랜잭션 경계를 가지므로,
- * 독립 유스케이스 서비스로 분리한다.
+ * 독립 유스케이스 서비스로 분리합니다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -22,8 +26,6 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
-import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,12 +49,6 @@ public class LobbyCreateService {
             "사용자를 찾을 수 없습니다.";
     private static final String ERROR_CREATE_LOBBY_FAILED =
             "로비 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
-    private static final String ERROR_MAP_NOT_FOUND =
-            "존재하지 않는 맵입니다.";
-    private static final String ERROR_MAP_DELETED =
-            "삭제된 맵은 로비에 연결할 수 없습니다.";
-    private static final String ERROR_PRIVATE_MAP_FORBIDDEN =
-            "비공개 맵은 소유자만 로비에 연결할 수 있습니다.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -71,7 +67,7 @@ public class LobbyCreateService {
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final UserRepository userRepository;
-    private final QuizMapJpaRepository quizMapJpaRepository;
+    private final LobbyMapPolicy lobbyMapPolicy;
 
     /**
      * 로비를 생성한다.
@@ -79,14 +75,15 @@ public class LobbyCreateService {
      * [처리 순서]
      * 1. principal null 및 userId null 검증
      * 2. JWT에서 추출한 userId로 User 엔티티 조회
-     * 3. 선택된 mapId가 있으면 맵 존재/삭제/권한 검증
+     * 3. 선택된 mapId가 있으면 LobbyMapPolicy로 맵 존재/삭제/권한 검증
      * 4. Lua 스크립트로 초대 코드 선점 및 Redis 로비 데이터 원자 저장
      * 5. DB에 GAME_LOBBY 스냅샷 저장
      * 6. DB 저장 실패 시 Redis 보상 삭제
      *
      * [트랜잭션 경계]
-     * 로비 생성은 Redis와 DB를 함께 다룬다.
-     * DB 저장 실패 시 Redis 보상 삭제가 필요하므로 이 유스케이스 서비스에서 트랜잭션을 직접 관리한다.
+     * 로비 생성은 Redis와 DB를 함께 다룹니다.
+     * DB 저장 실패 시 Redis 보상 삭제가 필요하므로 이 유스케이스 서비스에서
+     * 트랜잭션을 직접 관리합니다.
      *
      * @param request   로비 생성 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
@@ -112,10 +109,12 @@ public class LobbyCreateService {
         /*
          * 맵 연결 정책:
          * - mapId가 없으면 맵 미선택 로비로 생성한다.
-         * - mapId가 있으면 존재 여부, 삭제 여부, 접근 권한을 검증한다.
+         * - mapId가 있으면 LobbyMapPolicy에서 존재 여부, 삭제 여부, 접근 권한을 검증한다.
          * - 검증된 최소 맵 정보만 Redis 저장 계층으로 전달한다.
+         *
+         * 이 정책은 향후 "방장 로비 설정 변경 API"에서도 동일하게 재사용할 수 있다.
          */
-        LobbyMapMetadata mapMetadata = resolveLobbyMapMetadata(
+        LobbyMapMetadata mapMetadata = lobbyMapPolicy.resolveLobbyMapMetadata(
                 request.mapId(),
                 principal.userId()
         );
@@ -178,74 +177,5 @@ public class LobbyCreateService {
                     ERROR_CREATE_LOBBY_FAILED
             );
         }
-    }
-
-    /**
-     * 로비 생성 시 선택된 맵의 접근 가능 여부를 검증하고, Redis 저장에 필요한 최소 메타데이터로 변환한다.
-     *
-     * [정책]
-     * - mapId가 null이면 맵 미선택 로비로 생성한다.
-     * - 삭제된 맵은 선택할 수 없다.
-     * - 공개 맵은 누구나 로비에 연결할 수 있다.
-     * - 비공개 맵은 소유자만 로비에 연결할 수 있다.
-     *
-     * [추후 리팩토링]
-     * Issue #78 후속 단계에서 LobbyMapPolicy로 분리할 수 있음
-     *
-     * @param mapId           요청으로 전달된 맵 ID
-     * @param requesterUserId 로비 생성 요청자의 DB userId
-     * @return 선택된 맵 메타데이터. 맵 미선택 시 null.
-     */
-    private LobbyMapMetadata resolveLobbyMapMetadata(Long mapId, Long requesterUserId) {
-        if (mapId == null) {
-            return null;
-        }
-
-        QuizMap quizMap = quizMapJpaRepository.findById(mapId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_MAP_NOT_FOUND
-                ));
-
-        if (Boolean.TRUE.equals(quizMap.getIsDeleted())) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    ERROR_MAP_DELETED
-            );
-        }
-
-        if (!canUseMap(quizMap, requesterUserId)) {
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
-                    ERROR_PRIVATE_MAP_FORBIDDEN
-            );
-        }
-
-        return new LobbyMapMetadata(
-                quizMap.getId(),
-                quizMap.getTitle(),
-                quizMap.getCategory().value()
-        );
-    }
-
-    /**
-     * 요청자가 해당 맵을 로비에 연결할 수 있는지 검증한다.
-     *
-     * [정책]
-     * - 공개 맵은 누구나 사용할 수 있다.
-     * - 비공개 맵은 맵 소유자만 사용할 수 있다.
-     *
-     * @param quizMap         검증 대상 맵
-     * @param requesterUserId 요청자 DB userId
-     * @return 사용할 수 있으면 true
-     */
-    private boolean canUseMap(QuizMap quizMap, Long requesterUserId) {
-        if (Boolean.TRUE.equals(quizMap.getIsPublic())) {
-            return true;
-        }
-
-        return quizMap.getOwner() != null
-                && quizMap.getOwner().getId() != null
-                && quizMap.getOwner().getId().equals(requesterUserId);
     }
 }

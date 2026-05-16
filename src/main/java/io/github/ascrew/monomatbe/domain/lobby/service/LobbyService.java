@@ -1,26 +1,38 @@
 /*
- * 로비 조회 관련 비즈니스 로직을 담당하는 서비스.
+ * 로비 관련 유스케이스 facade 서비스.
+ *
+ * [현재 책임]
+ * - 기존 LobbyController의 의존성을 유지하기 위한 facade 역할
+ * - 각 로비 유스케이스 서비스로 점진적으로 책임을 위임
+ *
+ * [Issue #78 리팩토링 방향]
+ * 기존 LobbyService는 로비 생성, 입장, 조회, ready, 시작, 맵 검증,
+ * Redis/DB 보상 처리까지 모두 담당하고 있었습니다.
+ *
+ * 이번 이슈에서는 기능 동작을 바꾸지 않고,
+ * 유스케이스 단위 서비스로 책임을 점진적으로 분리합니다.
+ *
+ * [1단계]
+ * - createLobby() 로직을 LobbyCreateService로 분리
+ * - LobbyService#createLobby()는 facade 위임만 수행
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
-import io.github.ascrew.monomatbe.domain.auth.entity.User;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
+import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
-import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
-import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
+import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -45,22 +57,12 @@ public class LobbyService {
 
     private static final String ERROR_INVALID_PRINCIPAL =
             "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
-    private static final String ERROR_USER_NOT_FOUND =
-            "사용자를 찾을 수 없습니다.";
-    private static final String ERROR_CREATE_LOBBY_FAILED =
-            "로비 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
     private static final String ERROR_LOBBY_NOT_FOUND =
             "존재하지 않는 로비입니다.";
     private static final String ERROR_LOBBY_NOT_WAITING =
             "게임이 이미 시작된 로비에는 입장할 수 없습니다.";
     private static final String ERROR_LOBBY_FULL =
             "최대 인원에 도달한 로비입니다.";
-    private static final String ERROR_MAP_NOT_FOUND =
-            "존재하지 않는 맵입니다.";
-    private static final String ERROR_MAP_DELETED =
-            "삭제된 맵은 로비에 연결할 수 없습니다.";
-    private static final String ERROR_PRIVATE_MAP_FORBIDDEN =
-            "비공개 맵은 소유자만 로비에 연결할 수 있습니다.";
     private static final String ERROR_READY_FORBIDDEN =
             "로비 참여자만 준비 상태를 변경할 수 있습니다.";
     private static final String ERROR_HOST_READY_NOT_ALLOWED =
@@ -83,6 +85,10 @@ public class LobbyService {
             "게임 시작 상태 동기화에 실패했습니다. 잠시 후 다시 시도해주세요.";
     private static final String ERROR_LOBBY_DETAIL_FORBIDDEN =
             "로비 참여자만 로비 상세 정보를 조회할 수 있습니다.";
+    private static final String ERROR_MAP_NOT_FOUND =
+            "존재하지 않는 맵입니다.";
+    private static final String ERROR_MAP_DELETED =
+            "삭제된 맵은 로비에 연결할 수 없습니다.";
     private static final String RECONCILIATION_REASON_DB_SYNC_FAILED =
             "START_DB_SYNC_FAILED";
     private static final String ERROR_START_EVENT_TRANSACTION_REQUIRED =
@@ -96,136 +102,47 @@ public class LobbyService {
     // 로그 메시지 상수
     // =========================================================
 
-    private static final String LOG_INVALID_PRINCIPAL =
-            "로비 생성 요청 거부 - principal 또는 userId가 null. userIdentifier: {}";
-    private static final String LOG_DB_SAVE_FAILED =
-            "DB 로비 저장 실패 - Redis 보상 삭제 시작. 코드: {}";
-    private static final String LOG_COMPENSATION_SUCCESS =
-            "Redis 보상 삭제 완료 - 코드: {}";
-    private static final String LOG_COMPENSATION_FAILED =
-            "Redis 보상 삭제 실패 - 코드: {}. 수동 정리 필요. [모니터링 필요]";
     private static final String LOG_JOIN_LOBBY_REQUEST =
             "로비 입장 요청 - 초대 코드: {}, 식별자: {}";
     private static final String LOG_JOIN_LOBBY_SUCCESS =
             "로비 입장 사전 검증 통과 - 초대 코드: {}, 식별자: {}, 현재 인원: {}/{}";
     private static final String LOG_ALERT_REQUIRED = "[ALERT_REQUIRED]";
-    private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
 
     // =========================================================
     // 비즈니스 규칙 상수
     // =========================================================
 
     /**
-     * 입장 가능한 로비 상태
-     * PLAYING, FINISHED 상태의 로비에는 입장할 수 없다.
+     * 입장 가능한 로비 상태.
+     *
+     * PLAYING, FINISHED 상태의 로비에는 입장할 수 없습니다.
      * LobbyStatus enum을 직접 비교하지 않고 Redis에서 읽은 문자열과 비교하므로
-     * name()으로 변환하여 상수로 관리한다.
+     * name()으로 변환하여 상수로 관리합니다.
      */
     private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
 
+    private final LobbyCreateService lobbyCreateService;
     private final LobbyRepository lobbyRepository;
     private final LobbyEventService lobbyEventService;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
-    private final UserRepository userRepository;
     private final QuizMapJpaRepository quizMapJpaRepository;
 
     /**
-     * 로비를 생성한다.
+     * 로비 생성 facade 메서드.
      *
-     * [처리 순서]
-     * 1. principal null 및 userId null 검증 → 401 반환
-     * 2. JWT에서 추출한 userId로 User 엔티티 조회
-     * 3. Lua 스크립트로 초대 코드 선점 및 Redis에 로비 데이터 원자적 저장
-     * 4. DB에 GAME_LOBBY 스냅샷 Insert
-     * 5. DB 실패 시 Redis 보상 삭제 및 성공/실패 여부를 구분하여 로그 기록
+     * [Issue #78 - 1단계]
+     * 실제 로비 생성 책임은 LobbyCreateService로 이동했습니다.
+     * 기존 LobbyController의 의존성을 유지하기 위해 동일한 public method 계약만 남깁니다.
+     *
+     * [주의]
+     * 트랜잭션은 실제 유스케이스 서비스인 LobbyCreateService#createLobby()에서 관리합니다.
      *
      * @param request   로비 생성 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
      * @return 생성된 로비 정보 응답 DTO
      */
-    @Transactional
     public CreateLobbyResponse createLobby(CreateLobbyRequest request, CustomPrincipal principal) {
-
-        // principal 및 userId null 방어
-        // JwtAuthenticationFilter를 통과했더라도 토큰 파싱 이상으로
-        // userId가 null인 채로 진입할 수 있으므로 서비스 레이어에서 재검증한다.
-        if (principal == null || principal.userId() == null) {
-            log.warn(LOG_INVALID_PRINCIPAL,
-                    principal != null ? principal.userIdentifier() : "null");
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
-        }
-
-        User host = userRepository.findById(principal.userId())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, ERROR_USER_NOT_FOUND));
-
-        /**
-         * 맵 연결 정책 :
-         * - mapId가 없으면 맵 미선택 로비로 생성한다.
-         * - mapId가 있으면 존재 여부, 삭제 여부, 접근 권한을 검증한다.
-         * - 검증된 최소 맵 정보만 Redis 저장 계층으로 전달한다.
-         */
-        LobbyMapMetadata mapMetadata = resolveLobbyMapMetadata(
-                request.mapId(),
-                principal.userId()
-        );
-
-        String inviteCode = lobbyRepository.saveToRedis(
-                request,
-                principal.userIdentifier(),
-                mapMetadata
-        );
-
-        try {
-            GameLobby gameLobby = gameLobbyJpaRepository.save(GameLobby.builder()
-                    .host(host)
-                    .mapId(mapMetadata != null ? mapMetadata.mapId() : null)
-                    .inviteCode(inviteCode)
-                    .title(request.title())
-                    .maxPlayers(request.maxPlayers())
-                    .roundCount(request.roundCount())
-                    .timeLimitSeconds(request.timeLimitSeconds())
-                    .isPrivate(request.isPrivate())
-                    .build());
-
-            log.info(
-                    "로비 생성 완료 - 코드: {}, 방장: {}, mapId: {}",
-                    inviteCode,
-                    principal.userIdentifier(),
-                    mapMetadata != null ? mapMetadata.mapId() : null
-            );
-
-            return CreateLobbyResponse.builder()
-                    .lobbyId(gameLobby.getId())
-                    .inviteCode(inviteCode)
-                    .title(gameLobby.getTitle())
-                    .maxPlayers(gameLobby.getMaxPlayers())
-                    .isPrivate(gameLobby.getIsPrivate())
-                    .status(gameLobby.getStatus().name())
-                    .mapId(mapMetadata != null ? mapMetadata.mapId() : null)
-                    .mapTitle(mapMetadata != null ? mapMetadata.mapTitle() : null)
-                    .mapCategory(mapMetadata != null ? mapMetadata.mapCategory() : null)
-                    .build();
-
-        } catch (Exception e) {
-            log.error(LOG_DB_SAVE_FAILED, inviteCode, e);
-
-            boolean compensationSuccess = lobbyRepository.deleteFromRedis(inviteCode);
-
-            if (compensationSuccess) {
-                log.info(LOG_COMPENSATION_SUCCESS, inviteCode);
-            } else {
-                log.error(
-                        "{} {} code: {}",
-                        LOG_MONITORING_REQUIRED,
-                        LOG_COMPENSATION_FAILED,
-                        inviteCode
-                );
-            }
-
-            throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR, ERROR_CREATE_LOBBY_FAILED);
-        }
+        return lobbyCreateService.createLobby(request, principal);
     }
 
     /**
@@ -237,14 +154,15 @@ public class LobbyService {
      * /topic/lobby/{code}를 구독하는 시점에 enter_lobby.lua로 처리된다.
      *
      * [검증 순서]
-     * Redis 조회 횟수를 최소화하기 위해 HGETALL (1회)로 로비 존재 여부와
-     * 상태를 동시에 확인하고, 이후 SCARD (1회)로 인원을 확인한다.
-     * 1. 로비 존재 여부 확인 -> 없으면 404
-     * 2. 로비 상태 확인 -> WAITING이 아니면 409
-     * 3. 인원 초과 확인 -> 초과면 409
+     * Redis 조회 횟수를 최소화하기 위해 HGETALL 1회로 로비 존재 여부와
+     * 상태를 동시에 확인하고, 이후 SCARD 1회로 인원을 확인한다.
+     *
+     * 1. 로비 존재 여부 확인
+     * 2. 로비 상태 확인
+     * 3. 인원 초과 확인
      *
      * @param inviteCode 로비 초대 코드
-     * @param principal JWT에서 추출한 인증 주체
+     * @param principal  JWT에서 추출한 인증 주체
      * @return 로비 응답 DTO
      */
     public JoinLobbyResponse joinLobby(String inviteCode, CustomPrincipal principal) {
@@ -257,7 +175,9 @@ public class LobbyService {
 
         JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(inviteCode)
                 .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, ERROR_LOBBY_NOT_FOUND));
+                        HttpStatus.NOT_FOUND,
+                        ERROR_LOBBY_NOT_FOUND
+                ));
 
         if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
@@ -272,18 +192,21 @@ public class LobbyService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_FULL);
         }
 
-        log.info(LOG_JOIN_LOBBY_SUCCESS,
+        log.info(
+                LOG_JOIN_LOBBY_SUCCESS,
                 inviteCode,
                 principal.userIdentifier(),
                 lobbyInfo.currentPlayers(),
-                lobbyInfo.maxPlayers());
+                lobbyInfo.maxPlayers()
+        );
 
         return lobbyInfo;
     }
 
     /**
      * 공개 로비 목록을 조회한다.
-     * Redis에서 직접 필터링하여 공개(isPrivate=false) 로비만 반환
+     *
+     * Redis에서 직접 필터링하여 공개(isPrivate=false) 로비만 반환합니다.
      *
      * @return 현재 활성화된 공개 로비 목록
      */
@@ -303,9 +226,9 @@ public class LobbyService {
      *
      * [접근 정책]
      * 로비 상세 정보에는 참여자 ready 상태가 포함되므로,
-     * 로비 참여자 또는 방장만 조회할 수 있도록 제한한다.
+     * 로비 참여자 또는 방장만 조회할 수 있도록 제한합니다.
      *
-     * @param code 로비 초대 코드
+     * @param code      로비 초대 코드
      * @param principal JWT에서 추출한 인증 주체
      * @return 로비 상세 응답
      */
@@ -359,7 +282,8 @@ public class LobbyService {
                 .title(lobbyInfo.title())
                 .hostId(lobbyInfo.hostId())
                 .maxPlayers(lobbyInfo.maxPlayers())
-                .currentPlayers(Math.max(lobbyInfo.currentPlayers(), players.size()))                .status(lobbyInfo.status())
+                .currentPlayers(Math.max(lobbyInfo.currentPlayers(), players.size()))
+                .status(lobbyInfo.status())
                 .mapId(lobbyInfo.mapId())
                 .mapTitle(lobbyInfo.mapTitle())
                 .mapCategory(lobbyInfo.mapCategory())
@@ -383,7 +307,7 @@ public class LobbyService {
      * 7. DB 로비 상태를 PLAYING으로 변경
      * 8. 로비 참여자에게 게임 시작 이벤트 브로드캐스트
      *
-     * @param code 로비 초대 코드
+     * @param code      로비 초대 코드
      * @param principal JWT에서 추출한 인증 주체
      */
     @Transactional
@@ -410,11 +334,12 @@ public class LobbyService {
         validateMapSongCount(quizMap, gameLobby);
 
         /*
-         * Redis Lua가 status=PLAYING으로 변경하기 전에 트랜잭션 동기화 활성 여부를 확인한다.
+         * Redis Lua가 status=PLAYING으로 변경되기 전에 트랜잭션 동기화 활성 여부를 확인합니다.
          *
-         * 이 검증이 없으면 Redis는 PLAYING으로 바뀐 뒤
-         * afterCommit 이벤트 등록 단계에서 500이 발생할 수 있다.
-         * 그 경우 클라이언트는 GAME_STARTED를 받지 못하고, Redis/DB 상태 불일치도 남을 수 있다.
+         * 이 검증이 없으면 Redis는 PLAYING으로 바뀐 뒤,
+         * afterCommit 이벤트 등록 단계에서 500이 발생할 수 있습니다.
+         * 그 경우 클라이언트는 GAME_STARTED를 받지 못하고,
+         * Redis/DB 상태 불일치도 남을 수 있습니다.
          */
         validateTransactionSynchronizationForGameStart(code, requesterIdentifier);
 
@@ -471,9 +396,10 @@ public class LobbyService {
      *
      * [처리 정책]
      * 이 상태에서는 roundCount, timeLimitSeconds, DB 상태 동기화 대상이 없으므로
-     * 게임 시작을 진행할 수 없다.
+     * 게임 시작을 진행할 수 없습니다.
      *
-     * 따라서 Redis 잔존 로비를 보상 삭제하고, 삭제 실패 시 재처리 큐에 적재한다.
+     * 따라서 Redis 잔존 로비를 보상 삭제하고,
+     * 삭제 실패 시 재처리 큐에 적재합니다.
      */
     private GameLobby handleMissingGameLobbySnapshot(
             String code,
@@ -482,7 +408,7 @@ public class LobbyService {
         log.error(
                 "{} Redis 로비는 존재하지만 DB GAME_LOBBY 스냅샷이 없습니다. "
                         + "Redis 잔존 로비 보상 삭제를 시도합니다. code: {}, requester: {}",
-                "[ALERT_REQUIRED]",
+                LOG_ALERT_REQUIRED,
                 code,
                 requesterIdentifier
         );
@@ -497,7 +423,7 @@ public class LobbyService {
 
             log.error(
                     "{} DB 스냅샷 누락 로비 Redis 삭제 실패 - 재처리 큐 적재 완료. code: {}, requester: {}",
-                    "[ALERT_REQUIRED]",
+                    LOG_ALERT_REQUIRED,
                     code,
                     requesterIdentifier
             );
@@ -513,13 +439,12 @@ public class LobbyService {
      * 게임 시작 처리 전 트랜잭션 동기화 활성 여부를 검증한다.
      *
      * [이유]
-     * GAME_STARTED 이벤트는 DB GAME_LOBBY 상태가 PLAYING으로 커밋된 이후에만 발행되어야 한다.
-     * 따라서 afterCommit 등록이 가능한 트랜잭션 동기화 상태가 아니면 게임 시작 처리를 진행하면 안 된다.
+     * GAME_STARTED 이벤트는 DB GAME_LOBBY 상태가 PLAYING으로 커밋된 이후에만 발행되어야 합니다.
+     * 따라서 afterCommit 등록이 가능한 트랜잭션 동기화 상태가 아니면
+     * 게임 시작 처리를 진행하면 안 됩니다.
      *
      * [중요]
-     * 이 검증은 Redis start_lobby.lua 실행 전에 수행해야 한다.
-     * Redis가 먼저 PLAYING으로 바뀐 뒤 이벤트 등록이 실패하면 클라이언트가 GAME_STARTED를 받지 못하고,
-     * Redis-DB 상태 불일치가 남을 수 있다.
+     * 이 검증은 Redis start_lobby.lua 실행 전에 수행해야 합니다.
      */
     private void validateTransactionSynchronizationForGameStart(
             String code,
@@ -543,9 +468,6 @@ public class LobbyService {
         );
     }
 
-    /**
-     * 게임 시작 이벤트를 DB 트랜잭션 커밋 이후에 발행한다.
-     */
     /**
      * 게임 시작 이벤트를 DB 트랜잭션 커밋 이후에 발행한다.
      */
@@ -586,8 +508,8 @@ public class LobbyService {
      * - 로비 참여자만 준비 상태를 변경할 수 있다.
      * - 방장은 준비 대상에서 제외하고, 게임 시작 버튼으로 역할을 대체한다.
      *
-     * @param code 로비 초대 코드
-     * @param request 준비 상태 변경 요청
+     * @param code      로비 초대 코드
+     * @param request   준비 상태 변경 요청
      * @param principal JWT에서 추출한 인증 주체
      */
     public void updateReadyStatus(
@@ -679,8 +601,8 @@ public class LobbyService {
     /**
      * 맵의 문제 수가 로비 라운드 수 이상인지 검증한다.
      *
-     * Data API 없이 게임을 운영하므로, 실제 출제 가능 여부는
-     * 맵에 저장된 문제 수(numOfSong)를 기준으로 판단한다.
+     * Data API 없이 게임을 운영하므로,
+     * 실제 출제 가능 여부는 맵에 저장된 문제 수(numOfSong)를 기준으로 판단합니다.
      */
     private void validateMapSongCount(QuizMap quizMap, GameLobby gameLobby) {
         Integer numOfSong = quizMap.getNumOfSong();
@@ -771,7 +693,7 @@ public class LobbyService {
      * 요청자가 로비 방장인지 확인한다.
      *
      * Redis 로비 정보의 hostId는 userIdentifier 기준으로 저장되므로,
-     * JWT principal의 userIdentifier와 직접 비교한다.
+     * JWT principal의 userIdentifier와 직접 비교합니다.
      */
     private boolean isLobbyHost(JoinLobbyResponse lobbyInfo, String userIdentifier) {
         return lobbyInfo.hostId() != null && lobbyInfo.hostId().equals(userIdentifier);
@@ -781,7 +703,7 @@ public class LobbyService {
      * 로비 상세 조회 권한을 확인한다.
      *
      * [정책]
-     * - 방장은 참여자 Set 누락 여부와 관계없이 조회할 수 있다.
+     * - 방장은 participants Set 누락 여부와 관계없이 조회할 수 있다.
      * - 일반 유저는 WebSocket 구독으로 participants Set에 등록된 이후 조회할 수 있다.
      */
     private boolean canAccessLobbyDetail(
@@ -800,8 +722,8 @@ public class LobbyService {
      * 참여자 식별자를 로비 상세 응답용 플레이어 DTO로 변환한다.
      *
      * [방장 ready 정책]
-     * 방장은 ready 대상에서 제외하므로 ready=false로 내려간다.
-     * FE는 host=true 여부를 기준으로 ready 버튼을 숨김 처리
+     * 방장은 ready 대상에서 제외하므로 ready=false로 내려갑니다.
+     * FE는 host=true 여부를 기준으로 ready 버튼을 숨김 처리합니다.
      */
     private LobbyPlayerResponse toLobbyPlayerResponse(
             String participantIdentifier,
@@ -822,9 +744,9 @@ public class LobbyService {
      * 로비 상세 응답의 canStart 값을 계산한다.
      *
      * [역할]
-     * canStart는 FE의 게임 시작 버튼 활성화를 위한 조회 시점 snapshot 값이다.
+     * canStart는 FE의 게임 시작 버튼 활성화를 위한 조회 시점 snapshot 값입니다.
      * 실제 게임 시작 가능 여부는 POST /api/lobbies/{code}/start에서
-     * start_lobby.lua가 Redis 기준으로 최종 검증한다.
+     * start_lobby.lua가 Redis 기준으로 최종 검증합니다.
      *
      * [start_lobby.lua와 동일하게 맞추는 조건]
      * - 로비 상태가 WAITING이어야 한다.
@@ -835,14 +757,6 @@ public class LobbyService {
      * [start_lobby.lua보다 Java에서 추가로 확인하는 조건]
      * - DB GAME_LOBBY 스냅샷이 존재해야 한다.
      * - 맵 문제 수가 roundCount 이상이어야 한다.
-     *
-     * [의도적으로 완전히 동일하지 않은 부분]
-     * start_lobby.lua는 게임 시작 직전에 participants Set의 stale participant 여부를
-     * user_session 키로 한 번 더 검증한다.
-     * canStart는 상세 조회 시점 snapshot이므로 stale participant까지 완전히 확정하지 않는다.
-     *
-     * 따라서 canStart=true여도 사용자가 퇴장/ready 해제/세션 만료를 겪으면
-     * /start는 409 Conflict로 실패할 수 있다.
      */
     private boolean calculateCanStart(
             JoinLobbyResponse lobbyInfo,
@@ -876,9 +790,9 @@ public class LobbyService {
      * 로비에 연결된 맵의 문제 수가 설정된 라운드 수 이상인지 확인한다.
      *
      * [필요 이유]
-     * Data API 없이 저장된 맵 문제 수(numOfSong)를 기준으로 출제 가능 여부를 판단한다.
+     * Data API 없이 저장된 맵 문제 수(numOfSong)를 기준으로 출제 가능 여부를 판단합니다.
      * 이 조건은 실제 게임 시작 API에서도 검증하므로,
-     * canStart 계산에서도 동일하게 반영해야 한다.
+     * canStart 계산에서도 동일하게 반영해야 합니다.
      *
      * @param gameLobby DB에 저장된 로비 스냅샷
      * @return 맵 문제 수가 라운드 수 이상이면 true
@@ -898,76 +812,16 @@ public class LobbyService {
     }
 
     /**
-     * 로비 생성 시 선택된 맵의 접근 가능 여부를 검증하고,
-     * Redis 저장에 필요한 최소 메타데이터로 변환합니다.
-     *
-     * [정책]
-     * - mapId가 null이면 맵 미선택 로비로 생성한다.
-     * - 삭제된 맵은 선택할 수 없다.
-     * - 공개 맵은 누구나 로비에 연결할 수 있다.
-     * - 비공개 맵은 소유자만 로비에 연결할 수 있다.
-     *
-     * @param mapId 요청으로 전달된 맵 ID
-     * @param requesterUserId 로비 생성 요청자의 DB userId
-     * @return 선택된 맵 메타데이터. 맵 미선택 시 null.
-     */
-    private LobbyMapMetadata resolveLobbyMapMetadata(Long mapId, Long requesterUserId) {
-        if (mapId == null) {
-            return null;
-        }
-
-        QuizMap quizMap = quizMapJpaRepository.findById(mapId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_MAP_NOT_FOUND
-                ));
-
-        if (Boolean.TRUE.equals(quizMap.getIsDeleted())) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    ERROR_MAP_DELETED
-            );
-        }
-
-        if (!canUseMap(quizMap, requesterUserId)) {
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
-                    ERROR_PRIVATE_MAP_FORBIDDEN
-            );
-        }
-
-        return new LobbyMapMetadata(
-                quizMap.getId(),
-                quizMap.getTitle(),
-                quizMap.getCategory().value()
-        );
-    }
-
-    /**
-     * 요청자가 해당 맵을 로비에 연결할 수 있는지 검증한다.
-     *
-     * 공개 맵은 누구나 사용할 수 있고, 비공개 맵은 맵 소유자만 사용할 수 있다.
-     */
-    private boolean canUseMap(QuizMap quizMap, Long requesterUserId) {
-        if (Boolean.TRUE.equals(quizMap.getIsPublic())) {
-            return true;
-        }
-
-        return quizMap.getOwner() != null
-                && quizMap.getOwner().getId() != null
-                && quizMap.getOwner().getId().equals(requesterUserId);
-    }
-
-    /**
      * 로비 상세 응답에서 방장 정보가 누락되지 않도록 보정한다.
      *
      * [필요 이유]
-     * 정상 흐름에서는 로비 생성 시 방장이 participants Set에 포함되어야 한다.
+     * 정상 흐름에서는 로비 생성 시 방장이 participants Set에 포함되어야 합니다.
      * 다만 Redis 데이터 손상, 과거 데이터, WebSocket 입장 상태 불일치가 있으면
-     * participants Set에서 방장이 누락될 수 있다.
+     * participants Set에서 방장이 누락될 수 있습니다.
      *
-     * FE 대기실 UI는 players 목록의 host=true 값을 기준으로 방장 표시/시작 버튼/ready 버튼을 분기하므로,
-     * 상세 응답에서는 hostId가 존재하면 players 목록에 방장을 보장한다.
+     * FE 대기실 UI는 players 목록의 host=true 값을 기준으로
+     * 방장 표시/시작 버튼/ready 버튼을 분기하므로,
+     * 상세 응답에서는 hostId가 존재하면 players 목록에 방장을 보장합니다.
      */
     private List<String> includeHostIfMissing(
             List<String> participantIdentifiers,

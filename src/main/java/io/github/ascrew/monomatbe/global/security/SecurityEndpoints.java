@@ -22,6 +22,9 @@ public final class SecurityEndpoints {
     // 로그인
     public static final String AUTH_LOGIN = "/api/auth/login";
 
+    // 토큰 재발급
+    public static final String AUTH_REFRESH = "/api/auth/refresh";
+
 
     // Swagger (dev 허용 / prod 차단)
 
@@ -39,7 +42,7 @@ public final class SecurityEndpoints {
      */
     public static String[] publicEndpoints() {
         return new String[] {
-                WS, AUTH_GUEST, AUTH_REGISTER, AUTH_LOGIN
+                WS, AUTH_GUEST, AUTH_REGISTER, AUTH_LOGIN, AUTH_REFRESH
         };
     }
 

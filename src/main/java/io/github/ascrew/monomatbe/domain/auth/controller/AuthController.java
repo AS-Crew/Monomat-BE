@@ -4,21 +4,31 @@ import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginResponse;
 import io.github.ascrew.monomatbe.domain.auth.dto.LoginRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.LoginResponse;
+import io.github.ascrew.monomatbe.domain.auth.dto.LogoutResponse;
+import io.github.ascrew.monomatbe.domain.auth.dto.RefreshTokenRequest;
+import io.github.ascrew.monomatbe.domain.auth.dto.RefreshTokenResponse;
 import io.github.ascrew.monomatbe.domain.auth.dto.RegisterRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.RegisterResponse;
 import io.github.ascrew.monomatbe.domain.auth.service.GuestAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.LoginAuthService;
+import io.github.ascrew.monomatbe.domain.auth.service.LogoutAuthService;
+import io.github.ascrew.monomatbe.domain.auth.service.RefreshAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.RegisterAuthService;
+import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequiredArgsConstructor
@@ -28,6 +38,11 @@ public class AuthController {
     private final GuestAuthService guestAuthService;
     private final RegisterAuthService registerAuthService;
     private final LoginAuthService loginAuthService;
+    private final RefreshAuthService refreshAuthService;
+    private final LogoutAuthService logoutAuthService;
+
+    @Value("${auth.network.trust-forwarded-headers:false}")
+    private boolean trustForwardedHeaders;
 
     /**
      * 게스트 로그인 엔드포인트
@@ -35,8 +50,15 @@ public class AuthController {
      */
     @Operation(summary = "게스트 로그인", description = "닉네임으로 게스트 계정/세션을 생성하고 토큰 정보를 반환합니다.")
     @PostMapping("/guest")
-    public ResponseEntity<GuestLoginResponse> guestLogin(@Valid @RequestBody GuestLoginRequest request) {
-        return ResponseEntity.ok(guestAuthService.loginAsGuest(request.nickname()));
+    public ResponseEntity<GuestLoginResponse> guestLogin(
+            @Valid @RequestBody GuestLoginRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        return ResponseEntity.ok(guestAuthService.loginAsGuest(
+                request.nickname(),
+                resolveClientIp(httpServletRequest),
+                httpServletRequest.getHeader("User-Agent")
+        ));
     }
 
     /**
@@ -72,10 +94,39 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "토큰 재발급", description = "Refresh Token Rotation(RTR)으로 Access/Refresh 토큰을 재발급합니다.")
+    @PostMapping("/refresh")
+    public ResponseEntity<RefreshTokenResponse> refresh(
+            @Valid @RequestBody RefreshTokenRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        RefreshTokenResponse response = refreshAuthService.refresh(
+                request.refreshToken(),
+                resolveClientIp(httpServletRequest),
+                httpServletRequest.getHeader("User-Agent")
+        );
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "로그아웃", description = "Access Token을 블랙리스트 처리하고 현재 세션을 종료합니다.")
+    @PostMapping("/logout")
+    public ResponseEntity<LogoutResponse> logout(
+            @AuthenticationPrincipal CustomPrincipal principal,
+            @RequestHeader("Authorization") String authorizationHeader
+    ) {
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 정보가 없습니다.");
+        }
+        logoutAuthService.logout(principal.userId(), principal.userIdentifier(), authorizationHeader);
+        return ResponseEntity.ok(new LogoutResponse("로그아웃이 완료되었습니다."));
+    }
+
     private String resolveClientIp(HttpServletRequest request) {
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isBlank()) {
-            return forwardedFor.split(",")[0].trim();
+        if (trustForwardedHeaders) {
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.isBlank()) {
+                return forwardedFor.split(",")[0].trim();
+            }
         }
         return request.getRemoteAddr();
     }

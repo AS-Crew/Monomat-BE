@@ -7,11 +7,11 @@
  * - 로비 상세 조회 접근 권한 검증
  * - 참여자 목록 조회 및 방장 누락 보정
  * - ready 상태 조회 및 플레이어 응답 조립
- * - 조회 시점의 canStart 계산
+ * - 조회 시점의 canStart 계산 위임
  *
  * [주의]
  * canStart는 실제 게임 시작 가능 여부를 확정하는 값이 아니다.
- * FE의 시작 버튼 활성화를 위한 조회 시점 snapshot 값으로 활용한다.
+ * FE의 시작 버튼 활성화를 위한 조회 시점 snapshot 값이다.
  * 실제 시작 가능 여부는 POST /api/lobbies/{code}/start에서 Redis Lua로 최종 검증한다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
@@ -21,10 +21,8 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
-import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,20 +57,9 @@ public class LobbyQueryService {
 
     private static final String LOG_ALERT_REQUIRED = "[ALERT_REQUIRED]";
 
-    // =========================================================
-    // 비즈니스 규칙 상수
-    // =========================================================
-
-    /**
-     * 로비 시작 가능 여부 계산 기준 상태
-     *
-     * Redis Hash에서 읽은 status 문자열과 비교하므로 name() 값으로 관리한다.
-     */
-    private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
-
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
-    private final QuizMapJpaRepository quizMapJpaRepository;
+    private final LobbyCanStartPolicy lobbyCanStartPolicy;
 
     /**
      * 공개 로비 목록을 조회한다.
@@ -156,7 +143,11 @@ public class LobbyQueryService {
         GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
                 .orElse(null);
 
-        boolean canStart = calculateCanStart(lobbyInfo, players, gameLobby);
+        boolean canStart = lobbyCanStartPolicy.calculateCanStart(
+                lobbyInfo,
+                players,
+                gameLobby
+        );
 
         return LobbyDetailResponse.builder()
                 .inviteCode(lobbyInfo.inviteCode())
@@ -224,79 +215,6 @@ public class LobbyQueryService {
                 host,
                 ready
         );
-    }
-
-    /**
-     * 로비 상세 응답의 canStart 값을 계산한다.
-     *
-     * [역할]
-     * canStart는 FE의 게임 시작 버튼 활성화를 위한 조회 시점 snapshot 값이다.
-     * 실제 게임 시작 가능 여부는 POST /api/lobbies/{code}/start에서
-     * start_lobby.lua가 Redis 기준으로 최종 검증한다.
-     *
-     * [start_lobby.lua와 동일하게 맞추는 조건]
-     * - 로비 상태가 WAITING이어야 한다.
-     * - mapId가 존재해야 한다.
-     * - 방장을 제외한 참여자가 1명 이상이어야 한다.
-     * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
-     *
-     * [start_lobby.lua보다 Java에서 추가로 확인하는 조건]
-     * - DB GAME_LOBBY 스냅샷이 존재해야 한다.
-     * - 맵 문제 수가 roundCount 이상이어야 한다.
-     *
-     * [추후 리팩토링]
-     * Issue #78 후속 단계에서 LobbyStartPolicy 또는 LobbyCanStartPolicy로 분리할 수 있습니다.
-     */
-    private boolean calculateCanStart(
-            JoinLobbyResponse lobbyInfo,
-            List<LobbyPlayerResponse> players,
-            GameLobby gameLobby
-    ) {
-        if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
-            return false;
-        }
-
-        if (lobbyInfo.mapId() == null) {
-            return false;
-        }
-
-        if (!hasEnoughSongsForRound(gameLobby)) {
-            return false;
-        }
-
-        List<LobbyPlayerResponse> nonHostPlayers = players.stream()
-                .filter(player -> !player.host())
-                .toList();
-
-        if (nonHostPlayers.isEmpty()) {
-            return false;
-        }
-
-        return nonHostPlayers.stream().allMatch(LobbyPlayerResponse::ready);
-    }
-
-    /**
-     * 로비에 연결된 맵의 문제 수가 설정된 라운드 수 이상인지 확인한다.
-     *
-     * [필요 이유]
-     * Data API 없이 저장된 맵 문제 수(numOfSong)를 기준으로 출제 가능 여부를 판단한다.
-     * 이 조건은 실제 게임 시작 API에서도 검증하므로, canStart 계산에서도 동일하게 반영해야 한다.
-     *
-     * @param gameLobby DB에 저장된 로비 스냅샷
-     * @return 맵 문제 수가 라운드 수 이상이면 true
-     */
-    private boolean hasEnoughSongsForRound(GameLobby gameLobby) {
-        if (gameLobby == null || gameLobby.getMapId() == null || gameLobby.getRoundCount() == null) {
-            return false;
-        }
-
-        return quizMapJpaRepository.findById(gameLobby.getMapId())
-                .filter(quizMap -> !Boolean.TRUE.equals(quizMap.getIsDeleted()))
-                .map(quizMap -> {
-                    Integer numOfSong = quizMap.getNumOfSong();
-                    return numOfSong != null && numOfSong >= gameLobby.getRoundCount();
-                })
-                .orElse(false);
     }
 
     /**

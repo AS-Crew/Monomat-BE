@@ -25,57 +25,46 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * 로비 Redis Repository 구현체.
+ * 로비 Redis Repository 구현체
  *
- * [현재 책임]
- * 이 클래스는 기존 LobbyRepository 인터페이스 계약을 유지하는 facade 역할을 합니다.
- * 세부 Redis 책임은 역할별 컴포넌트로 분리합니다.
+ * [역할]
+ * 이 클래스는 기존 LobbyRepository 인터페이스 계약을 유지하는 Facade
+ * Redis 접근 세부 책임은 역할별 하위 컴포넌트로 위임한다.
  *
- * [분리 완료]
+ * [분리된 책임]
  * - 초대 코드 생성: LobbyInviteCodeGenerator
- * - Lua 결과 매핑: LobbyLuaResultMapper
  * - Lua 실행: LobbyLuaScriptExecutor
+ * - Lua 결과 매핑: LobbyLuaResultMapper
  * - Redis 조회: LobbyRedisQueryRepository
  * - Redis command: LobbyRedisCommandRepository
  * - start reconciliation queue: LobbyStartReconciliationRepository
- *
- * [중요]
- * 이번 리팩토링은 외부 서비스 계층의 의존성을 바꾸지 않기 위한 내부 구조 개선입니다.
- * 따라서 LobbyRepository 인터페이스, Redis key 구조, Lua script 계약은 변경하지 않습니다.
  */
 @Slf4j
 @Repository
 @RequiredArgsConstructor
 public class LobbyRepositoryImpl implements LobbyRepository {
 
+  private static final String CREATE_LOBBY_RESULT_OK = "OK";
+  private static final String CREATE_LOBBY_RESULT_LOCK_FAILED = "LOCK_FAILED";
+
+  private static final String ERROR_INVITE_CODE_EXHAUSTED =
+          "초대 코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
+
+  private static final String ERROR_REDIS_SCRIPT_NULL =
+          "Redis 스크립트 실행 결과가 null입니다. Redis 연결 상태를 확인해주세요.";
+
+  private static final String ERROR_REDIS_SCRIPT_UNKNOWN_RESULT =
+          "Redis 로비 생성 처리 결과가 유효하지 않습니다.";
+
   private final LobbyInviteCodeGenerator lobbyInviteCodeGenerator;
-  private final LobbyLuaResultMapper lobbyLuaResultMapper;
   private final LobbyLuaScriptExecutor lobbyLuaScriptExecutor;
+  private final LobbyLuaResultMapper lobbyLuaResultMapper;
   private final LobbyRedisQueryRepository lobbyRedisQueryRepository;
   private final LobbyRedisCommandRepository lobbyRedisCommandRepository;
   private final LobbyStartReconciliationRepository lobbyStartReconciliationRepository;
 
   // =========================================================
-  // create_lobby.lua 반환값 상수
-  // =========================================================
-
-  private static final String RESULT_OK = "OK";
-  private static final String RESULT_LOCK_FAILED = "LOCK_FAILED";
-
-  /** 초대 코드 생성 실패 시 반환할 에러 메시지 */
-  private static final String ERROR_INVITE_CODE_EXHAUSTED =
-          "초대 코드 생성에 실패했습니다. 잠시 후 다시 시도해주세요.";
-
-  /** Lua 스크립트 null 반환 시 에러 메시지 */
-  private static final String ERROR_REDIS_SCRIPT_NULL =
-          "Redis 스크립트 실행 결과가 null입니다. Redis 연결 상태를 확인해주세요.";
-
-  /** Lua 스크립트가 예상하지 못한 값을 반환했을 때의 에러 메시지 */
-  private static final String ERROR_REDIS_SCRIPT_UNKNOWN_RESULT =
-          "Redis 로비 생성 처리 결과가 유효하지 않습니다.";
-
-  // =========================================================
-  // Redis 조회 위임
+  // Redis Query
   // =========================================================
 
   @Override
@@ -114,7 +103,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   // =========================================================
-  // Redis command 위임
+  // Redis Command
   // =========================================================
 
   @Override
@@ -133,12 +122,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   // =========================================================
-  // Lua 기반 로비 상태 변경
+  // Lua-backed State Transition
   // =========================================================
 
-  /**
-   * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환합니다.
-   */
   @Override
   public String saveToRedis(
           CreateLobbyRequest request,
@@ -156,30 +142,33 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       );
 
       if (result == null) {
-        log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. 코드: {}", candidate);
+        log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. code: {}", candidate);
+
         throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
                 ERROR_REDIS_SCRIPT_NULL
         );
       }
 
-      if (RESULT_OK.equals(result)) {
+      if (CREATE_LOBBY_RESULT_OK.equals(result)) {
         log.info(
-                "로비 Redis 저장 완료 - 코드: {}, 방장: {}, mapId: {}",
+                "로비 Redis 저장 완료 - code: {}, host: {}, mapId: {}",
                 candidate,
                 userIdentifier,
                 mapMetadata != null ? mapMetadata.mapId() : null
         );
+
         return candidate;
       }
 
-      if (RESULT_LOCK_FAILED.equals(result)) {
+      if (CREATE_LOBBY_RESULT_LOCK_FAILED.equals(result)) {
         log.warn(
-                "초대 코드 충돌 - 재시도 {}/{}: {}",
+                "초대 코드 충돌 - retry: {}/{}, code: {}",
                 attempt + 1,
                 LobbyDefaults.INVITE_CODE_MAX_RETRY,
                 candidate
         );
+
         continue;
       }
 
@@ -205,11 +194,18 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   public LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId) {
     try {
       String result = lobbyLuaScriptExecutor.executeLeaveLobby(code, userId);
-      LeaveLobbyResult leaveResult = lobbyLuaResultMapper.toLeaveLobbyResult(result, code, userId);
 
-      lobbyRedisCommandRepository.cleanupReadyStatusAfterLeave(code, userId, leaveResult);
+      LeaveLobbyResult leaveResult =
+              lobbyLuaResultMapper.toLeaveLobbyResult(result, code, userId);
+
+      lobbyRedisCommandRepository.cleanupReadyStatusAfterLeave(
+              code,
+              userId,
+              leaveResult
+      );
 
       return leaveResult;
+
     } catch (Exception e) {
       return new LeaveLobbyResult.Error("Lua 스크립트 실행 중 예외 발생: " + e.getMessage());
     }
@@ -267,9 +263,16 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               requesterIdentifier
       );
 
-      String result = lobbyLuaScriptExecutor.executeStartLobby(code, requesterIdentifier);
+      String result = lobbyLuaScriptExecutor.executeStartLobby(
+              code,
+              requesterIdentifier
+      );
 
-      return lobbyLuaResultMapper.toStartLobbyResult(result, code, requesterIdentifier);
+      return lobbyLuaResultMapper.toStartLobbyResult(
+              result,
+              code,
+              requesterIdentifier
+      );
 
     } catch (Exception e) {
       log.error(
@@ -284,7 +287,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   // =========================================================
-  // Start reconciliation queue 위임
+  // Start Reconciliation
   // =========================================================
 
   @Override

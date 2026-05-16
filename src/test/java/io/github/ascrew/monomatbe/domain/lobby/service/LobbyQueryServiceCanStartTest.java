@@ -9,7 +9,6 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,27 +21,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-class LobbyServiceCanStartTest {
+/**
+ * LobbyQueryService의 로비 상세 조회 응답 중 canStart 계산을 검증한다.
+ *
+ * [변경 배경]
+ * Issue #78에서 LobbyService facade를 제거하고,
+ * 로비 상세 조회 책임을 LobbyQueryService로 분리했습니다.
+ *
+ * canStart 계산 자체는 LobbyCanStartPolicy가 담당하지만,
+ * 이 테스트는 "로비 상세 조회 결과에 canStart가 올바르게 반영되는지"를 검증하므로
+ * LobbyQueryService 기준으로 유지합니다.
+ */
+class LobbyQueryServiceCanStartTest {
 
     private LobbyRepository lobbyRepository;
     private GameLobbyJpaRepository gameLobbyJpaRepository;
     private QuizMapJpaRepository quizMapJpaRepository;
-    private LobbyService lobbyService;
+    private LobbyQueryService lobbyQueryService;
 
     @BeforeEach
     void setUp() {
         lobbyRepository = mock(LobbyRepository.class);
-        LobbyEventService lobbyEventService = mock(LobbyEventService.class);
         gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
         quizMapJpaRepository = mock(QuizMapJpaRepository.class);
 
-        lobbyService = new LobbyService(
-                lobbyRepository,
-                lobbyEventService,
-                gameLobbyJpaRepository,
-                userRepository,
+        LobbyCanStartPolicy lobbyCanStartPolicy = new LobbyCanStartPolicy(
                 quizMapJpaRepository
+        );
+
+        lobbyQueryService = new LobbyQueryService(
+                lobbyRepository,
+                gameLobbyJpaRepository,
+                lobbyCanStartPolicy
         );
     }
 
@@ -59,7 +69,7 @@ class LobbyServiceCanStartTest {
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
         when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(5)));
 
-        LobbyDetailResponse response = lobbyService.getLobbyDetail(
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
                 code,
                 new CustomPrincipal(1L, hostId, UserType.GUEST)
         );
@@ -80,7 +90,7 @@ class LobbyServiceCanStartTest {
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
         when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(5)));
 
-        LobbyDetailResponse response = lobbyService.getLobbyDetail(
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
                 code,
                 new CustomPrincipal(1L, hostId, UserType.GUEST)
         );
@@ -101,7 +111,7 @@ class LobbyServiceCanStartTest {
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
         when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(4)));
 
-        LobbyDetailResponse response = lobbyService.getLobbyDetail(
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
                 code,
                 new CustomPrincipal(1L, hostId, UserType.GUEST)
         );

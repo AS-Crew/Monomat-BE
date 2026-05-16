@@ -14,7 +14,9 @@
  *
  * [1단계]
  * - createLobby() 로직을 LobbyCreateService로 분리
- * - LobbyService#createLobby()는 facade 위임만 수행
+ *
+ * [2단계]
+ * - joinLobby() 로직을 LobbyJoinService로 분리
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -61,8 +63,6 @@ public class LobbyService {
             "존재하지 않는 로비입니다.";
     private static final String ERROR_LOBBY_NOT_WAITING =
             "게임이 이미 시작된 로비에는 입장할 수 없습니다.";
-    private static final String ERROR_LOBBY_FULL =
-            "최대 인원에 도달한 로비입니다.";
     private static final String ERROR_READY_FORBIDDEN =
             "로비 참여자만 준비 상태를 변경할 수 있습니다.";
     private static final String ERROR_HOST_READY_NOT_ALLOWED =
@@ -102,10 +102,6 @@ public class LobbyService {
     // 로그 메시지 상수
     // =========================================================
 
-    private static final String LOG_JOIN_LOBBY_REQUEST =
-            "로비 입장 요청 - 초대 코드: {}, 식별자: {}";
-    private static final String LOG_JOIN_LOBBY_SUCCESS =
-            "로비 입장 사전 검증 통과 - 초대 코드: {}, 식별자: {}, 현재 인원: {}/{}";
     private static final String LOG_ALERT_REQUIRED = "[ALERT_REQUIRED]";
 
     // =========================================================
@@ -113,15 +109,16 @@ public class LobbyService {
     // =========================================================
 
     /**
-     * 입장 가능한 로비 상태.
+     * 입장/조회/ready/start에서 기준으로 사용하는 대기 상태.
      *
-     * PLAYING, FINISHED 상태의 로비에는 입장할 수 없습니다.
-     * LobbyStatus enum을 직접 비교하지 않고 Redis에서 읽은 문자열과 비교하므로
-     * name()으로 변환하여 상수로 관리합니다.
+     * 현재 이 상수는 아직 LobbyService 내부의 ready, detail, start 관련 로직에서 사용됩니다.
+     * 추후 LobbyQueryService, LobbyReadyService, LobbyStartService 분리 단계에서
+     * 각 유스케이스 서비스로 이동할 예정입니다.
      */
     private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
 
     private final LobbyCreateService lobbyCreateService;
+    private final LobbyJoinService lobbyJoinService;
     private final LobbyRepository lobbyRepository;
     private final LobbyEventService lobbyEventService;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
@@ -134,9 +131,6 @@ public class LobbyService {
      * 실제 로비 생성 책임은 LobbyCreateService로 이동했습니다.
      * 기존 LobbyController의 의존성을 유지하기 위해 동일한 public method 계약만 남깁니다.
      *
-     * [주의]
-     * 트랜잭션은 실제 유스케이스 서비스인 LobbyCreateService#createLobby()에서 관리합니다.
-     *
      * @param request   로비 생성 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
      * @return 생성된 로비 정보 응답 DTO
@@ -146,61 +140,22 @@ public class LobbyService {
     }
 
     /**
-     * 초대 코드 기반 로비 입장 사전 검증을 수행하고 로비 정보를 반환한다.
+     * 초대 코드 기반 로비 입장 사전 검증 facade 메서드.
      *
-     * [책임 범위]
-     * 이 메서드는 입장 허가 검증만 담당한다.
-     * 실제 Redis 참여자 등록은 클라이언트가 WebSocket을 연결하고,
-     * /topic/lobby/{code}를 구독하는 시점에 enter_lobby.lua로 처리된다.
+     * [Issue #78 - 2단계]
+     * 실제 입장 사전 검증 책임은 LobbyJoinService로 이동했습니다.
+     * 기존 LobbyController의 의존성을 유지하기 위해 동일한 public method 계약만 남깁니다.
      *
-     * [검증 순서]
-     * Redis 조회 횟수를 최소화하기 위해 HGETALL 1회로 로비 존재 여부와
-     * 상태를 동시에 확인하고, 이후 SCARD 1회로 인원을 확인한다.
-     *
-     * 1. 로비 존재 여부 확인
-     * 2. 로비 상태 확인
-     * 3. 인원 초과 확인
+     * [주의]
+     * 이 메서드는 실제 Redis 참여자 등록을 수행하지 않습니다.
+     * 실제 참여자 등록은 WebSocket SUBSCRIBE 시점에 enter_lobby.lua로 처리됩니다.
      *
      * @param inviteCode 로비 초대 코드
      * @param principal  JWT에서 추출한 인증 주체
      * @return 로비 응답 DTO
      */
     public JoinLobbyResponse joinLobby(String inviteCode, CustomPrincipal principal) {
-        if (principal == null || principal.userId() == null) {
-            log.warn("로비 입장 요청 거부 - principal 또는 userId가 null. inviteCode: {}", inviteCode);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
-        }
-
-        log.info(LOG_JOIN_LOBBY_REQUEST, inviteCode, principal.userIdentifier());
-
-        JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(inviteCode)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_LOBBY_NOT_FOUND
-                ));
-
-        if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
-        }
-
-        boolean alreadyParticipant = lobbyRepository.isParticipant(
-                inviteCode,
-                principal.userIdentifier()
-        );
-
-        if (!alreadyParticipant && lobbyInfo.currentPlayers() >= lobbyInfo.maxPlayers()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_FULL);
-        }
-
-        log.info(
-                LOG_JOIN_LOBBY_SUCCESS,
-                inviteCode,
-                principal.userIdentifier(),
-                lobbyInfo.currentPlayers(),
-                lobbyInfo.maxPlayers()
-        );
-
-        return lobbyInfo;
+        return lobbyJoinService.joinLobby(inviteCode, principal);
     }
 
     /**

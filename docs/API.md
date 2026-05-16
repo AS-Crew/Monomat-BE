@@ -167,6 +167,7 @@ Refresh Token을 검증하고 `Refresh Token Rotation` 정책으로 Access/Refre
 
 - `400 Bad Request`: `refreshToken` 누락/공백
 - `401 Unauthorized`: 유효하지 않거나 만료된 Refresh Token
+- `503 Service Unavailable`: 세션 저장소(Redis) 일시 장애
 
 ---
 

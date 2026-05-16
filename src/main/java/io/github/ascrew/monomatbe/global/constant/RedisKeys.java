@@ -52,6 +52,9 @@ public final class RedisKeys {
     /** Refresh Token 저장 키 접두사 */
     private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
 
+    /** 활성 세션 키 접두사 */
+    private static final String ACTIVE_SESSION_PREFIX = "auth:session:active:";
+
     /** Access Token 블랙리스트 키 접두사 */
     private static final String ACCESS_BLACKLIST_PREFIX = "auth:blacklist:access:";
 
@@ -254,6 +257,16 @@ public final class RedisKeys {
      */
     public static String refreshTokenKey(String sessionId) {
         return REFRESH_TOKEN_PREFIX + sessionId;
+    }
+
+    /**
+     * 활성 세션 키를 반환합니다.
+     *
+     * @param sessionId 세션 식별자(UUID)
+     * @return "auth:session:active:{sessionId}"
+     */
+    public static String activeSessionKey(String sessionId) {
+        return ACTIVE_SESSION_PREFIX + sessionId;
     }
 
     /**

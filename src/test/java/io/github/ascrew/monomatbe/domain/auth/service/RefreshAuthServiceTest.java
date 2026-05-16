@@ -10,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtClaims;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenWithExpiry;
 import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.AfterEach;
@@ -83,18 +84,19 @@ class RefreshAuthServiceTest {
         @SuppressWarnings("unchecked")
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(RedisKeys.refreshTokenKey(sessionId))).thenReturn(requestRefreshToken);
+        when(valueOperations.get(RedisKeys.refreshTokenKey(sessionId)))
+                .thenReturn(TokenHashUtils.sha256(requestRefreshToken));
 
         UserSession session = UserSession.builder()
                 .user(User.builder().id(userId).username("tester").userType(UserType.REGISTERED).status(UserStatus.ACTIVE).build())
                 .sessionId(sessionId)
-                .sessionToken(requestRefreshToken)
+                .sessionToken(TokenHashUtils.sha256(requestRefreshToken))
                 .expiresAt(LocalDateTime.now().plusMinutes(10))
                 .createdAt(LocalDateTime.now().minusMinutes(1))
                 .updatedAt(LocalDateTime.now().minusMinutes(1))
                 .status(UserSessionStatus.ACTIVE)
                 .build();
-        when(userSessionRepository.findBySessionId(sessionId)).thenReturn(Optional.of(session));
+        when(userSessionRepository.findBySessionIdForUpdate(sessionId)).thenReturn(Optional.of(session));
 
         TokenWithExpiry accessToken = new TokenWithExpiry("access-token-new", Instant.now().plusSeconds(600));
         TokenWithExpiry refreshToken = new TokenWithExpiry("refresh-token-new", Instant.now().plusSeconds(3600));
@@ -108,7 +110,7 @@ class RefreshAuthServiceTest {
         assertEquals(sessionId, response.userIdentifier());
         assertEquals("access-token-new", response.accessToken());
         assertEquals("refresh-token-new", response.refreshToken());
-        assertEquals("refresh-token-new", session.getSessionToken());
+        assertEquals(TokenHashUtils.sha256("refresh-token-new"), session.getSessionToken());
         assertEquals(LocalDateTime.ofInstant(refreshToken.expiresAt(), ZoneId.systemDefault()), session.getExpiresAt());
     }
 
@@ -124,11 +126,16 @@ class RefreshAuthServiceTest {
         when(claims.get(JwtClaims.SESSION_ID, String.class)).thenReturn(sessionId);
         when(jwtTokenProvider.parseClaims(requestRefreshToken)).thenReturn(claims);
 
-        @SuppressWarnings("unchecked")
-        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(RedisKeys.refreshTokenKey(sessionId))).thenReturn("different-token");
-        when(userSessionRepository.findBySessionId(sessionId)).thenReturn(Optional.empty());
+        UserSession session = UserSession.builder()
+                .user(User.builder().id(userId).username("tester").userType(UserType.REGISTERED).status(UserStatus.ACTIVE).build())
+                .sessionId(sessionId)
+                .sessionToken("different-hash")
+                .expiresAt(LocalDateTime.now().plusMinutes(10))
+                .createdAt(LocalDateTime.now().minusMinutes(1))
+                .updatedAt(LocalDateTime.now().minusMinutes(1))
+                .status(UserSessionStatus.ACTIVE)
+                .build();
+        when(userSessionRepository.findBySessionIdForUpdate(sessionId)).thenReturn(Optional.of(session));
 
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,

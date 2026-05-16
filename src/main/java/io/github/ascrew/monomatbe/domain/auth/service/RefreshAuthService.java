@@ -7,10 +7,12 @@ import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtClaims;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenWithExpiry;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,11 +24,13 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class RefreshAuthService {
 
     private static final String ERR_INVALID_REFRESH_TOKEN = "Refresh Token이 유효하지 않습니다.";
+    private static final String ERR_SESSION_STORE_TEMPORARY = "세션 저장소에 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final StringRedisTemplate redisTemplate;
@@ -41,28 +45,39 @@ public class RefreshAuthService {
         Long userId = extractUserId(claims);
         UserType userType = extractUserType(claims);
         String sessionId = extractSessionId(claims);
+        String refreshTokenHash = TokenHashUtils.sha256(refreshToken);
         LocalDateTime now = LocalDateTime.now();
 
-        String storedRefreshToken = redisTemplate.opsForValue().get(RedisKeys.refreshTokenKey(sessionId));
-        UserSession session = userSessionRepository.findBySessionId(sessionId)
+        UserSession session = userSessionRepository.findBySessionIdForUpdate(sessionId)
                 .orElse(null);
 
-        boolean validSession = storedRefreshToken != null
-                && storedRefreshToken.equals(refreshToken)
-                && session != null
-                && session.getSessionToken().equals(refreshToken)
-                && session.getUser().getId().equals(userId)
-                && session.isActiveAt(now);
+        if (session == null || !session.getUser().getId().equals(userId) || !session.isActiveAt(now)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+        }
 
-        if (!validSession) {
+        if (!matchesStoredRefreshToken(session.getSessionToken(), refreshToken, refreshTokenHash)) {
+            userSessionLifecycleService.revokeAllActiveSessions(userId, now);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+        }
+
+        String storedRefreshTokenHash;
+        try {
+            storedRefreshTokenHash = redisTemplate.opsForValue().get(RedisKeys.refreshTokenKey(sessionId));
+        } catch (RuntimeException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERR_SESSION_STORE_TEMPORARY);
+        }
+
+        if (storedRefreshTokenHash != null
+                && !matchesStoredRefreshToken(storedRefreshTokenHash, refreshToken, refreshTokenHash)) {
             userSessionLifecycleService.revokeAllActiveSessions(userId, now);
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
         }
 
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(userId, userType, sessionId);
         TokenWithExpiry rotatedRefreshToken = jwtTokenProvider.createRefreshToken(userId, userType, sessionId);
+        String rotatedRefreshTokenHash = TokenHashUtils.sha256(rotatedRefreshToken.token());
         session.rotate(
-                rotatedRefreshToken.token(),
+                rotatedRefreshTokenHash,
                 LocalDateTime.ofInstant(rotatedRefreshToken.expiresAt(), ZoneId.systemDefault()),
                 now,
                 normalizeOptionalLength(ipAddress, 45),
@@ -72,11 +87,21 @@ public class RefreshAuthService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                redisTemplate.opsForValue().set(
-                        RedisKeys.refreshTokenKey(sessionId),
-                        rotatedRefreshToken.token(),
-                        jwtTokenProvider.refreshTokenTtl()
-                );
+                try {
+                    redisTemplate.opsForValue().set(
+                            RedisKeys.refreshTokenKey(sessionId),
+                            rotatedRefreshTokenHash,
+                            jwtTokenProvider.refreshTokenTtl()
+                    );
+                    redisTemplate.opsForValue().set(
+                            RedisKeys.activeSessionKey(sessionId),
+                            "1",
+                            jwtTokenProvider.refreshTokenTtl()
+                    );
+                } catch (RuntimeException e) {
+                    log.error("Refresh 후 Redis 갱신 실패 - sessionId: {}", sessionId, e);
+                    userSessionLifecycleService.markSessionRevokedCompensating(sessionId, LocalDateTime.now());
+                }
             }
         });
 
@@ -89,6 +114,13 @@ public class RefreshAuthService {
                 .refreshToken(rotatedRefreshToken.token())
                 .refreshTokenExpiresAt(rotatedRefreshToken.expiresAt())
                 .build();
+    }
+
+    private boolean matchesStoredRefreshToken(String storedValue, String requestRawToken, String requestHash) {
+        if (storedValue == null || storedValue.isBlank()) {
+            return false;
+        }
+        return storedValue.equals(requestHash) || storedValue.equals(requestRawToken);
     }
 
     private Claims parseRefreshClaims(String refreshToken) {

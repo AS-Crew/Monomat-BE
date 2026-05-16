@@ -5,12 +5,15 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserCredential;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenWithExpiry;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
@@ -26,6 +29,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LoginAuthService {
@@ -72,23 +76,25 @@ public class LoginAuthService {
         credential.resetFailedLoginState();
         User user = credential.getUser();
         user.updateLastLoginAt(now);
+        UserType userType = user.getUserType();
 
         String userIdentifier = UUID.randomUUID().toString();
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
                 user.getId(),
-                user.getUserType(),
+                userType,
                 userIdentifier
         );
         TokenWithExpiry refreshToken = jwtTokenProvider.createRefreshToken(
                 user.getId(),
-                user.getUserType(),
+                userType,
                 userIdentifier
         );
+        String refreshTokenHash = TokenHashUtils.sha256(refreshToken.token());
 
         userSessionRepository.save(UserSession.builder()
                 .user(user)
                 .sessionId(userIdentifier)
-                .sessionToken(refreshToken.token())
+                .sessionToken(refreshTokenHash)
                 .ipAddress(normalizeOptionalLength(ipAddress, 45))
                 .userAgent(normalizeOptionalLength(userAgent, 500))
                 .expiresAt(LocalDateTime.ofInstant(refreshToken.expiresAt(), ZoneId.systemDefault()))
@@ -97,14 +103,20 @@ public class LoginAuthService {
                 .status(UserSessionStatus.ACTIVE)
                 .build());
 
-        userSessionLifecycleService.enforceActiveSessionLimit(user.getId(), userIdentifier, now);
+        userSessionLifecycleService.enforceActiveSessionLimit(user.getId(), userType, userIdentifier, now);
 
         if (refreshStoreEnabled) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
                     String refreshTokenKey = RedisKeys.refreshTokenKey(userIdentifier);
-                    redisTemplate.opsForValue().set(refreshTokenKey, refreshToken.token(), jwtTokenProvider.refreshTokenTtl());
+                    try {
+                        redisTemplate.opsForValue().set(refreshTokenKey, refreshTokenHash, jwtTokenProvider.refreshTokenTtl());
+                        redisTemplate.opsForValue().set(RedisKeys.activeSessionKey(userIdentifier), "1", jwtTokenProvider.refreshTokenTtl());
+                    } catch (RuntimeException e) {
+                        log.error("로그인 후 Redis 세션 저장 실패 - sessionId: {}", userIdentifier, e);
+                        userSessionLifecycleService.markSessionRevokedCompensating(userIdentifier, LocalDateTime.now());
+                    }
                 }
             });
         }

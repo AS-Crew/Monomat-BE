@@ -19,6 +19,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequiredArgsConstructor
@@ -38,6 +40,9 @@ public class AuthController {
     private final LoginAuthService loginAuthService;
     private final RefreshAuthService refreshAuthService;
     private final LogoutAuthService logoutAuthService;
+
+    @Value("${auth.network.trust-forwarded-headers:false}")
+    private boolean trustForwardedHeaders;
 
     /**
      * 게스트 로그인 엔드포인트
@@ -109,14 +114,19 @@ public class AuthController {
             @AuthenticationPrincipal CustomPrincipal principal,
             @RequestHeader("Authorization") String authorizationHeader
     ) {
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 정보가 없습니다.");
+        }
         logoutAuthService.logout(principal.userId(), principal.userIdentifier(), authorizationHeader);
         return ResponseEntity.ok(new LogoutResponse("로그아웃이 완료되었습니다."));
     }
 
     private String resolveClientIp(HttpServletRequest request) {
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isBlank()) {
-            return forwardedFor.split(",")[0].trim();
+        if (trustForwardedHeaders) {
+            String forwardedFor = request.getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.isBlank()) {
+                return forwardedFor.split(",")[0].trim();
+            }
         }
         return request.getRemoteAddr();
     }

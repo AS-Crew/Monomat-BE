@@ -1,9 +1,6 @@
 package io.github.ascrew.monomatbe.global.security.jwt;
 
-import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
-import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -25,7 +22,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -54,20 +50,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     // JWT 서명 검증에 사용할 암호화 키
     private final SecretKey secretKey;
     private final StringRedisTemplate redisTemplate;
-    private final UserSessionRepository userSessionRepository;
 
     /**
      * 필터 생성자
      * application.yml (또는 properties) 파일에서 'auth.jwt.secret' 값을 주입받아 SecretKey 객체로 초기화한다.     */
     public JwtAuthenticationFilter(
             @Value("${auth.jwt.secret}") String secret,
-            StringRedisTemplate redisTemplate,
-            UserSessionRepository userSessionRepository
+            StringRedisTemplate redisTemplate
     ) {
         byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
         this.secretKey = Keys.hmacShaKeyFor(keyBytes);
         this.redisTemplate = redisTemplate;
-        this.userSessionRepository = userSessionRepository;
     }
 
     @Override
@@ -189,15 +182,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private boolean isBlacklistedAccessToken(String accessToken) {
-        String tokenHash = TokenHashUtils.sha256(accessToken);
-        String key = RedisKeys.accessTokenBlacklistKey(tokenHash);
-        return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        try {
+            String tokenHash = TokenHashUtils.sha256(accessToken);
+            String key = RedisKeys.accessTokenBlacklistKey(tokenHash);
+            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        } catch (RuntimeException e) {
+            log.warn("블랙리스트 조회 실패 - fail-closed 적용");
+            return true;
+        }
     }
 
     private boolean isActiveSession(String sessionId) {
-        UserSession session = userSessionRepository
-                .findBySessionIdAndStatus(sessionId, UserSessionStatus.ACTIVE)
-                .orElse(null);
-        return session != null && session.getExpiresAt().isAfter(LocalDateTime.now());
+        try {
+            return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.activeSessionKey(sessionId)));
+        } catch (RuntimeException e) {
+            log.warn("활성 세션 조회 실패 - fail-closed 적용");
+            return false;
+        }
     }
 }

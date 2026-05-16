@@ -1,12 +1,11 @@
 /*
- * 로비 게임 시작 유스케이스를 담당하는 서비스
+ * 로비 게임 시작 유스케이스를 담당하는 서비스.
  *
  * [책임]
  * - 인증 주체 검증
  * - Redis 로비 존재 여부 확인
  * - DB GAME_LOBBY 스냅샷 조회
- * - 시작에 사용할 맵 검증
- * - 맵 문제 수와 로비 라운드 수 검증
+ * - 시작 전 맵/라운드 검증 정책 위임
  * - start_lobby.lua 실행을 통한 원자적 시작 조건 검증
  * - DB 로비 상태 WAITING -> PLAYING 전환
  * - DB 상태 변경 실패 시 Redis 상태 보상 롤백
@@ -14,8 +13,8 @@
  * - DB commit 이후 GAME_STARTED / REFRESH_LOBBY_INFO 이벤트 발행
  *
  * [책임 경계]
- * 이 서비스는 로비를 PLAYING 상태로 전환하고 게임 시작 이벤트를 발행하는 것까지만 담당한다.
- * 실제 인게임 라운드 생성, 문제 송출, 정답 판별, 점수 계산은 별도 인게임 도메인에서 처리한다.
+ * 이 서비스는 로비를 PLAYING 상태로 전환하고 게임 시작 이벤트를 발행하는 것까지만 담당합니다.
+ * 실제 인게임 라운드 생성, 문제 송출, 정답 판별, 점수 계산은 별도 인게임 도메인에서 처리합니다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -25,7 +24,6 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -61,16 +59,10 @@ public class LobbyStartService {
             "게임을 시작하려면 방장을 제외한 참여자가 1명 이상 필요합니다.";
     private static final String ERROR_START_NOT_READY =
             "모든 참여자가 준비 완료 상태여야 합니다.";
-    private static final String ERROR_START_MAP_SONG_COUNT_NOT_ENOUGH =
-            "맵의 문제 수가 설정된 라운드 수보다 적습니다.";
     private static final String ERROR_START_FAILED =
             "게임 시작 처리에 실패했습니다.";
     private static final String ERROR_START_DB_SYNC_FAILED =
             "게임 시작 상태 동기화에 실패했습니다. 잠시 후 다시 시도해주세요.";
-    private static final String ERROR_MAP_NOT_FOUND =
-            "존재하지 않는 맵입니다.";
-    private static final String ERROR_MAP_DELETED =
-            "삭제된 맵은 로비에 연결할 수 없습니다.";
     private static final String ERROR_START_EVENT_TRANSACTION_REQUIRED =
             "게임 시작 이벤트 발행을 위한 트랜잭션 동기화가 활성화되어 있지 않습니다.";
     private static final String ERROR_LOBBY_SNAPSHOT_NOT_FOUND =
@@ -94,7 +86,7 @@ public class LobbyStartService {
     private final LobbyRepository lobbyRepository;
     private final LobbyEventService lobbyEventService;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
-    private final QuizMapJpaRepository quizMapJpaRepository;
+    private final LobbyStartPolicy lobbyStartPolicy;
 
     /**
      * 로비 게임 시작 요청을 처리한다.
@@ -103,12 +95,11 @@ public class LobbyStartService {
      * 1. 인증 정보 확인
      * 2. Redis 로비 존재 여부 확인
      * 3. DB 로비 스냅샷 조회
-     * 4. 선택된 맵 존재 및 삭제 여부 확인
-     * 5. 맵 문제 수가 roundCount 이상인지 확인
-     * 6. Redis Lua가 상태를 변경하기 전 트랜잭션 동기화 활성 여부 확인
-     * 7. start_lobby.lua로 방장 권한, WAITING 상태, ready 상태를 원자 검증
-     * 8. DB 로비 상태를 PLAYING으로 변경
-     * 9. DB commit 이후 GAME_STARTED / REFRESH_LOBBY_INFO 이벤트 발행
+     * 4. LobbyStartPolicy로 선택 맵/라운드 검증
+     * 5. Redis Lua가 상태를 변경하기 전 트랜잭션 동기화 활성 여부 확인
+     * 6. start_lobby.lua로 방장 권한, WAITING 상태, ready 상태를 원자 검증
+     * 7. DB 로비 상태를 PLAYING으로 변경
+     * 8. DB commit 이후 GAME_STARTED / REFRESH_LOBBY_INFO 이벤트 발행
      *
      * [중요]
      * canStart는 조회 시점의 버튼 활성화 값이다.
@@ -136,17 +127,14 @@ public class LobbyStartService {
         GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
                 .orElseGet(() -> handleMissingGameLobbySnapshot(code, requesterIdentifier));
 
-        QuizMap quizMap = validateStartMap(gameLobby);
-
-        validateMapSongCount(quizMap, gameLobby);
+        QuizMap quizMap = lobbyStartPolicy.validateStartableMap(gameLobby);
 
         /*
-         * Redis Lua가 status=PLAYING으로 변경되기 전에 트랜잭션 동기화 활성 여부를 확인합니다.
+         * Redis Lua가 status=PLAYING으로 변경되기 전에 트랜잭션 동기화 활성 여부를 확인한다.
          *
          * 이 검증이 없으면 Redis는 PLAYING으로 바뀐 뒤,
-         * afterCommit 이벤트 등록 단계에서 500이 발생할 수 있습니다.
-         * 그 경우 클라이언트는 GAME_STARTED를 받지 못하고,
-         * Redis/DB 상태 불일치도 남을 수 있습니다.
+         * afterCommit 이벤트 등록 단계에서 500이 발생할 수 있다.
+         * 그 경우 클라이언트는 GAME_STARTED를 받지 못하고, Redis/DB 상태 불일치도 남을 수 있다.
          */
         validateTransactionSynchronizationForGameStart(code, requesterIdentifier);
 
@@ -306,58 +294,6 @@ public class LobbyStartService {
                 lobbyEventService.notifyLobbyInfoRefresh(code, requesterIdentifier);
             }
         });
-    }
-
-    /**
-     * 게임 시작에 사용할 맵을 검증한다.
-     *
-     * [검증]
-     * - 로비에 mapId가 있어야 한다.
-     * - 맵이 존재해야 한다.
-     * - 삭제된 맵이면 시작할 수 없다.
-     *
-     * [추후 리팩토링]
-     * Issue #78 후속 단계에서 LobbyMapPolicy로 분리할 수 있습니다.
-     */
-    private QuizMap validateStartMap(GameLobby gameLobby) {
-        if (gameLobby.getMapId() == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    ERROR_START_MAP_NOT_SELECTED
-            );
-        }
-
-        QuizMap quizMap = quizMapJpaRepository.findById(gameLobby.getMapId())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_MAP_NOT_FOUND
-                ));
-
-        if (Boolean.TRUE.equals(quizMap.getIsDeleted())) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    ERROR_MAP_DELETED
-            );
-        }
-
-        return quizMap;
-    }
-
-    /**
-     * 맵의 문제 수가 로비 라운드 수 이상인지 검증한다.
-     *
-     * Data API 없이 게임을 운영하므로, 실제 출제 가능 여부는 맵에 저장된 문제 수(numOfSong)를 기준으로 판단한다.
-     */
-    private void validateMapSongCount(QuizMap quizMap, GameLobby gameLobby) {
-        Integer numOfSong = quizMap.getNumOfSong();
-        Integer roundCount = gameLobby.getRoundCount();
-
-        if (numOfSong == null || roundCount == null || numOfSong < roundCount) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    ERROR_START_MAP_SONG_COUNT_NOT_ENOUGH
-            );
-        }
     }
 
     /**

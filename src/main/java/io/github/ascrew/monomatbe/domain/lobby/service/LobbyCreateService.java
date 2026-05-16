@@ -9,12 +9,8 @@
  * - DB GAME_LOBBY 스냅샷 저장
  * - DB 저장 실패 시 Redis 보상 삭제
  *
- * [분리 이유]
- * 기존 LobbyService는 로비 생성, 입장, 조회, ready, 시작 로직을 모두 포함하고 있어
- * 기능 추가 시 변경 범위가 과도하게 커질 수 있었습니다.
- *
  * 로비 생성은 Redis 선저장 + DB 스냅샷 저장 + 보상 삭제라는 별도 트랜잭션 경계를 가지므로,
- * 독립 유스케이스 서비스로 분리합니다.
+ * 독립 유스케이스 서비스로 분리한다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -81,9 +77,8 @@ public class LobbyCreateService {
      * 6. DB 저장 실패 시 Redis 보상 삭제
      *
      * [트랜잭션 경계]
-     * 로비 생성은 Redis와 DB를 함께 다룹니다.
-     * DB 저장 실패 시 Redis 보상 삭제가 필요하므로 이 유스케이스 서비스에서
-     * 트랜잭션을 직접 관리합니다.
+     * 로비 생성은 Redis와 DB를 함께 다룬다.
+     * DB 저장 실패 시 Redis 보상 삭제가 필요하므로 이 유스케이스 서비스에서 트랜잭션을 직접 관리한다.
      *
      * @param request   로비 생성 요청 DTO
      * @param principal JWT에서 추출한 인증 주체

@@ -11,12 +11,12 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyInviteCodeGenerator;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaResultMapper;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaScriptExecutor;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
@@ -33,19 +33,10 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class LobbyRepositoryImpl implements LobbyRepository {
 
-  /**
-   * Lua 스크립트에 선택 값이 없음을 표현하기 위한 값.
-   * Redis Hash에 "null" 문자열이 저장되는 것을 방지하기 위해 빈 문자열을 사용합니다.
-   */
-  private static final String EMPTY_REDIS_VALUE = "";
-
   private final StringRedisTemplate redisTemplate;
-  private final RedisScript<String> leaveLobbyScript;
-  private final RedisScript<String> createLobbyScript;
-  private final RedisScript<String> kickLobbyScript;
-  private final RedisScript<String> startLobbyScript;
   private final LobbyInviteCodeGenerator lobbyInviteCodeGenerator;
   private final LobbyLuaResultMapper lobbyLuaResultMapper;
+  private final LobbyLuaScriptExecutor lobbyLuaScriptExecutor;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -60,19 +51,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   private static final String RECONCILIATION_PAYLOAD_DELIMITER = "|";
 
-  // =========================================================
-  // isPrivate 정규화 상수
-  // =========================================================
-
-  /** Lua 스크립트에 전달할 공개 로비 isPrivate 값 */
-  private static final String IS_PRIVATE_TRUE = "true";
-
-  /** Lua 스크립트에 전달할 비공개 로비 isPrivate 값 */
-  private static final String IS_PRIVATE_FALSE = "false";
-
-  // =========================================================
-  // 초대 코드 생성 관련 에러 상수
-  // =========================================================
+  /**
+   * 운영 확인이 필요한 Redis 정리 실패 로그 식별자
+   *
+   * 현재 프로젝트에 별도 알림/재처리 큐 인프라가 없으므로,
+   * 운영 로그 수집 시스템에서 이 키워드를 기준으로 알림을 연계할 수 있도록 한다.
+   */
+  private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
 
   /** 초대 코드 생성 실패 시 반환할 에러 메시지 */
   private static final String ERROR_INVITE_CODE_EXHAUSTED =
@@ -85,18 +70,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   /** Lua 스크립트가 예상하지 못한 값을 반환했을 때의 에러 메시지 */
   private static final String ERROR_REDIS_SCRIPT_UNKNOWN_RESULT =
           "Redis 로비 생성 처리 결과가 유효하지 않습니다.";
-
-  /**
-   * 운영 확인이 필요한 Redis 정리 실패 로그 식별자
-   *
-   * 현재 프로젝트에 별도 알림/재처리 큐 인프라가 없으므로,
-   * 운영 로그 수집 시스템에서 이 키워드를 기준으로 알림을 연계할 수 있도록 한다.
-   */
-  private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
-
-  // =========================================================
-  // findByInviteCode 관련 상수
-  // =========================================================
 
   /**
    * 로비가 존재하지 않거나 TTL이 만료된 경우 반환할 빈 Optional.
@@ -137,13 +110,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   /**
    * 로비 참여자 목록을 입장 순서 기준으로 조회한다.
-   *
-   * [조회 전략]
-   * - lobby:{code}:order List를 우선 사용하여 FE 표시 순서를 안정적으로 유지한다.
-   * - participants Set을 함께 조회하여 이미 퇴장했지만 order에 남은 값은 제거한다.
-   *
-   * @param code 로비 초대 코드
-   * @return 현재 로비에 참여 중인 userIdentifier 목록
    */
   @Override
   public List<String> getParticipantIdentifiers(String code) {
@@ -169,10 +135,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       }
     }
 
-    /*
-     * order List에는 없지만 participants Set에는 존재하는 비정상 데이터를 보정한다.
-     * Redis 장애, 과거 데이터, Lua 계약 변경 상황에서도 상세 응답이 누락되지 않도록 한다.
-     */
     for (String userIdentifier : participantSet) {
       if (!result.contains(userIdentifier)) {
         result.add(userIdentifier);
@@ -184,13 +146,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   /**
    * ready 상태인 참여자 식별자 목록을 조회한다.
-   *
-   * [반환 정책]
-   * Redis Set 조회 결과가 null이면 빈 Set으로 반환하여
-   * 서비스 레이어에서 null 방어 로직을 반복하지 않도록 한다.
-   *
-   * @param code 로비 초대 코드
-   * @return ready 상태인 userIdentifier Set
    */
   @Override
   public Set<String> getReadyParticipantIdentifiers(String code) {
@@ -206,17 +161,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   /**
    * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환한다.
-   *
-   * [저장 구조]
-   * - lobby:{code}              Hash — 로비 메타 정보
-   * - lobby:{code}:participants Set  — 참여자 목록 (방장 선 추가)
-   * - lobby:{code}:order        List — 입장 순서 (방장 선 추가)
-   * - lobby:public              Set  — 공개 로비 목록 (isPrivate=false 시만)
-   *
-   * [재시도 전략]
-   * - LOCK_FAILED : 코드 충돌 → 새 코드 생성 후 재시도
-   * - null        : Redis 오류 → 재시도하지 않고 즉시 503 반환
-   * - 최대 재시도 횟수 초과 시 503 반환
    */
   @Override
   public String saveToRedis(
@@ -226,7 +170,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   ) {
     for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
       String candidate = lobbyInviteCodeGenerator.generate();
-      String result = executeCreateLobbyScript(candidate, request, userIdentifier, mapMetadata);
+
+      String result = lobbyLuaScriptExecutor.executeCreateLobby(
+              candidate,
+              request,
+              userIdentifier,
+              mapMetadata
+      );
 
       if (result == null) {
         log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. 코드: {}", candidate);
@@ -272,12 +222,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   /**
    * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
-   *
-   * [삭제 실패 처리]
-   * 보상 삭제 실패 시 ERROR 로그를 남기고 false를 반환한다.
-   * 서비스 레이어에서 반환값을 확인하여 추가 알림 처리가 가능하다.
-   *
-   * @return 보상 삭제 성공 여부 (true: 성공, false: 실패)
    */
   @Override
   public boolean deleteFromRedis(String inviteCode) {
@@ -313,16 +257,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   @Override
   public LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId) {
-    List<String> keys = List.of(
-            RedisKeys.lobbyKey(code),
-            RedisKeys.lobbyParticipantsKey(code),
-            RedisKeys.lobbyOrderKey(code),
-            RedisKeys.lobbyKickedKey(code),
-            RedisKeys.LOBBY_PUBLIC
-    );
-
     try {
-      String result = redisTemplate.execute(leaveLobbyScript, keys, userId, code);
+      String result = lobbyLuaScriptExecutor.executeLeaveLobby(code, userId);
       LeaveLobbyResult leaveResult = lobbyLuaResultMapper.toLeaveLobbyResult(result, code, userId);
 
       cleanupReadyStatusAfterLeave(code, userId, leaveResult);
@@ -339,19 +275,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           String requesterIdentifier,
           String targetUserIdentifier
   ) {
-    List<String> keys = List.of(
-            RedisKeys.lobbyKey(code),
-            RedisKeys.lobbyParticipantsKey(code),
-            RedisKeys.lobbyOrderKey(code),
-            RedisKeys.lobbyKickedKey(code),
-            RedisKeys.lobbyUserSessionKey(code, targetUserIdentifier),
-            RedisKeys.lobbyUserSessionSequenceKey(code, targetUserIdentifier)
-    );
-
     try {
-      String result = redisTemplate.execute(
-              kickLobbyScript,
-              keys,
+      String result = lobbyLuaScriptExecutor.executeKickLobby(
+              code,
               requesterIdentifier,
               targetUserIdentifier
       );
@@ -385,27 +311,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           String code,
           String requesterIdentifier
   ) {
-    List<String> keys = List.of(
-            RedisKeys.lobbyKey(code),
-            RedisKeys.lobbyParticipantsKey(code),
-            RedisKeys.lobbyReadyKey(code),
-            RedisKeys.LOBBY_PUBLIC
-    );
-
     try {
       cleanupStaleReadyParticipantsBeforeStart(code, requesterIdentifier);
 
-      String result = redisTemplate.execute(
-              startLobbyScript,
-              keys,
-              requesterIdentifier,
-              code,
-              RedisKeys.FIELD_HOST_USER_ID,
-              RedisKeys.FIELD_STATUS,
-              RedisKeys.FIELD_MAP_ID,
-              LobbyStatus.WAITING.name(),
-              LobbyStatus.PLAYING.name()
-      );
+      String result = lobbyLuaScriptExecutor.executeStartLobby(code, requesterIdentifier);
 
       return lobbyLuaResultMapper.toStartLobbyResult(result, code, requesterIdentifier);
 
@@ -423,20 +332,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   /**
    * Redis 로비 상태를 WAITING으로 보상 롤백한다.
-   *
-   * [필요 이유]
-   * 게임 시작 Lua가 성공하면 Redis 로비 상태는 PLAYING으로 바뀌고,
-   * 공개 로비 목록(lobby:public)에서도 제거된다.
-   *
-   * 이후 DB GAME_LOBBY 상태 변경이 실패하면 Redis는 PLAYING, DB는 WAITING인
-   * 불일치 상태가 될 수 있으므로 가능한 범위에서 Redis 상태를 되돌린다.
-   *
-   * [보상 범위]
-   * - lobby:{code}.status = WAITING
-   * - 공개 로비라면 lobby:public에 code 재등록
-   *
-   * [한계]
-   * Redis 보상 롤백도 실패할 수 있으므로, 실패 시 운영 확인 로그를 남긴다.
    */
   @Override
   public boolean rollbackStartedLobbyStatus(String code) {
@@ -507,12 +402,12 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       return false;
     }
 
-    if (IS_PRIVATE_FALSE.equals(rawIsPrivate)) {
+    if ("false".equals(rawIsPrivate)) {
       redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, code);
       return true;
     }
 
-    if (!IS_PRIVATE_TRUE.equals(rawIsPrivate)) {
+    if (!"true".equals(rawIsPrivate)) {
       log.error(
               "{} 게임 시작 Redis 보상 롤백 중 알 수 없는 is_private 값 - public 복구 생략. "
                       + "code: {}, lobbyKey: {}, rawIsPrivate: {}",
@@ -528,10 +423,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   /**
    * Redis-DB 상태 불일치 재처리 요청을 Redis 큐에 적재한다.
-   *
-   * [사용 목적]
-   * Redis 게임 시작 상태는 PLAYING으로 전환되었지만 DB 상태 변경 또는 Redis 롤백이 실패한 경우,
-   * 후속 백그라운드 리컨실리에이션 작업이 처리할 수 있도록 최소 정보를 남긴다.
    */
   @Override
   public void enqueueStartReconciliation(String code, String reason) {
@@ -628,33 +519,15 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return result;
   }
 
-  /**
-   * 초대 코드로 로비 입장에 필요한 정보를 조회한다.
-   *
-   * [조회 전략]
-   * HGETALL로 lobby:{code} Hash를 한 번에 읽어 응답 객체를 구성한다.
-   * currentPlayers는 participants Set의 SCARD로 별도 조회한다.
-   *
-   * [mapCategory]
-   * 맵 선택 기능 구현 전까지 null로 반환한다.
-   * 맵 선택 이슈에서 Redis Hash에 map_category 필드가 추가되면
-   * FIELD_MAP_CATEGORY 상수로 조회한다.
-   *
-   * @param inviteCode 로비 초대 코드
-   * @return 로비 정보 Optional (로비 미존재 시 empty)
-   */
   @Override
   public Optional<JoinLobbyResponse> findByInviteCode(String inviteCode) {
-    // HGETALL로 Hash 전체를 한 번에 읽어 네트워크 왕복 횟수를 최소화한다.
     Map<Object, Object> data =
             redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(inviteCode));
 
-    // 로비가 존재하지 않거나 TTL이 만료된 경우
     if (data.isEmpty()) {
       return EMPTY_LOBBY;
     }
 
-    // 현재 참여 인원은 participants Set의 SCARD로 조회한다.
     int currentPlayers = getCurrentPlayerCount(inviteCode);
 
     int maxPlayers = parseRequiredPositiveInt(
@@ -676,99 +549,14 @@ public class LobbyRepositoryImpl implements LobbyRepository {
             .build());
   }
 
-  /**
-   * 해당 로비의 현재 참여 인원 수를 반환한다.
-   *
-   * [구현 방식]
-   * lobby:{code}:participants Set의 SCARD 명령으로 조회한다.
-   * null 반환 시 Redis 연결 이상이므로 0으로 폴백하여 NPE를 방지한다.
-   *
-   * @param inviteCode 로비 초대 코드
-   * @return 현재 참여 인원 수 (Redis 오류 시 0)
-   */
   @Override
   public int getCurrentPlayerCount(String inviteCode) {
     Long count = redisTemplate.opsForSet()
             .size(RedisKeys.lobbyParticipantsKey(inviteCode));
 
-    // null은 Redis 연결 이상을 의미한다.
-    // 0으로 폴백하여 NPE를 방지하고, 서비스 레이어에서 정상 흐름을 유지한다.
     return count != null ? count.intValue() : 0;
   }
 
-  // =========================================================
-  // private 메서드
-  // =========================================================
-
-  /**
-   * create_lobby.lua를 실행하여 SETNX + 로비 데이터 저장을 원자적으로 수행합니다.
-   *
-   * [맵 정보 저장 정책]
-   * mapMetadata가 null이면 빈 문자열을 Lua에 전달합니다.
-   * Lua는 mapId가 빈 문자열인 경우 map_id, map_title, map_category 필드를 저장하지 않습니다.
-   *
-   * @return "OK" | "LOCK_FAILED" | null
-   */
-  private String executeCreateLobbyScript(
-          String inviteCode,
-          CreateLobbyRequest request,
-          String userIdentifier,
-          LobbyMapMetadata mapMetadata
-  ) {
-    List<String> keys = List.of(
-            RedisKeys.lobbyCodeLockKey(inviteCode),
-            RedisKeys.lobbyKey(inviteCode),
-            RedisKeys.LOBBY_PUBLIC
-    );
-
-    String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
-    String isPrivateValue = normalizeIsPrivate(request.isPrivate());
-
-    return redisTemplate.execute(
-            createLobbyScript,
-            keys,
-            userIdentifier,
-            lockTtlMs,
-            inviteCode,
-            request.title(),
-            String.valueOf(request.maxPlayers()),
-            isPrivateValue,
-            LobbyStatus.WAITING.name(),
-
-            // 맵 미선택 시 빈 문자열을 전달하여 Redis에 "null" 문자열이 저장되지 않게 합니다.
-            mapMetadata != null ? String.valueOf(mapMetadata.mapId()) : EMPTY_REDIS_VALUE,
-            mapMetadata != null ? mapMetadata.mapTitle() : EMPTY_REDIS_VALUE,
-            mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE
-    );
-  }
-
-  /**
-   * isPrivate 값을 Lua 스크립트와 일치하는 소문자 문자열로 정규화한다.
-   *
-   * [정규화 이유]
-   * Lua 스크립트(create_lobby.lua)에서 isPrivate 값을
-   * if isPrivate == "false" then 으로 비교한다.
-   * IS_PRIVATE_TRUE / IS_PRIVATE_FALSE 상수를 사용하여
-   * 대소문자 불일치나 예상치 못한 값이 전달되는 것을 방지한다.
-   *
-   * @param isPrivate 로비 비공개 여부
-   * @return "true" (비공개) 또는 "false" (공개)
-   */
-  private String normalizeIsPrivate(boolean isPrivate) {
-    return isPrivate ? IS_PRIVATE_TRUE : IS_PRIVATE_FALSE;
-  }
-
-  /**
-   * 퇴장 처리 결과에 따라 ready Set을 정리한다.
-   *
-   * [필요 이유]
-   * 참여자가 로비를 나가면 더 이상 준비 상태에 포함되면 안 된다.
-   * 로비가 폭파된 경우에는 ready Set 전체를 삭제한다.
-   *
-   * [주의]
-   * leave_lobby.lua의 원자 처리 이후 보조 정리로 수행한다.
-   * ready 정리 실패가 퇴장 자체를 실패로 되돌리면 안 되므로 예외는 로그만 남긴다.
-   */
   private void cleanupReadyStatusAfterLeave(
           String code,
           String userId,
@@ -800,13 +588,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  /**
-   * 강퇴 성공 후 강퇴 대상의 ready 상태를 제거한다.
-   *
-   * [필요 이유]
-   * 강퇴된 유저가 lobby:{code}:ready Set에 남아 있으면
-   * 이후 canStart 계산이나 준비 상태 표시가 왜곡될 수 있다.
-   */
   private void cleanupReadyStatusAfterKick(
           String code,
           String targetUserIdentifier,
@@ -831,19 +612,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  /**
-   * 게임 시작 직전에 stale ready 데이터를 정리한다.
-   *
-   * 정리 대상 : ready Set에는 존재하지만 participants Set에는 없는 userIdentifier
-   *
-   * [정책]
-   * participants Set을 현재 로비 참여자의 source of truth로 사용한다.
-   * ready Set 잔여 데이터는 게임 시작 조건에 영향을 주면 안 되므로 start_lobby.lua 실행 전에 제거한다.
-   *
-   * [주의]
-   * participants에 남아 있지만 ready가 아닌 유저는 실제 미준비 유저일 수 있으므로
-   * 여기서 자동 제거하지 않는다.
-   */
   private void cleanupStaleReadyParticipantsBeforeStart(
           String code,
           String requesterIdentifier
@@ -920,18 +688,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  /**
-   * Redis에서 문자열을 직접 읽어 DTO에 넣으면 MapCategory의 @JsonValue가 적용되지 않으므로,
-   * 응답 생성 시점에 명시적으로 표시 값을 변환한다.
-   *
-   * [정책]
-   * - null 또는 blank는 맵 미선택 상태로 보고 null로 반환한다.
-   * - 정상 값은 MapCategory의 단일 정규화 규칙을 사용한다.
-   * - 알 수 없는 값은 데이터 손상을 숨기지 않기 위해 원본 값을 반환하고 경고 로그를 남긴다.
-   *
-   * @param rawCategory Redis Hash에서 읽은 원본 카테고리 값
-   * @return FE 응답에 사용할 카테고리 표시 값
-   */
   private String toDisplayMapCategory(String rawCategory) {
     try {
       return MapCategory.toDisplayValue(rawCategory);
@@ -941,25 +697,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  /**
-   * Redis Hash의 필수 양수 정수 필드를 파싱한다.
-   *
-   * [사용 목적]
-   * max_players처럼 로비 입장 검증에 반드시 필요한 필드는
-   * 누락되거나 잘못된 값일 때 기본값으로 폴백하면 안 된다.
-   *
-   * [실패 처리]
-   * - null
-   * - 숫자 파싱 실패
-   * - 0 이하
-   *
-   * 위 경우는 Redis 로비 데이터 손상으로 보고 500을 반환한다.
-   *
-   * @param value      Redis Hash에서 조회한 원시값
-   * @param fieldName  Redis Hash 필드명
-   * @param inviteCode 로비 초대 코드
-   * @return 파싱된 양수 정수
-   */
   private int parseRequiredPositiveInt(Object value, String fieldName, String inviteCode) {
     if (value == null) {
       log.error("Redis 로비 필수 필드 누락 - inviteCode: {}, field: {}",

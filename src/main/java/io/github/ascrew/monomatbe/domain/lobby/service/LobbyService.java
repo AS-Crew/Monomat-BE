@@ -20,6 +20,9 @@
  *
  * [3단계]
  * - getPublicLobbies(), getLobbyDetail() 로직을 LobbyQueryService로 분리
+ *
+ * [4단계]
+ * - updateReadyStatus() 로직을 LobbyReadyService로 분리
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -63,10 +66,6 @@ public class LobbyService {
             "존재하지 않는 로비입니다.";
     private static final String ERROR_LOBBY_NOT_WAITING =
             "게임이 이미 시작된 로비에는 입장할 수 없습니다.";
-    private static final String ERROR_READY_FORBIDDEN =
-            "로비 참여자만 준비 상태를 변경할 수 있습니다.";
-    private static final String ERROR_HOST_READY_NOT_ALLOWED =
-            "방장은 준비 상태를 변경하지 않고 시작 버튼을 사용합니다.";
     private static final String ERROR_START_FORBIDDEN =
             "방장만 게임을 시작할 수 있습니다.";
     private static final String ERROR_START_HOST_NOT_FOUND =
@@ -102,22 +101,10 @@ public class LobbyService {
 
     private static final String LOG_ALERT_REQUIRED = "[ALERT_REQUIRED]";
 
-    // =========================================================
-    // 비즈니스 규칙 상수
-    // =========================================================
-
-    /**
-     * ready/start에서 기준으로 사용하는 대기 상태.
-     *
-     * 조회 로직은 LobbyQueryService로 분리되었으므로,
-     * 현재 이 상수는 ready 변경과 start 처리에서 사용됩니다.
-     * 추후 LobbyReadyService, LobbyStartService 분리 단계에서 제거될 예정입니다.
-     */
-    private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
-
     private final LobbyCreateService lobbyCreateService;
     private final LobbyJoinService lobbyJoinService;
     private final LobbyQueryService lobbyQueryService;
+    private final LobbyReadyService lobbyReadyService;
     private final LobbyRepository lobbyRepository;
     private final LobbyEventService lobbyEventService;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
@@ -177,6 +164,24 @@ public class LobbyService {
      */
     public LobbyDetailResponse getLobbyDetail(String code, CustomPrincipal principal) {
         return lobbyQueryService.getLobbyDetail(code, principal);
+    }
+
+    /**
+     * 로비 ready 상태 변경 facade 메서드.
+     *
+     * [Issue #78 - 4단계]
+     * 실제 ready 상태 변경 책임은 LobbyReadyService로 이동했습니다.
+     *
+     * @param code      로비 초대 코드
+     * @param request   ready 변경 요청
+     * @param principal JWT에서 추출한 인증 주체
+     */
+    public void updateReadyStatus(
+            String code,
+            UpdateLobbyReadyRequest request,
+            CustomPrincipal principal
+    ) {
+        lobbyReadyService.updateReadyStatus(code, request, principal);
     }
 
     /**
@@ -384,74 +389,6 @@ public class LobbyService {
     }
 
     /**
-     * 로비 참여자의 준비 상태를 변경한다.
-     *
-     * [정책]
-     * - 인증된 사용자만 요청할 수 있다.
-     * - Redis에 존재하는 로비만 대상으로 한다.
-     * - WAITING 상태의 로비에서만 준비 상태를 변경할 수 있다.
-     * - 로비 참여자만 준비 상태를 변경할 수 있다.
-     * - 방장은 준비 대상에서 제외하고, 게임 시작 버튼으로 역할을 대체한다.
-     *
-     * @param code      로비 초대 코드
-     * @param request   준비 상태 변경 요청
-     * @param principal JWT에서 추출한 인증 주체
-     */
-    public void updateReadyStatus(
-            String code,
-            UpdateLobbyReadyRequest request,
-            CustomPrincipal principal
-    ) {
-        if (principal == null || principal.userId() == null) {
-            log.warn("로비 준비 상태 변경 거부 - principal 또는 userId가 null. code: {}", code);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_INVALID_PRINCIPAL);
-        }
-
-        JoinLobbyResponse lobbyInfo = lobbyRepository.findByInviteCode(code)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_LOBBY_NOT_FOUND
-                ));
-
-        if (!LOBBY_STATUS_WAITING.equals(lobbyInfo.status())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
-        }
-
-        String userIdentifier = principal.userIdentifier();
-
-        boolean participant = lobbyRepository.isParticipant(code, userIdentifier);
-
-        if (!participant) {
-            log.warn(
-                    "로비 준비 상태 변경 거부 - 참여자가 아님. code: {}, userIdentifier: {}, hostId: {}",
-                    code,
-                    userIdentifier,
-                    lobbyInfo.hostId()
-            );
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_READY_FORBIDDEN);
-        }
-
-        if (isLobbyHost(lobbyInfo, userIdentifier)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_HOST_READY_NOT_ALLOWED);
-        }
-
-        lobbyRepository.updateReadyStatus(
-                code,
-                userIdentifier,
-                Boolean.TRUE.equals(request.ready())
-        );
-
-        lobbyEventService.notifyLobbyInfoRefresh(code, userIdentifier);
-
-        log.info(
-                "로비 준비 상태 변경 완료 - code: {}, userIdentifier: {}, ready: {}",
-                code,
-                userIdentifier,
-                request.ready()
-        );
-    }
-
-    /**
      * 게임 시작에 사용할 맵을 검증한다.
      *
      * [검증]
@@ -572,19 +509,5 @@ public class LobbyService {
                 );
             }
         }
-    }
-
-    /**
-     * 요청자가 로비 방장인지 확인한다.
-     *
-     * Redis 로비 정보의 hostId는 userIdentifier 기준으로 저장되므로,
-     * JWT principal의 userIdentifier와 직접 비교합니다.
-     *
-     * [주의]
-     * 현재는 ready 변경 로직에서 사용합니다.
-     * 추후 LobbyReadyService 분리 시 해당 서비스로 이동합니다.
-     */
-    private boolean isLobbyHost(JoinLobbyResponse lobbyInfo, String userIdentifier) {
-        return lobbyInfo.hostId() != null && lobbyInfo.hostId().equals(userIdentifier);
     }
 }

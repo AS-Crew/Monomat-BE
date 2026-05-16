@@ -1,15 +1,20 @@
 /*
- * 로비 상태 변경 이벤트를 WebSocket으로 수신하는 컨트롤러.
+ * 로비 상태 변경 이벤트를 WebSocket으로 수신하는 컨트롤러
  *
  * [책임]
- * - 로비 생성 및 로비 내부 정보 변경 이벤트를 수신하여 LobbyEventService에 위임
- * - 방장의 유저 강퇴 이벤트를 수신하여 LobbyEventService에 위임
- * - 컨트롤러는 수신 경로 정의와 서비스 위임만 담당
+ * - STOMP MessageMapping 경로 정의
+ * - STOMP 세션 속성에서 인증된 userIdentifier 추출
+ * - 로비 목록/상세 refresh 요청은 LobbyRealtimeNotifier로 위임
+ * - 강퇴 요청은 LobbyKickService로 위임
+ *
+ * [주의]
+ * 기존 STOMP destination 계약은 변경하지 않는다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.KickLobbyPlayerRequest;
-import io.github.ascrew.monomatbe.domain.lobby.service.LobbyEventService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyKickService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyRealtimeNotifier;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,29 +32,29 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class LobbyEventController {
 
-  private final LobbyEventService lobbyEventService;
+  private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
+  private final LobbyKickService lobbyKickService;
 
   /**
-   * 로비 생성 이벤트 수신.
-   * 로비 리스트를 보고 있는 모든 클라이언트에게 새로고침 신호를 전송합니다.
+   * 로비 생성 이벤트 수신
    *
    * 클라이언트 송신 경로: /app/lobby/create
    *
-   * [성능 고려사항]
-   * 사용자가 많아질 경우, 매 생성마다 브로드캐스트하면 과부하가 발생할 수 있습니다.
-   * 추후 일정 시간(예: 5초) 내 이벤트를 묶어 처리하는 디바운싱 로직 도입을 검토할 수 있습니다.
+   * [동작]
+   * 로비 리스트를 보고 있는 클라이언트에게 목록 refresh 신호를 보낸다.
    */
   @MessageMapping("/lobby/create")
   public void notifyLobbyListRefresh(Principal principal) {
-    lobbyEventService.notifyLobbyListRefresh();
+    lobbyRealtimeNotifier.notifyLobbyListRefresh();
   }
 
   /**
-   * 로비 내부 정보 변경 이벤트 수신.
-   * 해당 로비에 참여 중인 클라이언트들에게 새로고침 신호를 전송합니다.
+   * 로비 내부 정보 변경 이벤트 수신
    *
    * 클라이언트 송신 경로: /app/lobby/{code}/update
-   * 변경 기준: 유저 입장, 퇴장, 준비, 준비 해제, 맵 변경 등
+   *
+   * [동작]
+   * 요청자가 해당 로비 참여자인 경우에만 로비 내부 refresh 신호를 보낸다.
    */
   @MessageMapping("/lobby/{code}/update")
   public void notifyLobbyInfoRefresh(
@@ -57,25 +62,16 @@ public class LobbyEventController {
           SimpMessageHeaderAccessor accessor
   ) {
     String userIdentifier = extractUserIdentifier(accessor);
-    lobbyEventService.notifyLobbyInfoRefresh(code, userIdentifier);
+    lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, userIdentifier);
   }
 
   /**
-   * 방장의 로비 유저 강퇴 이벤트 수신.
+   * 방장의 로비 유저 강퇴 이벤트 수신
    *
    * 클라이언트 송신 경로: /app/lobby/{code}/kick
    *
-   * 요청 payload 예시:
-   * {
-   *   "targetUserIdentifier": "강퇴 대상 UUID"
-   * }
-   *
-   * [처리 내용]
-   * - 요청자가 현재 로비 방장인지 검증
-   * - 강퇴 대상이 현재 로비 참여자인지 검증
-   * - Redis participants/order에서 강퇴 대상 제거
-   * - 강퇴 알림 메시지 브로드캐스트
-   * - 로비 정보 refresh 신호 브로드캐스트
+   * [동작]
+   * 실제 강퇴 검증, Lua 실행, KICK 메시지 발행은 LobbyKickService가 담당한다.
    */
   @MessageMapping("/lobby/{code}/kick")
   public void kickLobbyPlayer(
@@ -84,16 +80,16 @@ public class LobbyEventController {
           SimpMessageHeaderAccessor accessor
   ) {
     String requesterIdentifier = extractUserIdentifier(accessor);
-    lobbyEventService.kickLobbyPlayer(code, request, requesterIdentifier);
+    lobbyKickService.kickLobbyPlayer(code, request, requesterIdentifier);
   }
 
   /**
-   * STOMP 세션 속성에서 인증된 userIdentifier를 추출합니다.
+   * STOMP 세션 속성에서 인증된 userIdentifier를 추출한다.
    *
    * [설계 의도]
    * StompChannelInterceptor가 CONNECT 시점에 검증한 userIdentifier를
    * sessionAttributes에 저장하므로, MessageMapping에서는 Principal 대신
-   * 해당 세션 속성을 신뢰 기준으로 사용합니다.
+   * 해당 세션 속성을 신뢰 기준으로 사용한다.
    */
   private String extractUserIdentifier(SimpMessageHeaderAccessor accessor) {
     if (accessor == null) {

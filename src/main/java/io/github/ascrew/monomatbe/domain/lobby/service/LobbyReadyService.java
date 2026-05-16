@@ -32,10 +32,6 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class LobbyReadyService {
 
-    // =========================================================
-    // 에러 메시지 상수
-    // =========================================================
-
     private static final String ERROR_INVALID_PRINCIPAL =
             "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_LOBBY_NOT_FOUND =
@@ -47,19 +43,10 @@ public class LobbyReadyService {
     private static final String ERROR_HOST_READY_NOT_ALLOWED =
             "방장은 준비 상태를 변경하지 않고 시작 버튼을 사용합니다.";
 
-    // =========================================================
-    // 비즈니스 규칙 상수
-    // =========================================================
-
-    /**
-     * ready 변경 가능한 로비 상태.
-     *
-     * Redis Hash에서 읽은 status 문자열과 비교하므로 name() 값으로 관리합니다.
-     */
     private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
 
     private final LobbyRepository lobbyRepository;
-    private final LobbyEventService lobbyEventService;
+    private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
 
     /**
      * 로비 참여자의 준비 상태를 변경한다.
@@ -71,15 +58,6 @@ public class LobbyReadyService {
      * - 로비 참여자만 준비 상태를 변경할 수 있다.
      * - 방장은 ready 대상에서 제외한다.
      * - 변경 완료 후 로비 내부 refresh 신호를 전송한다.
-     *
-     * [실시간 동기화]
-     * ready 상태 변경 자체는 Redis ready Set에 반영한다.
-     * 이후 클라이언트는 REFRESH_LOBBY_INFO 신호를 받고
-     * GET /api/lobbies/{code}를 다시 호출해 최신 ready 상태를 동기화한다.
-     *
-     * @param code      로비 초대 코드
-     * @param request   준비 상태 변경 요청
-     * @param principal JWT에서 추출한 인증 주체
      */
     public void updateReadyStatus(
             String code,
@@ -125,7 +103,7 @@ public class LobbyReadyService {
                 Boolean.TRUE.equals(request.ready())
         );
 
-        lobbyEventService.notifyLobbyInfoRefresh(code, userIdentifier);
+        lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, userIdentifier);
 
         log.info(
                 "로비 준비 상태 변경 완료 - code: {}, userIdentifier: {}, ready: {}",
@@ -139,11 +117,7 @@ public class LobbyReadyService {
      * 요청자가 로비 방장인지 확인한다.
      *
      * Redis 로비 정보의 hostId는 userIdentifier 기준으로 저장되므로,
-     * JWT principal의 userIdentifier와 직접 비교합니다.
-     *
-     * @param lobbyInfo      Redis에서 조회한 로비 정보
-     * @param userIdentifier 요청자 식별자
-     * @return 방장이면 true
+     * JWT principal의 userIdentifier와 직접 비교한다.
      */
     private boolean isLobbyHost(JoinLobbyResponse lobbyInfo, String userIdentifier) {
         return lobbyInfo.hostId() != null && lobbyInfo.hostId().equals(userIdentifier);

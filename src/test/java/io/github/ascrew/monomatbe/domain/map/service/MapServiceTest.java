@@ -9,7 +9,6 @@ import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
-import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,8 +24,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,14 +42,15 @@ class MapServiceTest {
     private ValueOperations<String, String> valueOperations;
     @Mock
     private JsonMapper jsonMapper;
+    @Mock
+    private MapCacheEvictor mapCacheEvictor;
 
     private MapService mapService;
 
     @BeforeEach
     void setUp() {
-        mapService = new MapService(quizMapJpaRepository, userRepository, redisTemplate, jsonMapper);
+        mapService = new MapService(quizMapJpaRepository, userRepository, mapCacheEvictor, redisTemplate, jsonMapper);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        lenient().when(valueOperations.increment(anyString())).thenReturn(1L);
     }
 
     @Test
@@ -100,8 +98,7 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.title()).isEqualTo("new map");
         assertThat(response.isPublic()).isTrue();
-        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
-        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(300L));
+        verify(mapCacheEvictor).evictPublicMapCaches(300L);
     }
 
     @Test
@@ -159,7 +156,6 @@ class MapServiceTest {
 
         mapService.updateMap(200L, request, ownerPrincipal);
 
-        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
-        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(200L));
+        verify(mapCacheEvictor).evictPublicMapCaches(200L);
     }
 }

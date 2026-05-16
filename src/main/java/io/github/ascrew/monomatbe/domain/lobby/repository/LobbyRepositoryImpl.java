@@ -1,17 +1,18 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
+import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyLuaResultCode;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
-import io.github.ascrew.monomatbe.global.constant.RedisKeys;
-import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyInviteCodeGenerator;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -20,7 +21,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -44,6 +44,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private final RedisScript<String> createLobbyScript;
   private final RedisScript<String> kickLobbyScript;
   private final RedisScript<String> startLobbyScript;
+  private final LobbyInviteCodeGenerator lobbyInviteCodeGenerator;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -88,11 +89,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String IS_PRIVATE_FALSE = "false";
 
   // =========================================================
-  // 초대 코드 생성 상수
+  // 초대 코드 생성 관련 에러 상수
   // =========================================================
-
-  /** 초대 코드 생성용 보안 난수 생성기 */
-  private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
   /** 초대 코드 생성 실패 시 반환할 에러 메시지 */
   private static final String ERROR_INVITE_CODE_EXHAUSTED =
@@ -245,7 +243,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           LobbyMapMetadata mapMetadata
   ) {
     for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
-      String candidate = generateInviteCode();
+      String candidate = lobbyInviteCodeGenerator.generate();
       String result = executeCreateLobbyScript(candidate, request, userIdentifier, mapMetadata);
 
       if (result == null) {
@@ -778,23 +776,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return isPrivate ? IS_PRIVATE_TRUE : IS_PRIVATE_FALSE;
   }
 
-  /**
-   * LobbyDefaults 상수 기반으로 6자리 초대 코드를 생성한다.
-   *
-   * [SecureRandom 사용 이유]
-   * Random 대신 SecureRandom을 사용하여 코드 예측 가능성을 낮춘다.
-   * 게임 특성상 코드 추측으로 비공개 로비에 무단 입장하는 것을 방지한다.
-   */
-  private String generateInviteCode() {
-    StringBuilder sb = new StringBuilder(LobbyDefaults.INVITE_CODE_LENGTH);
-    for (int i = 0; i < LobbyDefaults.INVITE_CODE_LENGTH; i++) {
-      sb.append(LobbyDefaults.INVITE_CODE_CHARACTERS.charAt(
-              SECURE_RANDOM.nextInt(LobbyDefaults.INVITE_CODE_CHARACTERS.length())
-      ));
-    }
-    return sb.toString();
-  }
-
   private LeaveLobbyResult parseLuaResult(String result, String code, String userId) {
     if (result == null) {
       return new LeaveLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
@@ -1072,9 +1053,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
    * start_lobby.lua가 NOT_READY를 반환했을 때 ready/participants 정합성 진단 로그를 남긴다.
    *
    * [목적]
-   * 단순히 "준비 안 됨"으로만 남기면 실제 미준비 유저인지, 퇴장/강퇴 후 participants Set에 남은 stale 유저인지 추적하기 어렵다.
+   * 단순히 "준비 안 됨"으로만 남기면 실제 미준비 유저인지,
+   * 퇴장/강퇴 후 participants Set에 남은 stale 유저인지 추적하기 어렵다.
    *
-   * 따라서 participants 포함 여부, ready 포함 여부, 로비 세션 키 존재 여부, stale ready 데이터 수를 함께 기록한다.
+   * 따라서 participants 포함 여부, ready 포함 여부, 로비 세션 키 존재 여부,
+   * stale ready 데이터 수를 함께 기록한다.
    */
   private void logReadyConsistencyFailure(
           String code,

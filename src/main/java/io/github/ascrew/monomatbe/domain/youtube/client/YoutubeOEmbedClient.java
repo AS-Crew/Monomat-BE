@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.youtube.client;
 
+import io.github.ascrew.monomatbe.domain.youtube.exception.YoutubeEmbedNotAllowedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -53,7 +54,7 @@ public class YoutubeOEmbedClient {
             }
 
             if (statusCode == 401 || statusCode == 403 || statusCode == 404) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "임베드 가능한 YouTube 영상이 아닙니다.");
+                throw new YoutubeEmbedNotAllowedException("임베드 가능한 YouTube 영상이 아닙니다.");
             }
 
             log.error("YouTube oEmbed 호출 실패 - status: {}", statusCode);
@@ -63,7 +64,10 @@ public class YoutubeOEmbedClient {
             throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "YouTube 검증 서버 응답이 지연되었습니다.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "YouTube 검증 요청이 중단되었습니다.");
+            log.warn("YouTube oEmbed 호출 인터럽트 - videoId: {}", videoId, e);
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "YouTube 검증 요청이 중단되었습니다.");
         } catch (IOException e) {
             log.error("YouTube oEmbed 호출 중 네트워크 오류", e);
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "YouTube 검증 서버와 통신할 수 없습니다.");

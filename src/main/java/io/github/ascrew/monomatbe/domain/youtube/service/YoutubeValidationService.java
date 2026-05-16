@@ -2,15 +2,18 @@ package io.github.ascrew.monomatbe.domain.youtube.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.youtube.client.YoutubeOEmbedClient;
+import io.github.ascrew.monomatbe.domain.youtube.exception.YoutubeEmbedNotAllowedException;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -20,6 +23,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class YoutubeValidationService {
@@ -28,6 +32,7 @@ public class YoutubeValidationService {
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_INVALID_YOUTUBE_URL = "유효한 YouTube URL이 아닙니다.";
     private static final String ERROR_INVALID_YOUTUBE_VIDEO = "임베드 가능한 YouTube 영상이 아닙니다.";
+    private static final String ERROR_UPSTREAM_RESPONSE = "YouTube 검증 서버 응답이 비정상입니다.";
 
     private static final Duration OEMBED_SUCCESS_TTL = Duration.ofHours(6);
     private static final Duration OEMBED_FAILURE_TTL = Duration.ofMinutes(30);
@@ -65,11 +70,15 @@ public class YoutubeValidationService {
             YoutubeMetadata metadata = parseMetadata(videoId, body);
             redisTemplate.opsForValue().set(successKey, serializeMetadata(metadata), OEMBED_SUCCESS_TTL);
             return metadata;
-        } catch (ResponseStatusException e) {
-            if (e.getStatusCode().equals(HttpStatus.BAD_REQUEST)) {
-                redisTemplate.opsForValue().set(failureKey, "1", OEMBED_FAILURE_TTL);
-            }
+        } catch (YoutubeEmbedNotAllowedException e) {
+            // 401/403/404 같은 영구적 임베드 불가만 Negative Cache 에 기록한다.
+            // 5xx/타임아웃/파싱 실패/빈 메타데이터 등 일시적 또는 불확실한 오류는 캐싱하지 않아
+            // 업스트림 회복 후 재시도 시점에서 정상 응답을 받을 수 있도록 한다.
+            redisTemplate.opsForValue().set(failureKey, "1", OEMBED_FAILURE_TTL);
             throw e;
+        } catch (JacksonException e) {
+            log.warn("YouTube oEmbed 응답 파싱 실패 - videoId: {}", videoId, e);
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, ERROR_UPSTREAM_RESPONSE, e);
         }
     }
 

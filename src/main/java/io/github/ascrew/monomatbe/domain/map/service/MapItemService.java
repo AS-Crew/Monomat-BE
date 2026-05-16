@@ -5,9 +5,6 @@ import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapItemResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
-import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
-import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.domain.map.support.HintTextGenerator;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeValidationService;
@@ -16,9 +13,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
@@ -34,41 +28,30 @@ public class MapItemService {
 
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵 문제를 관리할 수 있습니다.";
-    private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
-    private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 문제를 관리할 수 있습니다.";
-    private static final String ERROR_MAP_ITEM_NOT_FOUND = "문제를 찾을 수 없습니다.";
     private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
     private static final String ERROR_DUPLICATE_ORDER = "이미 사용 중인 문제 순서입니다.";
 
-    private final QuizMapJpaRepository quizMapJpaRepository;
-    private final MapItemJpaRepository mapItemJpaRepository;
+    private final MapItemPersistenceService persistenceService;
     private final YoutubeValidationService youtubeValidationService;
     private final MapCacheEvictor mapCacheEvictor;
     private final JsonMapper jsonMapper;
-    private final TransactionTemplate transactionTemplate;
 
     public MapItemService(
-            QuizMapJpaRepository quizMapJpaRepository,
-            MapItemJpaRepository mapItemJpaRepository,
+            MapItemPersistenceService persistenceService,
             YoutubeValidationService youtubeValidationService,
             MapCacheEvictor mapCacheEvictor,
-            @Qualifier("pubSubJsonMapper") JsonMapper jsonMapper,
-            PlatformTransactionManager transactionManager
+            @Qualifier("pubSubJsonMapper") JsonMapper jsonMapper
     ) {
-        this.quizMapJpaRepository = quizMapJpaRepository;
-        this.mapItemJpaRepository = mapItemJpaRepository;
+        this.persistenceService = persistenceService;
         this.youtubeValidationService = youtubeValidationService;
         this.mapCacheEvictor = mapCacheEvictor;
         this.jsonMapper = jsonMapper;
-        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    @Transactional(readOnly = true)
     public List<MapItemResponse> getMapItems(Long mapId, CustomPrincipal principal) {
         validateRegisteredPrincipal(principal);
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, principal.userId());
 
-        return mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(quizMap.getId())
+        return persistenceService.findItemsForOwnedMap(mapId, principal.userId())
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -89,33 +72,21 @@ public class MapItemService {
         // 실제 동시성 보장은 DB 레벨 (map_id, active_order_num) UNIQUE 제약이 담당한다.
         MapItem created;
         try {
-            created = transactionTemplate.execute(status -> {
-                QuizMap quizMap = getOwnedMapOrThrow(mapId, principal.userId());
-                validateOrderDuplicatedOnCreate(mapId, request.orderNum());
-
-                MapItem saved = mapItemJpaRepository.save(MapItem.builder()
-                        .map(quizMap)
-                        .orderNum(request.orderNum())
-                        .youtubeUrl(request.youtubeUrl().trim())
-                        .videoId(metadata.videoId())
-                        .startTime(request.startTime())
-                        .endTime(request.endTime())
-                        .title(metadata.title())
-                        .artist(metadata.artist())
-                        .thumbnailUrl(metadata.thumbnailUrl())
-                        .answer(normalizedAnswer)
-                        .altAnswers(altAnswersJson)
-                        .hint(hint)
-                        .hintTime(hintTime)
-                        .build());
-
-                recalculateMapMetadata(quizMap);
-                return saved;
-            });
+            created = persistenceService.create(
+                    mapId,
+                    principal.userId(),
+                    request,
+                    metadata,
+                    normalizedAnswer,
+                    altAnswersJson,
+                    hint,
+                    hintTime
+            );
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ORDER, e);
         }
 
+        // 영속화 메서드가 정상 반환된 = 트랜잭션 커밋 완료된 시점에 캐시를 무효화한다.
         mapCacheEvictor.evictPublicMapCaches(mapId);
         return toResponse(created);
     }
@@ -133,32 +104,17 @@ public class MapItemService {
 
         MapItem updated;
         try {
-            updated = transactionTemplate.execute(status -> {
-                QuizMap quizMap = getOwnedMapOrThrow(mapId, principal.userId());
-
-                MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
-
-                validateOrderDuplicatedOnUpdate(mapId, request.orderNum(), mapItem.getId());
-
-                mapItem.update(
-                        request.orderNum(),
-                        request.youtubeUrl().trim(),
-                        metadata.videoId(),
-                        request.startTime(),
-                        request.endTime(),
-                        metadata.title(),
-                        metadata.artist(),
-                        metadata.thumbnailUrl(),
-                        normalizedAnswer,
-                        altAnswersJson,
-                        hint,
-                        hintTime
-                );
-
-                recalculateMapMetadata(quizMap);
-                return mapItem;
-            });
+            updated = persistenceService.update(
+                    mapId,
+                    itemId,
+                    principal.userId(),
+                    request,
+                    metadata,
+                    normalizedAnswer,
+                    altAnswersJson,
+                    hint,
+                    hintTime
+            );
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ORDER, e);
         }
@@ -170,35 +126,9 @@ public class MapItemService {
     public void deleteMapItem(Long mapId, Long itemId, CustomPrincipal principal) {
         validateRegisteredPrincipal(principal);
 
-        // 트랜잭션이 커밋된 이후에 캐시를 무효화해야 롤백 시 DB↔캐시 불일치가 발생하지 않는다.
-        // TransactionTemplate.executeWithoutResult가 반환된 시점은 이미 커밋이 완료된 상태이다.
-        transactionTemplate.executeWithoutResult(status -> {
-            QuizMap quizMap = getOwnedMapOrThrow(mapId, principal.userId());
-
-            MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
-
-            mapItem.softDelete();
-            recalculateMapMetadata(quizMap);
-        });
+        persistenceService.delete(mapId, itemId, principal.userId());
 
         mapCacheEvictor.evictPublicMapCaches(mapId);
-    }
-
-    private void recalculateMapMetadata(QuizMap quizMap) {
-        int numOfSong = (int) mapItemJpaRepository.countByMapIdAndIsDeletedFalse(quizMap.getId());
-        Long sum = mapItemJpaRepository.sumPlayTimeByMapId(quizMap.getId());
-        int totalPlayTime = sum == null ? 0 : Math.toIntExact(sum);
-        quizMap.updateMetadata(numOfSong, totalPlayTime);
-    }
-
-    private QuizMap getOwnedMapOrThrow(Long mapId, Long ownerId) {
-        QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
-        if (!Objects.equals(quizMap.getOwner().getId(), ownerId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
-        }
-        return quizMap;
     }
 
     private void validateRegisteredPrincipal(CustomPrincipal principal) {
@@ -213,18 +143,6 @@ public class MapItemService {
     private void validateTimeRange(Integer startTime, Integer endTime) {
         if (startTime == null || endTime == null || endTime <= startTime) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TIME_RANGE);
-        }
-    }
-
-    private void validateOrderDuplicatedOnCreate(Long mapId, Integer orderNum) {
-        if (mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(mapId, orderNum)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ORDER);
-        }
-    }
-
-    private void validateOrderDuplicatedOnUpdate(Long mapId, Integer orderNum, Long itemId) {
-        if (mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalseAndIdNot(mapId, orderNum, itemId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ORDER);
         }
     }
 

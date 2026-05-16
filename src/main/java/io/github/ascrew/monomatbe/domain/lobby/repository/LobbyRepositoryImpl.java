@@ -12,7 +12,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyInviteCodeGenerator;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaResultMapper;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaScriptExecutor;
-import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyRedisQueryRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,13 +21,33 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * 로비 Redis Repository 구현체.
+ *
+ * [현재 책임]
+ * 이 클래스는 기존 LobbyRepository 인터페이스 계약을 유지하는 facade 역할을 합니다.
+ * 세부 Redis 책임은 역할별 컴포넌트로 점진적으로 분리합니다.
+ *
+ * [분리 완료]
+ * - 초대 코드 생성: LobbyInviteCodeGenerator
+ * - Lua 결과 매핑: LobbyLuaResultMapper
+ * - Lua 실행: LobbyLuaScriptExecutor
+ * - Redis 조회: LobbyRedisQueryRepository
+ *
+ * [아직 남은 책임]
+ * - Redis command 처리
+ * - start reconciliation queue 처리
+ *
+ * [중요]
+ * 이번 리팩토링은 외부 서비스 계층의 의존성을 바꾸지 않기 위한 내부 구조 개선입니다.
+ * 따라서 LobbyRepository 인터페이스, Redis key 구조, Lua script 계약은 변경하지 않습니다.
+ */
 @Slf4j
 @Repository
 @RequiredArgsConstructor
@@ -37,6 +57,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private final LobbyInviteCodeGenerator lobbyInviteCodeGenerator;
   private final LobbyLuaResultMapper lobbyLuaResultMapper;
   private final LobbyLuaScriptExecutor lobbyLuaScriptExecutor;
+  private final LobbyRedisQueryRepository lobbyRedisQueryRepository;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -52,10 +73,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String RECONCILIATION_PAYLOAD_DELIMITER = "|";
 
   /**
-   * 운영 확인이 필요한 Redis 정리 실패 로그 식별자
-   *
-   * 현재 프로젝트에 별도 알림/재처리 큐 인프라가 없으므로,
-   * 운영 로그 수집 시스템에서 이 키워드를 기준으로 알림을 연계할 수 있도록 한다.
+   * 운영 확인이 필요한 Redis 정리 실패 로그 식별자.
    */
   private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
 
@@ -71,30 +89,48 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private static final String ERROR_REDIS_SCRIPT_UNKNOWN_RESULT =
           "Redis 로비 생성 처리 결과가 유효하지 않습니다.";
 
-  /**
-   * 로비가 존재하지 않거나 TTL이 만료된 경우 반환할 빈 Optional.
-   * 매번 새 객체를 생성하지 않기 위해 상수로 관리한다.
-   */
-  private static final Optional<JoinLobbyResponse> EMPTY_LOBBY = Optional.empty();
-
-  private static final String ERROR_INVALID_LOBBY_DATA =
-          "로비 정보가 유효하지 않습니다.";
-
   // =========================================================
-  // 공개 메서드
+  // Redis 조회 위임
   // =========================================================
 
   @Override
   public boolean existsByCode(String code) {
-    return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.lobbyKey(code)));
+    return lobbyRedisQueryRepository.existsByCode(code);
   }
 
   @Override
   public boolean isParticipant(String code, String userId) {
-    return Boolean.TRUE.equals(
-            redisTemplate.opsForSet().isMember(RedisKeys.lobbyParticipantsKey(code), userId)
-    );
+    return lobbyRedisQueryRepository.isParticipant(code, userId);
   }
+
+  @Override
+  public List<String> getParticipantIdentifiers(String code) {
+    return lobbyRedisQueryRepository.getParticipantIdentifiers(code);
+  }
+
+  @Override
+  public Set<String> getReadyParticipantIdentifiers(String code) {
+    return lobbyRedisQueryRepository.getReadyParticipantIdentifiers(code);
+  }
+
+  @Override
+  public List<LobbyRedisDto> getPublicLobbies() {
+    return lobbyRedisQueryRepository.getPublicLobbies();
+  }
+
+  @Override
+  public Optional<JoinLobbyResponse> findByInviteCode(String inviteCode) {
+    return lobbyRedisQueryRepository.findByInviteCode(inviteCode);
+  }
+
+  @Override
+  public int getCurrentPlayerCount(String inviteCode) {
+    return lobbyRedisQueryRepository.getCurrentPlayerCount(inviteCode);
+  }
+
+  // =========================================================
+  // Redis 명령 / Lua 실행
+  // =========================================================
 
   @Override
   public void updateReadyStatus(String code, String userIdentifier, boolean ready) {
@@ -109,58 +145,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   /**
-   * 로비 참여자 목록을 입장 순서 기준으로 조회한다.
-   */
-  @Override
-  public List<String> getParticipantIdentifiers(String code) {
-    Set<String> participantSet = redisTemplate.opsForSet()
-            .members(RedisKeys.lobbyParticipantsKey(code));
-
-    if (participantSet == null || participantSet.isEmpty()) {
-      return new ArrayList<>();
-    }
-
-    List<String> orderedParticipants = redisTemplate.opsForList()
-            .range(RedisKeys.lobbyOrderKey(code), 0, -1);
-
-    if (orderedParticipants == null || orderedParticipants.isEmpty()) {
-      return new ArrayList<>(participantSet);
-    }
-
-    List<String> result = new ArrayList<>();
-
-    for (String userIdentifier : orderedParticipants) {
-      if (participantSet.contains(userIdentifier)) {
-        result.add(userIdentifier);
-      }
-    }
-
-    for (String userIdentifier : participantSet) {
-      if (!result.contains(userIdentifier)) {
-        result.add(userIdentifier);
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * ready 상태인 참여자 식별자 목록을 조회한다.
-   */
-  @Override
-  public Set<String> getReadyParticipantIdentifiers(String code) {
-    Set<String> readyParticipants = redisTemplate.opsForSet()
-            .members(RedisKeys.lobbyReadyKey(code));
-
-    if (readyParticipants == null || readyParticipants.isEmpty()) {
-      return Set.of();
-    }
-
-    return readyParticipants;
-  }
-
-  /**
-   * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환한다.
+   * Lua 스크립트로 SETNX 선점과 로비 데이터 저장을 원자적으로 수행하고 초대 코드를 반환합니다.
    */
   @Override
   public String saveToRedis(
@@ -181,7 +166,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
       if (result == null) {
         log.error("Lua 스크립트 null 반환 - Redis 연결 오류 가능성. 코드: {}", candidate);
         throw new ResponseStatusException(
-                HttpStatus.SERVICE_UNAVAILABLE, ERROR_REDIS_SCRIPT_NULL);
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ERROR_REDIS_SCRIPT_NULL
+        );
       }
 
       if (RESULT_OK.equals(result)) {
@@ -217,11 +204,13 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
 
     throw new ResponseStatusException(
-            HttpStatus.SERVICE_UNAVAILABLE, ERROR_INVITE_CODE_EXHAUSTED);
+            HttpStatus.SERVICE_UNAVAILABLE,
+            ERROR_INVITE_CODE_EXHAUSTED
+    );
   }
 
   /**
-   * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
+   * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제합니다.
    */
   @Override
   public boolean deleteFromRedis(String inviteCode) {
@@ -331,7 +320,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   /**
-   * Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   * Redis 로비 상태를 WAITING으로 보상 롤백합니다.
    */
   @Override
   public boolean rollbackStartedLobbyStatus(String code) {
@@ -421,9 +410,10 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return false;
   }
 
-  /**
-   * Redis-DB 상태 불일치 재처리 요청을 Redis 큐에 적재한다.
-   */
+  // =========================================================
+  // Start reconciliation queue
+  // =========================================================
+
   @Override
   public void enqueueStartReconciliation(String code, String reason) {
     String payload = String.join(
@@ -485,77 +475,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  @Override
-  public List<LobbyRedisDto> getPublicLobbies() {
-    Set<String> publicLobbyCodes =
-            redisTemplate.opsForSet().members(RedisKeys.LOBBY_PUBLIC);
-
-    if (publicLobbyCodes == null || publicLobbyCodes.isEmpty()) {
-      return new ArrayList<>();
-    }
-
-    List<LobbyRedisDto> result = new ArrayList<>();
-
-    for (String code : publicLobbyCodes) {
-      Map<Object, Object> data =
-              redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(code));
-
-      if (data.isEmpty()) continue;
-
-      result.add(LobbyRedisDto.builder()
-              .code((String) data.get(RedisKeys.FIELD_CODE))
-              .hostId((String) data.get(RedisKeys.FIELD_HOST_USER_ID))
-              .title((String) data.get(RedisKeys.FIELD_TITLE))
-              .status((String) data.get(RedisKeys.FIELD_STATUS))
-              .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
-              .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
-              .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))
-              .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
-              .currentPlayers(getCurrentPlayerCount(code))
-              .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
-              .build());
-    }
-
-    return result;
-  }
-
-  @Override
-  public Optional<JoinLobbyResponse> findByInviteCode(String inviteCode) {
-    Map<Object, Object> data =
-            redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(inviteCode));
-
-    if (data.isEmpty()) {
-      return EMPTY_LOBBY;
-    }
-
-    int currentPlayers = getCurrentPlayerCount(inviteCode);
-
-    int maxPlayers = parseRequiredPositiveInt(
-            data.get(RedisKeys.FIELD_MAX_PLAYERS),
-            RedisKeys.FIELD_MAX_PLAYERS,
-            inviteCode
-    );
-
-    return Optional.of(JoinLobbyResponse.builder()
-            .inviteCode(inviteCode)
-            .title((String) data.get(RedisKeys.FIELD_TITLE))
-            .hostId((String) data.get(RedisKeys.FIELD_HOST_USER_ID))
-            .maxPlayers(maxPlayers)
-            .currentPlayers(currentPlayers)
-            .status((String) data.get(RedisKeys.FIELD_STATUS))
-            .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
-            .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
-            .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))
-            .build());
-  }
-
-  @Override
-  public int getCurrentPlayerCount(String inviteCode) {
-    Long count = redisTemplate.opsForSet()
-            .size(RedisKeys.lobbyParticipantsKey(inviteCode));
-
-    return count != null ? count.intValue() : 0;
-  }
+  // =========================================================
+  // private command helper
+  // =========================================================
 
   private void cleanupReadyStatusAfterLeave(
           String code,
@@ -664,69 +586,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               participantsKey,
               readyKey,
               e
-      );
-    }
-  }
-
-  private Long parseNullableLong(Object value) {
-    if (value == null) return null;
-    try {
-      return Long.parseLong((String) value);
-    } catch (NumberFormatException e) {
-      log.warn("Redis Hash 필드 Long 파싱 실패 - 값: {}", value);
-      return null;
-    }
-  }
-
-  private Integer parseNullableInt(Object value) {
-    if (value == null) return null;
-    try {
-      return Integer.parseInt((String) value);
-    } catch (NumberFormatException e) {
-      log.warn("Redis Hash 필드 Integer 파싱 실패 - 값: {}", value);
-      return null;
-    }
-  }
-
-  private String toDisplayMapCategory(String rawCategory) {
-    try {
-      return MapCategory.toDisplayValue(rawCategory);
-    } catch (IllegalArgumentException e) {
-      log.warn("알 수 없는 맵 카테고리 값 - rawCategory: {}", rawCategory);
-      return rawCategory;
-    }
-  }
-
-  private int parseRequiredPositiveInt(Object value, String fieldName, String inviteCode) {
-    if (value == null) {
-      log.error("Redis 로비 필수 필드 누락 - inviteCode: {}, field: {}",
-              inviteCode, fieldName);
-      throw new ResponseStatusException(
-              HttpStatus.INTERNAL_SERVER_ERROR,
-              ERROR_INVALID_LOBBY_DATA
-      );
-    }
-
-    try {
-      int parsed = Integer.parseInt((String) value);
-
-      if (parsed <= 0) {
-        log.error("Redis 로비 필수 필드 값이 유효하지 않음 - inviteCode: {}, field: {}, value: {}",
-                inviteCode, fieldName, value);
-        throw new ResponseStatusException(
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                ERROR_INVALID_LOBBY_DATA
-        );
-      }
-
-      return parsed;
-
-    } catch (NumberFormatException e) {
-      log.error("Redis 로비 필수 필드 숫자 파싱 실패 - inviteCode: {}, field: {}, value: {}",
-              inviteCode, fieldName, value, e);
-      throw new ResponseStatusException(
-              HttpStatus.INTERNAL_SERVER_ERROR,
-              ERROR_INVALID_LOBBY_DATA
       );
     }
   }

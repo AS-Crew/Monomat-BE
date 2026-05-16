@@ -13,10 +13,9 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaResultMa
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaScriptExecutor;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyRedisCommandRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyRedisQueryRepository;
-import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyStartReconciliationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
@@ -30,7 +29,7 @@ import java.util.Set;
  *
  * [현재 책임]
  * 이 클래스는 기존 LobbyRepository 인터페이스 계약을 유지하는 facade 역할을 합니다.
- * 세부 Redis 책임은 역할별 컴포넌트로 점진적으로 분리합니다.
+ * 세부 Redis 책임은 역할별 컴포넌트로 분리합니다.
  *
  * [분리 완료]
  * - 초대 코드 생성: LobbyInviteCodeGenerator
@@ -38,9 +37,7 @@ import java.util.Set;
  * - Lua 실행: LobbyLuaScriptExecutor
  * - Redis 조회: LobbyRedisQueryRepository
  * - Redis command: LobbyRedisCommandRepository
- *
- * [아직 남은 책임]
- * - start reconciliation queue 처리
+ * - start reconciliation queue: LobbyStartReconciliationRepository
  *
  * [중요]
  * 이번 리팩토링은 외부 서비스 계층의 의존성을 바꾸지 않기 위한 내부 구조 개선입니다.
@@ -51,12 +48,12 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class LobbyRepositoryImpl implements LobbyRepository {
 
-  private final StringRedisTemplate redisTemplate;
   private final LobbyInviteCodeGenerator lobbyInviteCodeGenerator;
   private final LobbyLuaResultMapper lobbyLuaResultMapper;
   private final LobbyLuaScriptExecutor lobbyLuaScriptExecutor;
   private final LobbyRedisQueryRepository lobbyRedisQueryRepository;
   private final LobbyRedisCommandRepository lobbyRedisCommandRepository;
+  private final LobbyStartReconciliationRepository lobbyStartReconciliationRepository;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -64,17 +61,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   private static final String RESULT_OK = "OK";
   private static final String RESULT_LOCK_FAILED = "LOCK_FAILED";
-
-  // =========================================================
-  // 게임 시작 상태 재처리 상수
-  // =========================================================
-
-  private static final String RECONCILIATION_PAYLOAD_DELIMITER = "|";
-
-  /**
-   * 운영 확인이 필요한 Redis 정리 실패 로그 식별자.
-   */
-  private static final String LOG_MONITORING_REQUIRED = "[MONITORING_REQUIRED]";
 
   /** 초대 코드 생성 실패 시 반환할 에러 메시지 */
   private static final String ERROR_INVITE_CODE_EXHAUSTED =
@@ -298,67 +284,26 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   // =========================================================
-  // Start reconciliation queue
+  // Start reconciliation queue 위임
   // =========================================================
 
   @Override
   public void enqueueStartReconciliation(String code, String reason) {
-    String payload = String.join(
-            RECONCILIATION_PAYLOAD_DELIMITER,
-            code,
-            reason,
-            "0",
-            String.valueOf(System.currentTimeMillis())
-    );
-
-    try {
-      redisTemplate.opsForList().rightPush(
-              RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
-              payload
-      );
-      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_START_RECONCILIATION_ENQUEUED);
-
-      log.error(
-              "{} 게임 시작 상태 재처리 큐 적재 완료 - code: {}, reason: {}, queueKey: {}",
-              LOG_MONITORING_REQUIRED,
-              code,
-              reason,
-              RedisKeys.LOBBY_START_RECONCILIATION_QUEUE
-      );
-    } catch (Exception e) {
-      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_START_RECONCILIATION_FAILED);
-
-      log.error(
-              "{} 게임 시작 상태 재처리 큐 적재 실패 - code: {}, reason: {}, queueKey: {}. "
-                      + "Redis-DB 불일치 수동 확인이 필요합니다.",
-              LOG_MONITORING_REQUIRED,
-              code,
-              reason,
-              RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
-              e
-      );
-    }
+    lobbyStartReconciliationRepository.enqueueStartReconciliation(code, reason);
   }
 
   @Override
   public String pollStartReconciliation() {
-    return redisTemplate.opsForList().leftPop(RedisKeys.LOBBY_START_RECONCILIATION_QUEUE);
+    return lobbyStartReconciliationRepository.pollStartReconciliation();
   }
 
   @Override
   public void requeueStartReconciliation(String payload) {
-    redisTemplate.opsForList().rightPush(
-            RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
-            payload
-    );
+    lobbyStartReconciliationRepository.requeueStartReconciliation(payload);
   }
 
   @Override
   public void incrementStartReconciliationMetric(String metricKey) {
-    try {
-      redisTemplate.opsForValue().increment(metricKey);
-    } catch (Exception e) {
-      log.warn("게임 시작 상태 재처리 metric 증가 실패 - metricKey: {}", metricKey, e);
-    }
+    lobbyStartReconciliationRepository.incrementStartReconciliationMetric(metricKey);
   }
 }

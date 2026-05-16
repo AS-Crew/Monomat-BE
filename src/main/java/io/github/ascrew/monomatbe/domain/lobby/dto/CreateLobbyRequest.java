@@ -36,7 +36,7 @@ public record CreateLobbyRequest(
          * 로비에 연결할 맵 ID
          *
          * null이면 맵 미선택 로비로 생성한다.
-         * 실제 맵 존재 여부, 삭제 여부, 접근 권한은 LobbyService에서 검증한다.
+         * 실제 맵 존재 여부, 삭제 여부, 접근 권한은 LobbyMapPolicy에서 검증한다.
          */
         @Positive(message = "맵 ID는 양수여야 합니다.")
         Long mapId,

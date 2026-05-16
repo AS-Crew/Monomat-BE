@@ -2,7 +2,6 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
-import io.github.ascrew.monomatbe.domain.lobby.StartLobbyLuaResultCode;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -11,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyInviteCodeGenerator;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbyLuaResultMapper;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +45,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   private final RedisScript<String> kickLobbyScript;
   private final RedisScript<String> startLobbyScript;
   private final LobbyInviteCodeGenerator lobbyInviteCodeGenerator;
+  private final LobbyLuaResultMapper lobbyLuaResultMapper;
 
   // =========================================================
   // create_lobby.lua 반환값 상수
@@ -52,25 +53,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
   private static final String RESULT_OK = "OK";
   private static final String RESULT_LOCK_FAILED = "LOCK_FAILED";
-
-  // =========================================================
-  // leave_lobby.lua 반환값 상수
-  // =========================================================
-
-  private static final String RESULT_DESTROYED = "DESTROYED";
-  private static final String RESULT_LEFT = "LEFT";
-  private static final String RESULT_DELEGATED_PREFIX = "DELEGATED:";
-
-  // =========================================================
-  // kick_lobby.lua 반환값 상수
-  // =========================================================
-
-  private static final String RESULT_KICKED_PREFIX = "KICKED:";
-  private static final String RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
-  private static final String RESULT_HOST_NOT_FOUND = "HOST_NOT_FOUND";
-  private static final String RESULT_FORBIDDEN = "FORBIDDEN";
-  private static final String RESULT_CANNOT_KICK_SELF = "CANNOT_KICK_SELF";
-  private static final String RESULT_TARGET_NOT_PARTICIPANT = "TARGET_NOT_PARTICIPANT";
 
   // =========================================================
   // 게임 시작 상태 재처리 상수
@@ -341,7 +323,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
 
     try {
       String result = redisTemplate.execute(leaveLobbyScript, keys, userId, code);
-      LeaveLobbyResult leaveResult = parseLuaResult(result, code, userId);
+      LeaveLobbyResult leaveResult = lobbyLuaResultMapper.toLeaveLobbyResult(result, code, userId);
 
       cleanupReadyStatusAfterLeave(code, userId, leaveResult);
 
@@ -374,7 +356,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               targetUserIdentifier
       );
 
-      KickLobbyResult kickResult = parseKickLuaResult(
+      KickLobbyResult kickResult = lobbyLuaResultMapper.toKickLobbyResult(
               result,
               code,
               requesterIdentifier,
@@ -425,7 +407,7 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               LobbyStatus.PLAYING.name()
       );
 
-      return parseStartLuaResult(result, code, requesterIdentifier);
+      return lobbyLuaResultMapper.toStartLobbyResult(result, code, requesterIdentifier);
 
     } catch (Exception e) {
       log.error(
@@ -776,23 +758,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return isPrivate ? IS_PRIVATE_TRUE : IS_PRIVATE_FALSE;
   }
 
-  private LeaveLobbyResult parseLuaResult(String result, String code, String userId) {
-    if (result == null) {
-      return new LeaveLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
-    }
-    if (RESULT_DESTROYED.equals(result)) {
-      return new LeaveLobbyResult.Destroyed(code);
-    }
-    if (RESULT_LEFT.equals(result)) {
-      return new LeaveLobbyResult.Left(code, userId);
-    }
-    if (result.startsWith(RESULT_DELEGATED_PREFIX)) {
-      String newHostId = result.substring(RESULT_DELEGATED_PREFIX.length());
-      return new LeaveLobbyResult.Delegated(code, newHostId);
-    }
-    return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
-  }
-
   /**
    * 퇴장 처리 결과에 따라 ready Set을 정리한다.
    *
@@ -866,120 +831,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     }
   }
 
-  private KickLobbyResult parseKickLuaResult(
-          String result,
-          String code,
-          String requesterIdentifier,
-          String targetUserIdentifier
-  ) {
-    if (result == null) {
-      return new KickLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
-    }
-
-    if (result.startsWith(RESULT_KICKED_PREFIX)) {
-      String targetWsSessionId = result.substring(RESULT_KICKED_PREFIX.length());
-
-      return new KickLobbyResult.Kicked(
-              code,
-              targetUserIdentifier,
-              targetWsSessionId
-      );
-    }
-
-    if (RESULT_LOBBY_NOT_FOUND.equals(result)) {
-      return new KickLobbyResult.LobbyNotFound(code);
-    }
-
-    if (RESULT_HOST_NOT_FOUND.equals(result)) {
-      return new KickLobbyResult.HostNotFound(code);
-    }
-
-    if (RESULT_FORBIDDEN.equals(result)) {
-      return new KickLobbyResult.Forbidden(code, requesterIdentifier);
-    }
-
-    if (RESULT_CANNOT_KICK_SELF.equals(result)) {
-      return new KickLobbyResult.CannotKickSelf(code, requesterIdentifier);
-    }
-
-    if (RESULT_TARGET_NOT_PARTICIPANT.equals(result)) {
-      return new KickLobbyResult.TargetNotParticipant(code, targetUserIdentifier);
-    }
-
-    return new KickLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
-  }
-
-  private StartLobbyResult parseStartLuaResult(
-          String result,
-          String code,
-          String requesterIdentifier
-  ) {
-    if (result == null) {
-      incrementStartReconciliationMetric(RedisKeys.METRIC_START_LOBBY_UNKNOWN_RESULT);
-
-      log.error(
-              "{} start_lobby.lua null 반환값 - lobbyCode: {}, requesterIdentifier: {}",
-              LOG_MONITORING_REQUIRED,
-              code,
-              requesterIdentifier
-      );
-
-      return new StartLobbyResult.Error("Lua 스크립트 반환값이 null입니다.");
-    }
-
-    if (StartLobbyLuaResultCode.isNotReadyResult(result)) {
-      String notReadyUserIdentifier =
-              StartLobbyLuaResultCode.extractNotReadyUserIdentifier(result);
-
-      logReadyConsistencyFailure(
-              code,
-              requesterIdentifier,
-              notReadyUserIdentifier
-      );
-
-      return new StartLobbyResult.NotReady(code, notReadyUserIdentifier);
-    }
-
-    if (StartLobbyLuaResultCode.isStaleParticipantResult(result)) {
-      String staleParticipantUserIdentifier =
-              StartLobbyLuaResultCode.extractStaleParticipantUserIdentifier(result);
-
-      logReadyConsistencyFailure(
-              code,
-              requesterIdentifier,
-              staleParticipantUserIdentifier
-      );
-
-      log.error(
-              "{} 게임 시작 실패 - stale participant 감지. lobbyCode: {}, requester: {}, staleParticipant: {}",
-              LOG_MONITORING_REQUIRED,
-              code,
-              requesterIdentifier,
-              staleParticipantUserIdentifier
-      );
-
-      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_READY_CONSISTENCY_FAILURE);
-
-      return new StartLobbyResult.StaleParticipant(code, staleParticipantUserIdentifier);
-    }
-
-    return StartLobbyLuaResultCode.fromExactValue(result)
-            .map(resultCode -> toStartLobbyResult(resultCode, code, requesterIdentifier))
-            .orElseGet(() -> {
-              incrementStartReconciliationMetric(RedisKeys.METRIC_START_LOBBY_UNKNOWN_RESULT);
-
-              log.error(
-                      "{} start_lobby.lua 알 수 없는 반환값 - lobbyCode: {}, requesterIdentifier: {}, result: {}",
-                      LOG_MONITORING_REQUIRED,
-                      code,
-                      requesterIdentifier,
-                      result
-              );
-
-              return new StartLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
-            });
-  }
-
   /**
    * 게임 시작 직전에 stale ready 데이터를 정리한다.
    *
@@ -1047,106 +898,6 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               e
       );
     }
-  }
-
-  /**
-   * start_lobby.lua가 NOT_READY를 반환했을 때 ready/participants 정합성 진단 로그를 남긴다.
-   *
-   * [목적]
-   * 단순히 "준비 안 됨"으로만 남기면 실제 미준비 유저인지,
-   * 퇴장/강퇴 후 participants Set에 남은 stale 유저인지 추적하기 어렵다.
-   *
-   * 따라서 participants 포함 여부, ready 포함 여부, 로비 세션 키 존재 여부,
-   * stale ready 데이터 수를 함께 기록한다.
-   */
-  private void logReadyConsistencyFailure(
-          String code,
-          String requesterIdentifier,
-          String notReadyUserIdentifier
-  ) {
-    String participantsKey = RedisKeys.lobbyParticipantsKey(code);
-    String readyKey = RedisKeys.lobbyReadyKey(code);
-    String lobbyUserSessionKey = RedisKeys.lobbyUserSessionKey(code, notReadyUserIdentifier);
-
-    try {
-      Long participantCount = redisTemplate.opsForSet().size(participantsKey);
-      Long readyCount = redisTemplate.opsForSet().size(readyKey);
-
-      Boolean isParticipant = redisTemplate.opsForSet()
-              .isMember(participantsKey, notReadyUserIdentifier);
-
-      Boolean isReady = redisTemplate.opsForSet()
-              .isMember(readyKey, notReadyUserIdentifier);
-
-      boolean hasActiveLobbySession = Boolean.TRUE.equals(
-              redisTemplate.hasKey(lobbyUserSessionKey)
-      );
-
-      Set<String> participants = redisTemplate.opsForSet().members(participantsKey);
-      Set<String> readyParticipants = redisTemplate.opsForSet().members(readyKey);
-
-      Set<String> staleReadyParticipants = new HashSet<>(
-              readyParticipants != null ? readyParticipants : Set.of()
-      );
-      staleReadyParticipants.removeAll(participants != null ? participants : Set.of());
-
-      incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_READY_CONSISTENCY_FAILURE);
-
-      log.warn(
-              "{} 게임 시작 실패 READY 정합성 진단 - lobbyCode: {}, requester: {}, "
-                      + "notReadyUserIdentifier: {}, participantCount: {}, readyCount: {}, "
-                      + "isParticipant: {}, isReady: {}, hasActiveLobbySession: {}, "
-                      + "staleReadyCount: {}, staleReadyParticipants: {}",
-              LOG_MONITORING_REQUIRED,
-              code,
-              requesterIdentifier,
-              notReadyUserIdentifier,
-              participantCount,
-              readyCount,
-              isParticipant,
-              isReady,
-              hasActiveLobbySession,
-              staleReadyParticipants.size(),
-              staleReadyParticipants
-      );
-
-    } catch (Exception e) {
-      log.error(
-              "{} 게임 시작 실패 READY 정합성 진단 로그 생성 실패 - lobbyCode: {}, requester: {}, "
-                      + "notReadyUserIdentifier: {}",
-              LOG_MONITORING_REQUIRED,
-              code,
-              requesterIdentifier,
-              notReadyUserIdentifier,
-              e
-      );
-    }
-  }
-
-  /**
-   * start_lobby.lua 반환 코드를 도메인 결과 타입으로 변환한다.
-   * StartLobbyLuaResultCode는 Lua 스크립트 반환 문자열과 1:1로 매핑됩니다.
-   */
-  private StartLobbyResult toStartLobbyResult(
-          StartLobbyLuaResultCode resultCode,
-          String code,
-          String requesterIdentifier
-  ) {
-    return switch (resultCode) {
-      case STARTED -> new StartLobbyResult.Started(code);
-      case LOBBY_NOT_FOUND -> new StartLobbyResult.LobbyNotFound(code);
-      case HOST_NOT_FOUND -> new StartLobbyResult.HostNotFound(code);
-      case FORBIDDEN -> new StartLobbyResult.Forbidden(code, requesterIdentifier);
-      case LOBBY_NOT_WAITING -> new StartLobbyResult.LobbyNotWaiting(code);
-      case MAP_NOT_SELECTED -> new StartLobbyResult.MapNotSelected(code);
-      case NO_PLAYER -> new StartLobbyResult.NoPlayer(code);
-      case NOT_READY_PREFIX -> new StartLobbyResult.Error(
-              "NOT_READY_PREFIX는 동적 prefix 결과이므로 exact 매핑 대상이 아닙니다."
-      );
-      case STALE_PARTICIPANT_PREFIX -> new StartLobbyResult.Error(
-              "STALE_PARTICIPANT_PREFIX는 동적 prefix 결과이므로 exact 매핑 대상이 아닙니다."
-      );
-    };
   }
 
   private Long parseNullableLong(Object value) {

@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.global.security.jwt;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -11,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -47,13 +49,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     // JWT 서명 검증에 사용할 암호화 키
     private final SecretKey secretKey;
+    private final StringRedisTemplate redisTemplate;
 
     /**
      * 필터 생성자
      * application.yml (또는 properties) 파일에서 'auth.jwt.secret' 값을 주입받아 SecretKey 객체로 초기화한다.     */
-    public JwtAuthenticationFilter(@Value("${auth.jwt.secret}") String secret) {
+    public JwtAuthenticationFilter(
+            @Value("${auth.jwt.secret}") String secret,
+            StringRedisTemplate redisTemplate
+    ) {
         byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
         this.secretKey = Keys.hmacShaKeyFor(keyBytes);
+        this.redisTemplate = redisTemplate;
     }
 
     @Override
@@ -70,6 +77,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // 토큰이 없으면 그냥 다음 필터로 넘어감 -> permitAll이면 통과, 아니면 인가 예외 발생
         if (token != null) {
             try {
+                if (isBlacklistedAccessToken(token)) {
+                    SecurityContextHolder.clearContext();
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
                 // 3. JWT 문자열을 파싱하고 서명을 검증하여 Payload (클레임)를 가져옴
                 Claims claims = Jwts.parser()
                         .verifyWith(secretKey) // 서버가 가진 secretKey로 서명 (Signature) 위변조 확인
@@ -92,6 +105,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String userIdentifier = claims.get(JwtClaims.USER_IDENTIFIER, String.class);
                 UserType userType = UserType.valueOf(
                         claims.get(JwtClaims.USER_TYPE, String.class));
+                if (!isActiveSession(userIdentifier)) {
+                    SecurityContextHolder.clearContext();
+                    filterChain.doFilter(request, response);
+                    return;
+                }
 
                 // 6. 인증된 사용자를 표현하는 커스텀 Principal 객체 생성
                 CustomPrincipal principal = new CustomPrincipal(userId, userIdentifier, userType);
@@ -161,5 +179,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return header.substring(BEARER_PREFIX.length());
         }
         return null;
+    }
+
+    private boolean isBlacklistedAccessToken(String accessToken) {
+        try {
+            String tokenHash = TokenHashUtils.sha256(accessToken);
+            String key = RedisKeys.accessTokenBlacklistKey(tokenHash);
+            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        } catch (RuntimeException e) {
+            log.warn("블랙리스트 조회 실패 - fail-closed 적용");
+            return true;
+        }
+    }
+
+    private boolean isActiveSession(String sessionId) {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.activeSessionKey(sessionId)));
+        } catch (RuntimeException e) {
+            log.warn("활성 세션 조회 실패 - fail-closed 적용");
+            return false;
+        }
     }
 }

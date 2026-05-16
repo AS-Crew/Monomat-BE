@@ -3,12 +3,16 @@ package io.github.ascrew.monomatbe.domain.auth.service;
 import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.GuestSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
+import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenWithExpiry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.UUID;
 
@@ -44,8 +49,10 @@ public class GuestAuthService {
 
     private final UserRepository userRepository;
     private final GuestSessionRepository guestSessionRepository;
+    private final UserSessionRepository userSessionRepository;
     private final StringRedisTemplate redisTemplate;
     private final JwtTokenProvider jwtTokenProvider;
+    private final UserSessionLifecycleService userSessionLifecycleService;
 
     /**
      * 게스트 로그인 메인 플로우
@@ -55,7 +62,7 @@ public class GuestAuthService {
      * 4) Redis 세션/리프레시 정보 저장
      */
     @Transactional
-    public GuestLoginResponse loginAsGuest(String rawNickname) {
+    public GuestLoginResponse loginAsGuest(String rawNickname, String ipAddress, String userAgent) {
         String nickname = normalizeNickname(rawNickname);
         validateNicknameAvailability(nickname);
 
@@ -95,15 +102,31 @@ public class GuestAuthService {
                 savedUser.getUserType(),
                 userIdentifier
         );
+        String refreshTokenHash = TokenHashUtils.sha256(refreshToken.token());
+
+        userSessionRepository.save(UserSession.builder()
+                .user(savedUser)
+                .sessionId(userIdentifier)
+                .sessionToken(refreshTokenHash)
+                .ipAddress(normalizeOptionalLength(ipAddress, 45))
+                .userAgent(normalizeOptionalLength(userAgent, 500))
+                .expiresAt(LocalDateTime.ofInstant(refreshToken.expiresAt(), ZoneId.systemDefault()))
+                .createdAt(now)
+                .updatedAt(now)
+                .status(UserSessionStatus.ACTIVE)
+                .build());
+
+        userSessionLifecycleService.enforceActiveSessionLimit(savedUser.getId(), savedUser.getUserType(), userIdentifier, now);
 
         // Redis에는 DB 트랜잭션이 성공적으로 커밋된 이후에만 세션 정보를 저장합니다. (고아 데이터 방지)
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 try {
-                    storeGuestSessionToRedis(savedUser, userIdentifier, refreshToken.token());
+                    storeGuestSessionToRedis(savedUser, userIdentifier, refreshTokenHash);
                 } catch (Exception e) {
                     log.error("Redis 게스트 세션 저장 실패 - userId: {}", savedUser.getId(), e);
+                    userSessionLifecycleService.markSessionRevokedCompensating(userIdentifier, LocalDateTime.now());
                 }
             }
         });
@@ -126,6 +149,19 @@ public class GuestAuthService {
      */
     private String normalizeNickname(String rawNickname) {
         return rawNickname.trim();
+    }
+
+    private String normalizeOptionalLength(String value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        return normalized.length() > maxLength
+                ? normalized.substring(0, maxLength)
+                : normalized;
     }
 
     /**
@@ -151,7 +187,7 @@ public class GuestAuthService {
      * - Hash: 게스트 식별/조회용 사용자 정보
      * - String: Refresh Token
      */
-    private void storeGuestSessionToRedis(User user, String userIdentifier, String refreshToken) {
+    private void storeGuestSessionToRedis(User user, String userIdentifier, String refreshTokenHash) {
         String guestSessionKey = RedisKeys.guestSessionKey(userIdentifier);
 
         // RedisKeys.FIELD_GUEST_* 상수로 Hash 필드 키 참조 (오타 방지)
@@ -163,6 +199,7 @@ public class GuestAuthService {
         redisTemplate.expire(guestSessionKey, GUEST_SESSION_TTL);
 
         String refreshTokenKey = RedisKeys.refreshTokenKey(userIdentifier);
-        redisTemplate.opsForValue().set(refreshTokenKey, refreshToken, jwtTokenProvider.refreshTokenTtl());
+        redisTemplate.opsForValue().set(refreshTokenKey, refreshTokenHash, jwtTokenProvider.refreshTokenTtl());
+        redisTemplate.opsForValue().set(RedisKeys.activeSessionKey(userIdentifier), "1", jwtTokenProvider.refreshTokenTtl());
     }
 }

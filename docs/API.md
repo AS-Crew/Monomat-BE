@@ -132,6 +132,74 @@ POST /api/auth/login
 
 ---
 
+#### 토큰 재발급 (RTR)
+
+```http
+POST /api/auth/refresh
+```
+
+Refresh Token을 검증하고 `Refresh Token Rotation` 정책으로 Access/Refresh 토큰을 재발급합니다.  
+유효하지 않거나 재사용이 감지된 Refresh Token 요청은 거부되며, 보안 위협으로 판단될 경우 사용자 활성 세션이 서버에서 강제 종료됩니다.
+
+**Request**
+
+```json
+{
+  "refreshToken": "eyJhbGciOi..."
+}
+```
+
+**Response `200 OK`**
+
+```json
+{
+  "userId": 2,
+  "userType": "REGISTERED",
+  "userIdentifier": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
+  "accessToken": "eyJhbGciOi...",
+  "accessTokenExpiresAt": "2026-05-03T07:45:00Z",
+  "refreshToken": "eyJhbGciOi...",
+  "refreshTokenExpiresAt": "2026-06-02T07:30:00Z"
+}
+```
+
+**Error**
+
+- `400 Bad Request`: `refreshToken` 누락/공백
+- `401 Unauthorized`: 유효하지 않거나 만료된 Refresh Token
+- `503 Service Unavailable`: 세션 저장소(Redis) 일시 장애
+
+---
+
+#### 로그아웃
+
+```http
+POST /api/auth/logout
+```
+
+Access Token 기반으로 요청자를 식별하여 로그아웃 처리합니다.  
+요청에 사용된 Access Token은 블랙리스트 처리되고, 현재 세션의 Refresh Token은 즉시 폐기됩니다.
+
+**Request Header**
+
+| 헤더 | 필수 | 설명 |
+|---|---|---|
+| `Authorization` | ✅ | `Bearer {accessToken}` |
+
+**Response `200 OK`**
+
+```json
+{
+  "message": "로그아웃이 완료되었습니다."
+}
+```
+
+**Error**
+
+- `401 Unauthorized`: 인증 실패 또는 잘못된 Authorization 헤더
+
+---
+
 ### 로비 (Lobby)
 
 #### 로비 생성

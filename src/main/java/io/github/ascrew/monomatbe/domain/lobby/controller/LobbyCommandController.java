@@ -1,9 +1,11 @@
 /*
- * 로비 관련 HTTP REST API를 처리하는 컨트롤러.
+ * 로비 명령(Command) REST API를 처리하는 컨트롤러
  *
  * [책임]
- * 클라이언트의 명시적인 데이터 조회 요청을 수신하고
- * LobbyService에 위임한 뒤 응답을 반환합니다.
+ * - 로비 생성
+ * - 초대 코드 기반 로비 입장 사전 검증
+ * - 로비 참여자 ready 상태 변경
+ * - 로비 게임 시작
  */
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 
@@ -11,10 +13,11 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
-import io.github.ascrew.monomatbe.domain.lobby.service.LobbyService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyCreateService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyJoinService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyReadyService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyStartService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,7 +28,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,14 +35,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 @Slf4j
-@Tag(name = "Lobby", description = "로비 관련 REST API")
+@Tag(name = "Lobby Command", description = "로비 명령 REST API")
 @RestController
 @RequestMapping("/api/lobbies")
 @RequiredArgsConstructor
-public class LobbyController {
+public class LobbyCommandController {
 
     // =========================================================
     // 로그 메시지 상수
@@ -50,14 +50,6 @@ public class LobbyController {
             "요청 수신: 로비 생성 [POST /api/lobbies] - 방장: {}";
     private static final String LOG_CREATE_LOBBY_RESPONSE =
             "로비 생성 응답 - 코드: {}";
-    private static final String LOG_GET_PUBLIC_LOBBIES_REQUEST =
-            "요청 수신: 공개 로비 목록 조회 [GET /api/lobbies]";
-    private static final String LOG_GET_PUBLIC_LOBBIES_RESPONSE =
-            "조회 완료: 공개 로비 {}개 반환";
-    private static final String LOG_GET_LOBBY_DETAIL_REQUEST =
-            "요청 수신: 로비 상세 조회 [GET /api/lobbies/{code}] - 코드: {}, 식별자: {}";
-    private static final String LOG_GET_LOBBY_DETAIL_RESPONSE =
-            "로비 상세 조회 완료 - 코드: {}, canStart: {}";
     private static final String LOG_JOIN_LOBBY_REQUEST =
             "요청 수신: 로비 입장 [POST /api/lobbies/join] - 초대 코드: {}, 식별자: {}";
     private static final String LOG_JOIN_LOBBY_RESPONSE =
@@ -71,20 +63,26 @@ public class LobbyController {
     private static final String LOG_START_LOBBY_RESPONSE =
             "게임 시작 처리 완료 - 코드: {}";
 
-    private final LobbyService lobbyService;
+    private final LobbyCreateService lobbyCreateService;
+    private final LobbyJoinService lobbyJoinService;
+    private final LobbyReadyService lobbyReadyService;
+    private final LobbyStartService lobbyStartService;
 
     /**
      * 로비 생성 API
      *
      * [인증]
-     * JWT Access Token이 필요합니다.
+     * JWT Access Token이 필요하다.
      * @AuthenticationPrincipal로 CustomPrincipal을 주입받아
      * userId(DB용)와 userIdentifier(Redis용)를 서비스로 전달한다.
      *
      * [권한]
      * 게스트(GUEST)와 정식 회원(REGISTERED) 모두 로비를 생성할 수 있다.
      *
-     * @param request   로비 생성 요청 DTO (@Valid 검증 적용)
+     * [계약 유지]
+     * 기존 LobbyController의 POST /api/lobbies path와 요청/응답 DTO를 그대로 유지한다.
+     *
+     * @param request   로비 생성 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
      * @return 201 Created + 생성된 로비 정보
      */
@@ -103,7 +101,7 @@ public class LobbyController {
                 principal != null ? principal.userIdentifier() : "null"
         );
 
-        CreateLobbyResponse response = lobbyService.createLobby(request, principal);
+        CreateLobbyResponse response = lobbyCreateService.createLobby(request, principal);
 
         log.info(LOG_CREATE_LOBBY_RESPONSE, response.inviteCode());
 
@@ -126,11 +124,7 @@ public class LobbyController {
      * 1. POST /api/lobbies/join 호출 -> 입장 가능 여부 확인
      * 2. WebSocket SUBSCRIBE /topic/lobby/{inviteCode} -> 실제 입장 처리
      *
-     * [에러 응답]
-     * - 404 Not Found : 존재하지 않는 초대 코드
-     * - 409 Conflict : 게임 진행 중인 로비 또는 최대 인원 초과
-     *
-     * @param request 로비 입장 요청 DTO (초대 코드 포함, @Valid 검증 적용)
+     * @param request   로비 입장 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
      * @return 200 OK + 로비 기본 정보
      */
@@ -154,7 +148,7 @@ public class LobbyController {
                 principal != null ? principal.userIdentifier() : "null"
         );
 
-        JoinLobbyResponse response = lobbyService.joinLobby(request.inviteCode(), principal);
+        JoinLobbyResponse response = lobbyJoinService.joinLobby(request.inviteCode(), principal);
 
         log.info(LOG_JOIN_LOBBY_RESPONSE, response.inviteCode());
 
@@ -162,7 +156,7 @@ public class LobbyController {
     }
 
     /**
-     * 로비 참여자의 준비 상태 변경 API.
+     * 로비 참여자의 준비 상태 변경 API
      *
      * [정책]
      * - JWT 인증이 필요하다.
@@ -170,8 +164,8 @@ public class LobbyController {
      * - 방장은 ready 대상에서 제외하고 시작 버튼만 사용한다.
      * - 준비 상태 변경 후 로비 내부 refresh 신호를 전송한다.
      *
-     * @param code 로비 초대 코드
-     * @param request 준비 상태 변경 요청 DTO
+     * @param code      로비 초대 코드
+     * @param request   준비 상태 변경 요청 DTO
      * @param principal JWT에서 추출한 인증 주체
      * @return 204 No Content
      */
@@ -193,7 +187,7 @@ public class LobbyController {
                 request.ready()
         );
 
-        lobbyService.updateReadyStatus(code, request, principal);
+        lobbyReadyService.updateReadyStatus(code, request, principal);
 
         log.info(LOG_UPDATE_READY_RESPONSE, code);
 
@@ -211,7 +205,7 @@ public class LobbyController {
      * - 맵의 문제 수가 설정된 라운드 수 이상이어야 한다.
      * - 방장을 제외한 모든 참여자가 ready 상태여야 한다.
      *
-     * @param code 로비 초대 코드
+     * @param code      로비 초대 코드
      * @param principal JWT에서 추출한 인증 주체
      * @return 204 No Content
      */
@@ -236,65 +230,10 @@ public class LobbyController {
                 principal != null ? principal.userIdentifier() : "null"
         );
 
-        lobbyService.startLobbyGame(code, principal);
+        lobbyStartService.startLobbyGame(code, principal);
 
         log.info(LOG_START_LOBBY_RESPONSE, code);
 
         return ResponseEntity.noContent().build();
-    }
-
-    /**
-     * 로비 상세 조회 API
-     *
-     * [용도]
-     * 로비 대기실 화면에서 필요한 참여자 ready 상태와 canStart 값을 조회한다.
-     *
-     * [주의]
-     * 실제 최신 참여자 상태는 WebSocket 구독/해제 흐름에 의해 Redis에서 관리된다.
-     * 클라이언트는 REFRESH_LOBBY_INFO 신호를 받으면 이 API를 다시 호출하여 최신 상태를 동기화한다.
-     *
-     * @param code 로비 초대 코드
-     * @param principal JWT에서 추출한 인증 주체
-     * @return 로비 상세 정보
-     */
-    @Operation(
-            summary = "로비 상세 조회",
-            description = "로비 참여자 ready 상태와 canStart 값을 포함한 대기실 상세 정보를 조회합니다."
-    )
-    @GetMapping("/{code}")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<LobbyDetailResponse> getLobbyDetail(
-            @PathVariable String code,
-            @AuthenticationPrincipal CustomPrincipal principal
-    ) {
-        log.info(
-                LOG_GET_LOBBY_DETAIL_REQUEST,
-                code,
-                principal != null ? principal.userIdentifier() : "null"
-        );
-
-        LobbyDetailResponse response = lobbyService.getLobbyDetail(code, principal);
-
-        log.info(LOG_GET_LOBBY_DETAIL_RESPONSE, code, response.canStart());
-
-        return ResponseEntity.ok(response);
-    }
-
-    /**
-     * 공개 로비 목록 조회 API.
-     * Redis에서 직접 필터링하여 공개 로비만 반환합니다.
-     *
-     * @return 현재 활성화된 공개 로비 목록
-     */
-    @Operation(summary = "공개 로비 목록 조회", description = "Redis에서 공개 상태인 로비만 필터링하여 반환합니다.")
-    @GetMapping
-    public ResponseEntity<List<LobbyRedisDto>> getPublicLobbies() {
-        log.info(LOG_GET_PUBLIC_LOBBIES_REQUEST);
-
-        List<LobbyRedisDto> publicLobbies = lobbyService.getPublicLobbies();
-
-        log.info(LOG_GET_PUBLIC_LOBBIES_RESPONSE, publicLobbies.size());
-
-        return ResponseEntity.ok(publicLobbies);
     }
 }

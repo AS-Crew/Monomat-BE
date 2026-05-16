@@ -40,7 +40,7 @@ import java.time.LocalDateTime;
  *
  * [기본값 정책 — @PrePersist 단일 책임]
  * status, isDeleted, createdAt의 기본값은 @PrePersist에서만 설정한다.
- * 서비스 레이어(LobbyService)는 이 필드들을 Builder에서 명시하지 않으며,
+ * LobbyCreateService는 이 필드들을 Builder에서 명시하지 않으며,
  * @PrePersist가 유일한 기본값 설정 지점이다.
  * 이를 통해 기본값 로직이 분산되지 않고 엔티티에 캡슐화된다.
  */

@@ -10,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,14 +43,18 @@ class MapServiceTest {
     private ValueOperations<String, String> valueOperations;
     @Mock
     private JsonMapper jsonMapper;
-    @Mock
-    private MapCacheEvictor mapCacheEvictor;
 
     private MapService mapService;
 
     @BeforeEach
     void setUp() {
-        mapService = new MapService(quizMapJpaRepository, userRepository, mapCacheEvictor, redisTemplate, jsonMapper);
+        mapService = new MapService(
+                quizMapJpaRepository,
+                userRepository,
+                redisTemplate,
+                jsonMapper
+        );
+
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
@@ -98,8 +103,8 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.title()).isEqualTo("new map");
         assertThat(response.isPublic()).isTrue();
-        verify(mapCacheEvictor).evictPublicMapCaches(300L);
-    }
+        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
+        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(300L));    }
 
     @Test
     void updateMap_notOwner_forbidden() {
@@ -156,6 +161,6 @@ class MapServiceTest {
 
         mapService.updateMap(200L, request, ownerPrincipal);
 
-        verify(mapCacheEvictor).evictPublicMapCaches(200L);
-    }
+        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
+        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(200L));    }
 }

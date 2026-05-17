@@ -42,7 +42,8 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   ├── StartLobbyResult.java                   # 게임 시작 처리 결과 (sealed interface)
 │   │   ├── StartLobbyLuaResultCode.java            # start_lobby.lua 반환 문자열 계약 enum
 │   │   ├── controller/
-│   │   │   ├── LobbyController.java                # HTTP REST API (생성, 입장, 목록, 상세, ready, start)
+│   │   │   ├── LobbyCommandController.java         # 로비 생성, 입장 사전 검증, ready, start REST API
+│   │   │   ├── LobbyQueryController.java           # 공개 로비 목록 및 로비 상세 조회 REST API
 │   │   │   └── LobbyEventController.java           # STOMP 로비 이벤트 수신
 │   │   ├── dto/
 │   │   │   ├── CreateLobbyRequest.java             # 로비 생성 요청 DTO
@@ -54,6 +55,8 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   │   ├── LobbyPlayerResponse.java            # 로비 상세 참여자 응답 DTO
 │   │   │   ├── LobbyMapMetadata.java               # Redis 저장용 로비 맵 메타데이터 DTO
 │   │   │   ├── LobbyRedisDto.java                  # 공개 로비 목록 조회 응답 DTO
+│   │   │   ├── LobbySearchCondition.java           # 공개 로비 목록 검색/필터/정렬 조건 DTO
+│   │   │   ├── LobbySortType.java                  # 공개 로비 목록 정렬 기준 enum
 │   │   │   └── UpdateLobbyReadyRequest.java        # ready 상태 변경 요청 DTO
 │   │   ├── entity/
 │   │   │   ├── GameLobby.java                      # GAME_LOBBY 테이블 엔티티
@@ -62,10 +65,21 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   ├── repository/
 │   │   │   ├── GameLobbyJpaRepository.java         # GAME_LOBBY JPA 리포지토리
 │   │   │   ├── LobbyRepository.java                # 로비 Redis 데이터 접근 인터페이스
-│   │   │   └── LobbyRepositoryImpl.java            # Redis 기반 구현체 (Lua 스크립트 활용)
+│   │   │   ├── LobbyRepositoryImpl.java            # 로비 Repository Facade
+│   │   │   └── redis/
+│   │   │       ├── LobbyLuaScriptExecutor.java     # 로비 Lua 스크립트 실행 컴포넌트
+│   │   │       ├── LobbyLuaResultMapper.java       # Lua 반환 문자열 → 도메인 결과 매핑
+│   │   │       ├── LobbyRedisCommandRepository.java # Redis 로비 명령 처리
+│   │   │       ├── LobbyRedisQueryRepository.java  # Redis 로비 조회 처리
+│   │   │       └── LobbyStartReconciliationRepository.java # start 상태 불일치 재처리 큐 접근
 │   │   └── service/
-│   │       ├── LobbyEventService.java              # 로비 이벤트 처리 및 STOMP 브로드캐스트
-│   │       ├── LobbyService.java                   # 로비 생성/입장/상세/ready/start 비즈니스 로직
+│   │       ├── LobbyCanStartPolicy.java            # 조회 시점 canStart 계산 정책
+│   │       ├── LobbyCreateService.java             # 로비 생성 유스케이스
+│   │       ├── LobbyJoinService.java               # 초대 코드 기반 입장 사전 검증 유스케이스
+│   │       ├── LobbyQueryService.java              # 로비 목록/상세 조회 유스케이스
+│   │       ├── LobbyReadyService.java              # ready 상태 변경 유스케이스
+│   │       ├── LobbyStartService.java              # 게임 시작 유스케이스
+│   │       ├── LobbyRealtimeNotifier.java          # 로비 refresh/STOMP 브로드캐스트
 │   │       └── LobbyStartReconciliationService.java # 게임 시작 Redis-DB 상태 불일치 재처리 스케줄러
 │   │
 │   ├── map/                                        # 퀴즈 맵 도메인
@@ -170,6 +184,98 @@ LobbyRepositoryImpl
 ```
 
 이 구조를 통해 맵 도메인의 영속성 모델 변경이 Redis 저장 계층으로 직접 전파되는 것을 방지합니다.
+
+---
+
+## 📋 공개 로비 목록 조회 정책
+
+공개 로비 목록 조회는 `GET /api/lobbies`에서 처리합니다.  
+이 API는 FE 로비 목록 화면에서 사용자가 입장 가능한 공개 로비를 빠르게 찾기 위한 조회 API입니다.
+
+```text
+Client
+    │ GET /api/lobbies?keyword=&mapCategory=&sort=
+    ▼
+LobbyQueryController
+    │ 요청 파라미터 수집
+    │ - keyword
+    │ - mapCategory
+    │ - sort
+    ▼
+LobbySearchCondition
+    │ 요청 조건 정규화
+    │ - keyword trim + lower-case
+    │ - mapCategory MapCategory.from()으로 검증
+    │ - sort LobbySortType으로 검증
+    ▼
+LobbyQueryService
+    │ 로비 목록 노출 정책 적용
+    │ - WAITING 상태만 노출
+    │ - keyword 제목 검색
+    │ - mapCategory 필터링
+    │ - latest / most_players / most_available 정렬
+    │ - Redis 손상 mapCategory 로비 제외
+    ▼
+LobbyRepository
+    ▼
+LobbyRedisQueryRepository
+    │ Redis lobby:public Set 기준 원본 공개 로비 조회
+    ▼
+Redis
+```
+
+### 책임 분리
+
+| 계층 | 책임 |
+| --- | --- |
+| `LobbyQueryController` | HTTP 요청 파라미터 수집 |
+| `LobbySearchCondition` | 요청값 정규화 및 검증 |
+| `LobbyQueryService` | 로비 목록 노출 정책, 검색, 필터링, 정렬 |
+| `LobbyRedisQueryRepository` | Redis 원본 공개 로비 데이터 조회 |
+
+### 노출 정책
+
+* Redis `lobby:public` Set을 기준으로 공개 로비 원본 목록을 조회합니다.
+* 서비스 계층에서 `WAITING` 상태 로비만 노출합니다.
+* `PLAYING`, `FINISHED` 로비는 기본 목록에서 제외합니다.
+* 비공개 로비는 `lobby:public` Set에 들어가지 않으므로 목록에 노출되지 않습니다.
+* 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외합니다.
+* Redis에 잘못된 `mapCategory` 값이 들어 있어도 전체 API를 실패시키지 않고 해당 로비만 제외합니다.
+
+### 정렬 정책
+
+| 정렬 기준 | 설명 |
+| --- | --- |
+| `latest` | `createdAtEpochMillis` 내림차순 |
+| `most_players` | `currentPlayers` 내림차순, 동률이면 최신순 |
+| `most_available` | `maxPlayers - currentPlayers` 내림차순, 동률이면 최신순 |
+
+`latest` 정렬은 Redis `Set`의 순서에 의존하지 않습니다.  
+`lobby:public`은 Redis Set이므로 삽입 순서가 보장되지 않습니다. 따라서 로비 생성 시 Redis Hash에 `created_at_epoch_millis`를 저장하고, 이 값을 기준으로 최신순 정렬을 수행합니다.
+
+### 생성 시각 기준
+
+로비 생성 시각은 Java 애플리케이션 서버 시간이 아니라 Redis `TIME` 명령을 기준으로 생성합니다.
+
+```lua
+local redisTime = redis.call('TIME')
+local createdAtEpochMillis = redisTime[1] * 1000 + math.floor(redisTime[2] / 1000)
+```
+
+멀티 인스턴스 운영 환경에서는 애플리케이션 서버 간 시간 편차가 발생할 수 있습니다.  
+따라서 Redis 서버 기준 단일 시간원을 사용해 최신순 정렬 기준을 일관되게 유지합니다.
+
+### Redis Hash 필드
+
+`lobby:{code}` Hash에는 공개 로비 목록 조회 및 정렬을 위해 다음 필드가 포함됩니다.
+
+| 필드 | 설명 |
+| --- | --- |
+| `created_at_epoch_millis` | Redis `TIME` 기준 로비 생성 시각. epoch milliseconds |
+| `map_category` | 선택된 맵 카테고리. `K-POP`, `J-POP`, `POP` |
+| `status` | 로비 상태. 목록에서는 `WAITING`만 노출 |
+| `is_private` | 비공개 여부. 공개 로비 목록은 `false`만 노출 |
+| `max_players` | 최대 참여 인원 |
 
 ---
 

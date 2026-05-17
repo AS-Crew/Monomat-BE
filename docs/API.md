@@ -436,10 +436,47 @@ JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 입장 �
 GET /api/lobbies
 ```
 
-현재 활성화된 공개(`isPrivate = false`) 로비 목록을 반환합니다.
-Redis에서 직접 필터링하여 고속 반환합니다.
+현재 입장 가능한 공개(`isPrivate = false`) 로비 목록을 반환합니다.  
+Redis의 `lobby:public` Set을 기준으로 공개 로비 원본을 조회한 뒤, 서비스 계층에서 검색/필터/정렬 정책을 적용합니다.
 
 Redis 직렬화용 JsonMapper와 HTTP 응답용 JsonMapper를 분리했기 때문에, 응답은 Jackson 타입 정보가 포함되지 않은 순수 DTO 배열로 반환됩니다.
+
+**목록 노출 정책**
+
+* 비공개 로비는 목록에 노출되지 않습니다.
+* `WAITING` 상태 로비만 기본 목록에 노출됩니다.
+* `PLAYING`, `FINISHED` 상태 로비는 기본 목록에서 제외됩니다.
+* 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외됩니다.
+* Redis에 잘못된 `mapCategory` 값이 남아 있는 로비는 전체 API 실패 없이 해당 로비만 제외됩니다.
+
+> `PLAYING` 로비는 현재 WebSocket 입장 단계에서 차단되므로, 기본 로비 목록에서는 제외합니다.  
+> 추후 관전 기능이 추가될 경우 별도 상태 필터 정책으로 확장할 수 있습니다.
+
+**Query Parameters**
+
+| 파라미터 | 타입 | 필수 | 기본값 | 설명 |
+| --- | --- | --- | --- | --- |
+| `keyword` | String | ❌ | 없음 | 로비 제목 검색어. 앞뒤 공백은 제거되며, 대소문자를 구분하지 않습니다. |
+| `mapCategory` | String | ❌ | 없음 | 맵 카테고리 필터. `K-POP`, `J-POP`, `POP`을 지원합니다. |
+| `sort` | String | ❌ | `latest` | 정렬 기준. `latest`, `most_players`, `most_available`을 지원합니다. |
+
+**정렬 기준**
+
+| 값 | 설명 |
+| --- | --- |
+| `latest` | 최신 생성 로비 순 |
+| `most_players` | 현재 인원이 많은 순. 동률이면 최신순 |
+| `most_available` | 빈자리가 많은 순. 동률이면 최신순 |
+
+**Request 예시**
+
+```http
+GET /api/lobbies
+GET /api/lobbies?keyword=퀴즈
+GET /api/lobbies?mapCategory=K-POP
+GET /api/lobbies?sort=most_players
+GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available
+```
 
 **Response `200 OK`**
 
@@ -455,7 +492,8 @@ Redis 직렬화용 JsonMapper와 HTTP 응답용 JsonMapper를 분리했기 때�
     "maxPlayers": 8,
     "currentPlayers": 3,
     "isPrivate": false,
-    "status": "WAITING"
+    "status": "WAITING",
+    "createdAtEpochMillis": 1778990123456
   },
   {
     "code": "DEF456",
@@ -467,24 +505,31 @@ Redis 직렬화용 JsonMapper와 HTTP 응답용 JsonMapper를 분리했기 때�
     "maxPlayers": 6,
     "currentPlayers": 1,
     "isPrivate": false,
-    "status": "WAITING"
+    "status": "WAITING",
+    "createdAtEpochMillis": 1778990000000
   }
 ]
 ```
 
-| 필드               | 타입      | 설명                                                 |
-| ---------------- | ------- | -------------------------------------------------- |
-| `code`           | String  | 로비 초대 코드                                           |
-| `hostId`         | String  | 방장 사용자 식별자                                         |
-| `title`          | String  | 로비 제목                                              |
-| `mapId`          | Long    | 선택된 맵 ID (미선택 시 `null`)                            |
-| `mapTitle`       | String  | 선택된 맵 제목 (미선택 시 `null`)                            |
-| `mapCategory`    | String  | 선택된 맵 카테고리 (`K-POP`, `J-POP`, `POP`, 미선택 시 `null`) |
-| `maxPlayers`     | Integer | 최대 참여 인원                                           |
-| `currentPlayers` | Integer | 현재 참여 인원                                           |
-| `isPrivate`      | Boolean | 비공개 여부                                             |
-| `status`         | String  | 로비 상태 (`WAITING`, `PLAYING`, `FINISHED`)           |
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `code` | String | 로비 초대 코드 |
+| `hostId` | String | 방장 사용자 식별자 |
+| `title` | String | 로비 제목 |
+| `mapId` | Long | 선택된 맵 ID. 미선택 시 `null` |
+| `mapTitle` | String | 선택된 맵 제목. 미선택 시 `null` |
+| `mapCategory` | String | 선택된 맵 카테고리. `K-POP`, `J-POP`, `POP`, 미선택 시 `null` |
+| `maxPlayers` | Integer | 최대 참여 인원 |
+| `currentPlayers` | Integer | 현재 참여 인원 |
+| `isPrivate` | Boolean | 비공개 여부. 공개 로비 목록에서는 `false` |
+| `status` | String | 로비 상태. 공개 로비 목록에서는 `WAITING`만 반환 |
+| `createdAtEpochMillis` | Long | 로비 생성 시각. Redis `TIME` 기준 epoch milliseconds |
 
+**Error**
+
+| 상태 코드 | 설명 |
+| --- | --- |
+| `400 Bad Request` | 지원하지 않는 `sort` 값 또는 `mapCategory` 값 |
 ---
 
 #### 로비 상세 조회

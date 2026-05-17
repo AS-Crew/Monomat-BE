@@ -498,14 +498,14 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available
   {
     "code": "DEF456",
     "hostId": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
-    "title": "맵 미선택 퀴즈방",
-    "mapId": null,
-    "mapTitle": null,
-    "mapCategory": null,
+    "title": "진행 중인 POP 퀴즈방",
+    "mapId": 3,
+    "mapTitle": "POP 히트곡",
+    "mapCategory": "POP",
     "maxPlayers": 6,
-    "currentPlayers": 1,
+    "currentPlayers": 4,
     "isPrivate": false,
-    "status": "WAITING",
+    "status": "PLAYING",
     "createdAtEpochMillis": 1778990000000
   }
 ]
@@ -522,7 +522,7 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available
 | `maxPlayers` | Integer | 최대 참여 인원 |
 | `currentPlayers` | Integer | 현재 참여 인원 |
 | `isPrivate` | Boolean | 비공개 여부. 공개 로비 목록에서는 `false` |
-| `status` | String | 로비 상태. 공개 로비 목록에서는 `WAITING`만 반환 |
+| `status` | String | 로비 상태. 공개 로비 목록에서는 `WAITING`, `PLAYING`만 반환. `WAITING`은 입장 가능, `PLAYING`은 진행 중으로 목록에는 노출되지만 입장은 허용하지 않음 |
 | `createdAtEpochMillis` | Long | 로비 생성 시각. Redis `TIME` 기준 epoch milliseconds |
 
 **Error**

@@ -293,6 +293,27 @@ class LobbyQueryServiceTest {
                 .containsExactly("NORMAL", "BROKEN");
     }
 
+    @Test
+    @DisplayName("기본 조회에서도 Redis에 잘못된 mapCategory가 있으면 해당 로비를 제외한다")
+    void getPublicLobbies_excludesLobbyWithInvalidRedisMapCategoryWithoutCategoryFilter() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("VALID", "정상 카테고리 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("NO-MAP", "맵 미선택 로비", null, 2, 6, LobbyStatus.WAITING, 2000L),
+                lobby("INVALID", "손상 카테고리 로비", "UNKNOWN", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("VALID", "NO-MAP");
+    }
+
     /**
      * 테스트용 로비 DTO를 생성한다.
      *

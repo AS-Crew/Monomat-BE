@@ -95,6 +95,7 @@ public class LobbyQueryService {
 
         return publicLobbies.stream()
                 .filter(this::isWaitingLobby)
+                .filter(this::hasValidMapCategory)
                 .filter(lobby -> matchesKeyword(lobby, condition))
                 .filter(lobby -> matchesMapCategory(lobby, condition))
                 .sorted(lobbyComparator(condition.sortType()))
@@ -157,6 +158,35 @@ public class LobbyQueryService {
     }
 
     /**
+     * Redis에 저장된 로비 mapCategory 값이 현재 서버 정책에서 해석 가능한 값인지 확인한다.
+     *
+     * [정책]
+     * - mapCategory가 null 또는 blank면 맵 미선택 로비로 보고 기본 목록 조회에서는 허용한다.
+     * - mapCategory가 존재하면 MapCategory 정책으로 정규화 가능한 값만 허용한다.
+     * - 알 수 없는 값은 Redis 손상 데이터 또는 과거 버전 데이터로 보고 목록에서 제외한다.
+     *
+     * [필요 이유]
+     * matchesMapCategory()는 요청에 mapCategory 필터가 있을 때만 카테고리 일치 여부를 검사한다.
+     * 따라서 이 방어 필터가 없으면 기본 목록 조회에서는 잘못된 mapCategory 값이 그대로 응답될 수 있다.
+     *
+     * FE는 mapCategory가 null이거나 `K-POP`, `J-POP`, `POP` 중 하나라고 가정할 수 있어야 하므로,
+     * 서버에서 비정상 카테고리 값을 가진 로비를 공통으로 제외한다.
+     */
+    private boolean hasValidMapCategory(LobbyRedisDto lobby) {
+        if (lobby == null) {
+            return false;
+        }
+
+        String lobbyMapCategory = lobby.getMapCategory();
+        if (lobbyMapCategory == null || lobbyMapCategory.isBlank()) {
+            return true;
+        }
+
+        return normalizeRedisMapCategory(lobby, lobbyMapCategory)
+                .isPresent();
+    }
+
+    /**
      * 맵 카테고리 필터 조건에 맞는지 확인한다.
      *
      * [필터 정책]
@@ -167,12 +197,9 @@ public class LobbyQueryService {
      * 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외된다.
      * 사용자가 특정 카테고리를 선택했다는 것은 해당 카테고리 맵이 연결된 로비만 보겠다는 의미이기 때문이다.
      *
-     * [Redis 손상 데이터 방어]
-     * Redis에 저장된 mapCategory는 운영 중 수동 수정, 과거 버전 데이터, 배포 중간 상태 등으로
-     * 현재 MapCategory 정책과 맞지 않는 값이 남아 있을 수 있다.
-     *
-     * 이 경우 전체 로비 목록 API를 500으로 실패시키지 않고,
-     * 해당 로비만 필터링에서 제외한다.
+     * [전제]
+     * Redis mapCategory 값 자체의 유효성은 hasValidMapCategory()에서 먼저 검증한다.
+     * 따라서 이 메서드는 요청 필터와 로비 카테고리의 일치 여부만 판단한다.
      */
     private boolean matchesMapCategory(
             LobbyRedisDto lobby,

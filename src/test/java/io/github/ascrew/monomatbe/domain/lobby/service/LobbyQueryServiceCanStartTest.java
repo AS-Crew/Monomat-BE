@@ -1,159 +1,301 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
-import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
-import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
-import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
-import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
-import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
-import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * LobbyQueryService의 로비 상세 조회 응답 중 canStart 계산을 검증한다.
+ * LobbyQueryService의 공개 로비 목록 조회 정책을 검증한다.
  *
- * [변경 배경]
- * Issue #78에서 LobbyService facade를 제거하고,
- * 로비 상세 조회 책임을 LobbyQueryService로 분리했습니다.
+ * [테스트 범위]
+ * - Redis 조회 자체는 LobbyRepository의 책임이므로 mock 처리한다.
+ * - 이 테스트는 Service 계층의 목록 노출 정책만 검증한다.
  *
- * canStart 계산 자체는 LobbyCanStartPolicy가 담당하지만,
- * 이 테스트는 "로비 상세 조회 결과에 canStart가 올바르게 반영되는지"를 검증하므로
- * LobbyQueryService 기준으로 유지합니다.
+ * [검증 정책]
+ * - PLAYING / FINISHED 로비는 기본 목록에서 제외한다.
+ * - 제목 검색은 대소문자를 무시하고 contains 기준으로 동작한다.
+ * - 카테고리 필터는 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
+ * - Redis에 잘못된 mapCategory 값이 있어도 전체 API가 실패하지 않고 해당 로비만 제외한다.
+ * - 정렬은 최신순, 인원 많은 순, 빈자리 많은 순을 지원한다.
  */
-class LobbyQueryServiceCanStartTest {
+class LobbyQueryServiceTest {
 
-    private LobbyRepository lobbyRepository;
-    private GameLobbyJpaRepository gameLobbyJpaRepository;
-    private QuizMapJpaRepository quizMapJpaRepository;
-    private LobbyQueryService lobbyQueryService;
+    private final LobbyRepository lobbyRepository = mock(LobbyRepository.class);
+    private final GameLobbyJpaRepository gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
+    private final LobbyCanStartPolicy lobbyCanStartPolicy = mock(LobbyCanStartPolicy.class);
 
-    @BeforeEach
-    void setUp() {
-        lobbyRepository = mock(LobbyRepository.class);
-        gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
-        quizMapJpaRepository = mock(QuizMapJpaRepository.class);
+    private final LobbyQueryService lobbyQueryService = new LobbyQueryService(
+            lobbyRepository,
+            gameLobbyJpaRepository,
+            lobbyCanStartPolicy
+    );
 
-        LobbyCanStartPolicy lobbyCanStartPolicy = new LobbyCanStartPolicy(
-                quizMapJpaRepository
-        );
+    @Test
+    @DisplayName("공개 로비 목록 조회 시 WAITING 상태 로비만 반환한다")
+    void getPublicLobbies_filtersWaitingLobbyOnly() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("WAITING-1", "대기 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("PLAYING-1", "진행 로비", "K-POP", 4, 6, LobbyStatus.PLAYING, 2000L),
+                lobby("FINISHED-1", "종료 로비", "K-POP", 6, 6, LobbyStatus.FINISHED, 1000L)
+        ));
 
-        lobbyQueryService = new LobbyQueryService(
-                lobbyRepository,
-                gameLobbyJpaRepository,
-                lobbyCanStartPolicy
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("WAITING-1");
     }
 
     @Test
-    void canStart는_Lua와_동일하게_방장_제외_참여자가_모두_ready이면_true다() {
-        String code = "ABC123";
-        String hostId = "11111111-1111-1111-1111-111111111111";
-        String guestId = "22222222-2222-2222-2222-222222222222";
+    @DisplayName("keyword가 있으면 로비 제목 기준으로 검색한다")
+    void getPublicLobbies_filtersByKeyword() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("LOBBY-1", "KPOP 랜덤 퀴즈", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("LOBBY-2", "JPOP 애니송 퀴즈", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L),
+                lobby("LOBBY-3", "POP 히트곡 퀴즈", "POP", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
 
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(lobbyInfo(code, hostId)));
-        when(lobbyRepository.isParticipant(code, hostId)).thenReturn(true);
-        when(lobbyRepository.getParticipantIdentifiers(code)).thenReturn(List.of(hostId, guestId));
-        when(lobbyRepository.getReadyParticipantIdentifiers(code)).thenReturn(Set.of(guestId));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
-        when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(5)));
+        LobbySearchCondition condition = LobbySearchCondition.of("애니송", null, "latest");
 
-        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
-                code,
-                new CustomPrincipal(1L, hostId, UserType.GUEST)
-        );
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
 
-        assertThat(response.canStart()).isTrue();
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("LOBBY-2");
     }
 
     @Test
-    void canStart는_참여자가_ready가_아니면_false다() {
-        String code = "ABC123";
-        String hostId = "11111111-1111-1111-1111-111111111111";
-        String guestId = "22222222-2222-2222-2222-222222222222";
+    @DisplayName("keyword 검색은 대소문자를 구분하지 않는다")
+    void getPublicLobbies_filtersByKeywordIgnoringCase() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("LOBBY-1", "KPOP Random Quiz", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("LOBBY-2", "JPOP Anime Quiz", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
 
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(lobbyInfo(code, hostId)));
-        when(lobbyRepository.isParticipant(code, hostId)).thenReturn(true);
-        when(lobbyRepository.getParticipantIdentifiers(code)).thenReturn(List.of(hostId, guestId));
-        when(lobbyRepository.getReadyParticipantIdentifiers(code)).thenReturn(Set.of());
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
-        when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(5)));
+        LobbySearchCondition condition = LobbySearchCondition.of("random", null, "latest");
 
-        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
-                code,
-                new CustomPrincipal(1L, hostId, UserType.GUEST)
-        );
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
 
-        assertThat(response.canStart()).isFalse();
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("LOBBY-1");
     }
 
     @Test
-    void canStart는_맵_문제수가_라운드수보다_적으면_false다() {
-        String code = "ABC123";
-        String hostId = "11111111-1111-1111-1111-111111111111";
-        String guestId = "22222222-2222-2222-2222-222222222222";
+    @DisplayName("mapCategory가 있으면 선택된 맵 카테고리 기준으로 필터링한다")
+    void getPublicLobbies_filtersByMapCategory() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("LOBBY-1", "케이팝", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("LOBBY-2", "제이팝", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L),
+                lobby("LOBBY-3", "팝", "POP", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
 
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(lobbyInfo(code, hostId)));
-        when(lobbyRepository.isParticipant(code, hostId)).thenReturn(true);
-        when(lobbyRepository.getParticipantIdentifiers(code)).thenReturn(List.of(hostId, guestId));
-        when(lobbyRepository.getReadyParticipantIdentifiers(code)).thenReturn(Set.of(guestId));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
-        when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(4)));
+        LobbySearchCondition condition = LobbySearchCondition.of(null, "J-POP", "latest");
 
-        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
-                code,
-                new CustomPrincipal(1L, hostId, UserType.GUEST)
-        );
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
 
-        assertThat(response.canStart()).isFalse();
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("LOBBY-2");
     }
 
-    private JoinLobbyResponse lobbyInfo(String code, String hostId) {
-        return JoinLobbyResponse.builder()
-                .inviteCode(code)
-                .title("테스트 로비")
-                .hostId(hostId)
-                .maxPlayers(4)
-                .currentPlayers(2)
-                .status("WAITING")
-                .mapId(2L)
+    @Test
+    @DisplayName("카테고리 필터 적용 시 맵이 선택되지 않은 로비는 제외한다")
+    void getPublicLobbies_excludesLobbyWithoutMapCategoryWhenCategoryFilterExists() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("MATCHED", "카테고리 일치 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("NO-MAP", "맵 미선택 로비", null, 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, "K-POP", "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("MATCHED");
+    }
+
+    @Test
+    @DisplayName("카테고리 필터 적용 시 Redis에 잘못된 mapCategory가 있으면 해당 로비만 제외한다")
+    void getPublicLobbies_excludesLobbyWithInvalidRedisMapCategory() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("VALID", "정상 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("INVALID", "손상 로비", "UNKNOWN", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, "K-POP", "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("VALID");
+    }
+
+    @Test
+    @DisplayName("latest 정렬은 생성 시각 내림차순으로 정렬한다")
+    void getPublicLobbies_sortsByLatest() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L),
+                lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("NEW", "MID", "OLD");
+    }
+
+    @Test
+    @DisplayName("latest 정렬에서 생성 시각이 없는 기존 Redis 데이터는 후순위로 정렬한다")
+    void getPublicLobbies_sortsLobbyWithoutCreatedAtLastByLatest() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("NO-CREATED-AT", "과거 데이터 로비", "K-POP", 2, 6, LobbyStatus.WAITING, null),
+                lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("NEW", "OLD", "NO-CREATED-AT");
+    }
+
+    @Test
+    @DisplayName("most_players 정렬은 현재 인원 많은 순으로 정렬하고 동률이면 최신순으로 정렬한다")
+    void getPublicLobbies_sortsByMostPlayers() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("TWO", "2명 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("FOUR-OLD", "4명 오래된 로비", "K-POP", 4, 6, LobbyStatus.WAITING, 1000L),
+                lobby("FOUR-NEW", "4명 최신 로비", "K-POP", 4, 6, LobbyStatus.WAITING, 4000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "most_players");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("FOUR-NEW", "FOUR-OLD", "TWO");
+    }
+
+    @Test
+    @DisplayName("most_available 정렬은 빈자리 많은 순으로 정렬하고 동률이면 최신순으로 정렬한다")
+    void getPublicLobbies_sortsByMostAvailable() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("ONE-SEAT", "빈자리 1개", "K-POP", 5, 6, LobbyStatus.WAITING, 3000L),
+                lobby("FOUR-SEATS-OLD", "빈자리 4개 오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L),
+                lobby("FOUR-SEATS-NEW", "빈자리 4개 최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 4000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "most_available");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("FOUR-SEATS-NEW", "FOUR-SEATS-OLD", "ONE-SEAT");
+    }
+
+    @Test
+    @DisplayName("빈자리 계산 시 현재 인원이 최대 인원보다 크면 0으로 보정한다")
+    void getPublicLobbies_clampsNegativeAvailableSeatsToZero() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("BROKEN", "손상 데이터 로비", "K-POP", 8, 6, LobbyStatus.WAITING, 4000L),
+                lobby("NORMAL", "정상 로비", "K-POP", 5, 6, LobbyStatus.WAITING, 3000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "most_available");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("NORMAL", "BROKEN");
+    }
+
+    /**
+     * 테스트용 로비 DTO를 생성한다.
+     *
+     * [의도]
+     * 각 테스트에서 필요한 값만 명확히 드러내기 위해 fixture 생성 메서드를 둔다.
+     * 실제 Redis 조회 로직은 테스트 대상이 아니므로,
+     * LobbyRedisDto builder를 사용해 Service 정책 검증에 필요한 필드만 채운다.
+     */
+    private LobbyRedisDto lobby(
+            String code,
+            String title,
+            String mapCategory,
+            int currentPlayers,
+            int maxPlayers,
+            LobbyStatus status,
+            Long createdAtEpochMillis
+    ) {
+        return LobbyRedisDto.builder()
+                .code(code)
+                .hostId("host-user-id")
+                .title(title)
+                .mapId(1L)
                 .mapTitle("테스트 맵")
-                .mapCategory("J-POP")
-                .build();
-    }
-
-    private GameLobby gameLobby() {
-        return GameLobby.builder()
-                .inviteCode("ABC123")
-                .mapId(2L)
-                .title("테스트 로비")
-                .maxPlayers(4)
-                .roundCount(5)
-                .timeLimitSeconds(30)
+                .mapCategory(mapCategory)
+                .currentPlayers(currentPlayers)
+                .maxPlayers(maxPlayers)
                 .isPrivate(false)
-                .build();
-    }
-
-    private QuizMap quizMap(int numOfSong) {
-        return QuizMap.builder()
-                .id(2L)
-                .title("테스트 맵")
-                .category(MapCategory.JPOP)
-                .numOfSong(numOfSong)
-                .totalPlayTime(300)
-                .isPublic(true)
-                .isDeleted(false)
+                .status(status.name())
+                .createdAtEpochMillis(createdAtEpochMillis)
                 .build();
     }
 }

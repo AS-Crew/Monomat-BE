@@ -22,11 +22,13 @@ import static org.mockito.Mockito.when;
  * - 이 테스트는 Service 계층의 목록 노출 정책만 검증한다.
  *
  * [검증 정책]
- * - PLAYING / FINISHED 로비는 기본 목록에서 제외한다.
+ * - 비공개 로비가 공개 목록 원본에 섞여 있으면 제외한다.
+ * - WAITING / PLAYING 로비는 공개 목록에 노출한다.
+ * - FINISHED 로비는 공개 목록에서 제외한다.
  * - 제목 검색은 대소문자를 무시하고 contains 기준으로 동작한다.
  * - 검색어는 LobbySearchCondition 생성 시점에 lower-case로 정규화된다.
- * - 카테고리 필터는 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
  * - 카테고리 필터는 Repository에서 정규화된 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
+ * - 정원/현재 인원 값이 유효하지 않은 로비는 제외한다.
  * - 정렬은 최신순, 인원 많은 순, 빈자리 많은 순을 지원한다.
  */
 class LobbyQueryServiceTest {
@@ -60,6 +62,26 @@ class LobbyQueryServiceTest {
         assertThat(result)
                 .extracting(LobbyRedisDto::getCode)
                 .containsExactly("WAITING-1", "PLAYING-1");
+    }
+
+    @Test
+    @DisplayName("비공개 로비가 공개 로비 목록 원본에 섞여 있으면 제외한다")
+    void getPublicLobbies_excludesPrivateLobby() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("PUBLIC", "공개 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L, false),
+                lobby("PRIVATE", "비공개 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L, true)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("PUBLIC");
     }
 
     @Test
@@ -273,38 +295,6 @@ class LobbyQueryServiceTest {
                 .containsExactly("NORMAL");
     }
 
-    /**
-     * 테스트용 로비 DTO를 생성한다.
-     *
-     * [의도]
-     * 각 테스트에서 필요한 값만 명확히 드러내기 위해 fixture 생성 메서드를 둔다.
-     * 실제 Redis 조회 로직은 테스트 대상이 아니므로,
-     * LobbyRedisDto builder를 사용해 Service 정책 검증에 필요한 필드만 채운다.
-     */
-    private LobbyRedisDto lobby(
-            String code,
-            String title,
-            String mapCategory,
-            int currentPlayers,
-            int maxPlayers,
-            LobbyStatus status,
-            Long createdAtEpochMillis
-    ) {
-        return LobbyRedisDto.builder()
-                .code(code)
-                .hostId("host-user-id")
-                .title(title)
-                .mapId(1L)
-                .mapTitle("테스트 맵")
-                .mapCategory(mapCategory)
-                .currentPlayers(currentPlayers)
-                .maxPlayers(maxPlayers)
-                .isPrivate(false)
-                .status(status.name())
-                .createdAtEpochMillis(createdAtEpochMillis)
-                .build();
-    }
-
     @Test
     @DisplayName("maxPlayers 또는 currentPlayers가 유효하지 않으면 공개 로비 목록에서 제외한다")
     void getPublicLobbies_excludesLobbyWithInvalidCapacityValues() {
@@ -328,6 +318,77 @@ class LobbyQueryServiceTest {
                 .containsExactly("VALID");
     }
 
+    /**
+     * 테스트용 로비 DTO를 생성한다.
+     *
+     * [의도]
+     * 각 테스트에서 필요한 값만 명확히 드러내기 위해 fixture 생성 메서드를 둔다.
+     * 실제 Redis 조회 로직은 테스트 대상이 아니므로,
+     * LobbyRedisDto builder를 사용해 Service 정책 검증에 필요한 필드만 채운다.
+     */
+    private LobbyRedisDto lobby(
+            String code,
+            String title,
+            String mapCategory,
+            int currentPlayers,
+            int maxPlayers,
+            LobbyStatus status,
+            Long createdAtEpochMillis
+    ) {
+        return lobby(
+                code,
+                title,
+                mapCategory,
+                currentPlayers,
+                maxPlayers,
+                status,
+                createdAtEpochMillis,
+                false
+        );
+    }
+
+    /**
+     * 공개/비공개 여부를 직접 지정할 수 있는 테스트용 로비 DTO를 생성한다.
+     *
+     * [사용 목적]
+     * 정상 Redis 생성 경로에서는 비공개 로비가 lobby:public Set에 들어가지 않는다.
+     * 다만 운영 중 Redis 수동 조작이나 복구 과정에서 비공개 로비 코드가 섞일 수 있으므로,
+     * Service 계층의 최종 방어 필터를 검증하기 위해 isPrivate 값을 지정할 수 있게 한다.
+     */
+    private LobbyRedisDto lobby(
+            String code,
+            String title,
+            String mapCategory,
+            int currentPlayers,
+            int maxPlayers,
+            LobbyStatus status,
+            Long createdAtEpochMillis,
+            boolean isPrivate
+    ) {
+        return LobbyRedisDto.builder()
+                .code(code)
+                .hostId("host-user-id")
+                .title(title)
+                .mapId(1L)
+                .mapTitle("테스트 맵")
+                .mapCategory(mapCategory)
+                .currentPlayers(currentPlayers)
+                .maxPlayers(maxPlayers)
+                .isPrivate(isPrivate)
+                .status(status.name())
+                .createdAtEpochMillis(createdAtEpochMillis)
+                .build();
+    }
+
+    /**
+     * capacity 유효성 검증 테스트용 로비 DTO를 생성한다.
+     *
+     * [의도]
+     * 기존 lobby() fixture는 currentPlayers/maxPlayers를 primitive int로 받기 때문에
+     * null 값 검증에 사용할 수 없다.
+     * Redis 손상 데이터 방어 테스트에서는 null/0/음수 값을 명시적으로 만들 수 있어야 하므로
+     * Integer 기반 별도 fixture를 사용한다.
+     */
     private LobbyRedisDto lobbyWithCapacity(
             String code,
             Integer currentPlayers,

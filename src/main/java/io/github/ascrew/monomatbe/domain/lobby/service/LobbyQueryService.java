@@ -107,12 +107,36 @@ public class LobbyQueryService {
         List<LobbyRedisDto> publicLobbies = lobbyRepository.getPublicLobbies();
 
         return publicLobbies.stream()
+                .filter(this::isPublicLobby)
                 .filter(this::isVisibleLobby)
                 .filter(this::hasValidCapacity)
                 .filter(lobby -> matchesKeyword(lobby, condition))
                 .filter(lobby -> matchesMapCategory(lobby, condition))
                 .sorted(lobbyComparator(condition.sortType()))
                 .toList();
+    }
+
+    /**
+     * 공개 로비 목록에 노출 가능한 공개 로비인지 확인한다.
+     *
+     * [정책]
+     * - isPrivate == false인 로비만 공개 목록에 노출한다.
+     * - isPrivate가 null이면 Redis 손상 데이터로 보고 제외한다.
+     *
+     * [필요 이유]
+     * 정상 생성 경로에서는 create_lobby.lua가 공개 로비만 lobby:public Set에 추가한다.
+     * 하지만 운영 중 Redis 수동 조작, 과거 데이터, 복구 작업 등으로
+     * lobby:public Set에 비공개 로비 코드가 섞일 수 있다.
+     *
+     * 공개 로비 목록은 사용자에게 직접 노출되는 API이므로,
+     * Service 계층에서도 최종 방어 필터를 둔다.
+     */
+    private boolean isPublicLobby(LobbyRedisDto lobby) {
+        if (lobby == null || lobby.getIsPrivate() == null) {
+            return false;
+        }
+
+        return !lobby.getIsPrivate();
     }
 
     /**

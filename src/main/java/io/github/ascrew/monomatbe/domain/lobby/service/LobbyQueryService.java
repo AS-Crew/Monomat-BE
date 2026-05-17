@@ -27,7 +27,6 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
-import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +40,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.Comparator;
-import java.util.Optional;
 
 @Slf4j
 @Service
@@ -111,7 +109,6 @@ public class LobbyQueryService {
         return publicLobbies.stream()
                 .filter(this::isVisibleLobby)
                 .filter(this::hasValidCapacity)
-                .filter(this::hasValidMapCategory)
                 .filter(lobby -> matchesKeyword(lobby, condition))
                 .filter(lobby -> matchesMapCategory(lobby, condition))
                 .sorted(lobbyComparator(condition.sortType()))
@@ -230,35 +227,6 @@ public class LobbyQueryService {
     }
 
     /**
-     * Redis에 저장된 로비 mapCategory 값이 현재 서버 정책에서 해석 가능한 값인지 확인한다.
-     *
-     * [정책]
-     * - mapCategory가 null 또는 blank면 맵 미선택 로비로 보고 기본 목록 조회에서는 허용한다.
-     * - mapCategory가 존재하면 MapCategory 정책으로 정규화 가능한 값만 허용한다.
-     * - 알 수 없는 값은 Redis 손상 데이터 또는 과거 버전 데이터로 보고 목록에서 제외한다.
-     *
-     * [필요 이유]
-     * matchesMapCategory()는 요청에 mapCategory 필터가 있을 때만 카테고리 일치 여부를 검사한다.
-     * 따라서 이 방어 필터가 없으면 기본 목록 조회에서는 잘못된 mapCategory 값이 그대로 응답될 수 있다.
-     *
-     * FE는 mapCategory가 null이거나 `K-POP`, `J-POP`, `POP` 중 하나라고 가정할 수 있어야 하므로,
-     * 서버에서 비정상 카테고리 값을 가진 로비를 공통으로 제외한다.
-     */
-    private boolean hasValidMapCategory(LobbyRedisDto lobby) {
-        if (lobby == null) {
-            return false;
-        }
-
-        String lobbyMapCategory = lobby.getMapCategory();
-        if (lobbyMapCategory == null || lobbyMapCategory.isBlank()) {
-            return true;
-        }
-
-        return normalizeRedisMapCategory(lobby, lobbyMapCategory)
-                .isPresent();
-    }
-
-    /**
      * 맵 카테고리 필터 조건에 맞는지 확인한다.
      *
      * [필터 정책]
@@ -267,11 +235,10 @@ public class LobbyQueryService {
      *
      * [맵 미선택 로비 처리]
      * 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외된다.
-     * 사용자가 특정 카테고리를 선택했다는 것은 해당 카테고리 맵이 연결된 로비만 보겠다는 의미이기 때문이다.
      *
      * [전제]
-     * Redis mapCategory 값 자체의 유효성은 hasValidMapCategory()에서 먼저 검증한다.
-     * 따라서 이 메서드는 요청 필터와 로비 카테고리의 일치 여부만 판단한다.
+     * LobbyRedisQueryRepository는 Redis raw mapCategory를 FE 표시값으로 정규화하여 DTO에 담는다.
+     * 따라서 Service에서는 이미 정규화된 표시값끼리 직접 비교한다.
      */
     private boolean matchesMapCategory(
             LobbyRedisDto lobby,
@@ -286,58 +253,7 @@ public class LobbyQueryService {
             return false;
         }
 
-        String requestedCategory = toDisplayValue(condition.mapCategory());
-
-        return normalizeRedisMapCategory(lobby, lobbyMapCategory)
-                .map(requestedCategory::equals)
-                .orElse(false);
-    }
-
-    /**
-     * Redis에서 읽은 로비 mapCategory 값을 FE 응답 표시값으로 정규화한다.
-     *
-     * [정상 값 예시]
-     * - KPOP
-     * - K-POP
-     * - K_POP
-     * - kpop
-     *
-     * [비정상 값 처리]
-     * MapCategory.toDisplayValue()는 알 수 없는 값이 들어오면 IllegalArgumentException을 던진다.
-     * Redis 데이터 하나가 손상되었다는 이유로 전체 목록 조회가 실패하면 안 되므로,
-     * 여기서 예외를 잡고 Optional.empty()를 반환한다.
-     *
-     * @param lobby Redis에서 매핑한 로비 DTO. 로그에 code를 남기기 위해 전달한다.
-     * @param rawCategory Redis Hash에 저장된 원본 mapCategory 값
-     * @return 정규화된 표시값. 정규화 실패 시 Optional.empty()
-     */
-    private Optional<String> normalizeRedisMapCategory(
-            LobbyRedisDto lobby,
-            String rawCategory
-    ) {
-        try {
-            return Optional.ofNullable(MapCategory.toDisplayValue(rawCategory));
-        } catch (IllegalArgumentException e) {
-            log.warn(
-                    "Redis 로비 mapCategory 정규화 실패 - lobbyCode: {}, rawCategory: {}",
-                    lobby.getCode(),
-                    rawCategory,
-                    e
-            );
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * MapCategory enum을 HTTP 응답 표시값으로 변환한다.
-     *
-     * [이유]
-     * LobbySearchCondition에서 요청 mapCategory는 이미 MapCategory.from()으로 검증된 값이다.
-     * 따라서 요청 조건 쪽은 예외 가능성이 없는 안전한 enum 값이며,
-     * FE 응답 표시값(K-POP, J-POP, POP) 기준으로 비교하기 위해 value()를 사용한다.
-     */
-    private String toDisplayValue(MapCategory mapCategory) {
-        return mapCategory.value();
+        return condition.mapCategory().value().equals(lobbyMapCategory);
     }
 
     /**

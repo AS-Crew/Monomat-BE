@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
  * - 제목 검색은 대소문자를 무시하고 contains 기준으로 동작한다.
  * - 검색어는 LobbySearchCondition 생성 시점에 lower-case로 정규화된다.
  * - 카테고리 필터는 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
- * - Redis에 잘못된 mapCategory 값이 있어도 전체 API가 실패하지 않고 해당 로비만 제외한다.
+ * - 카테고리 필터는 Repository에서 정규화된 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
  * - 정렬은 최신순, 인원 많은 순, 빈자리 많은 순을 지원한다.
  */
 class LobbyQueryServiceTest {
@@ -170,26 +170,6 @@ class LobbyQueryServiceTest {
     }
 
     @Test
-    @DisplayName("카테고리 필터 적용 시 Redis에 잘못된 mapCategory가 있으면 해당 로비만 제외한다")
-    void getPublicLobbies_excludesLobbyWithInvalidRedisMapCategory() {
-        // given
-        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
-                lobby("VALID", "정상 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
-                lobby("INVALID", "손상 로비", "UNKNOWN", 2, 6, LobbyStatus.WAITING, 2000L)
-        ));
-
-        LobbySearchCondition condition = LobbySearchCondition.of(null, "K-POP", "latest");
-
-        // when
-        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
-
-        // then
-        assertThat(result)
-                .extracting(LobbyRedisDto::getCode)
-                .containsExactly("VALID");
-    }
-
-    @Test
     @DisplayName("latest 정렬은 생성 시각 내림차순으로 정렬한다")
     void getPublicLobbies_sortsByLatest() {
         // given
@@ -291,27 +271,6 @@ class LobbyQueryServiceTest {
         assertThat(result)
                 .extracting(LobbyRedisDto::getCode)
                 .containsExactly("NORMAL");
-    }
-
-    @Test
-    @DisplayName("기본 조회에서도 Redis에 잘못된 mapCategory가 있으면 해당 로비를 제외한다")
-    void getPublicLobbies_excludesLobbyWithInvalidRedisMapCategoryWithoutCategoryFilter() {
-        // given
-        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
-                lobby("VALID", "정상 카테고리 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
-                lobby("NO-MAP", "맵 미선택 로비", null, 2, 6, LobbyStatus.WAITING, 2000L),
-                lobby("INVALID", "손상 카테고리 로비", "UNKNOWN", 2, 6, LobbyStatus.WAITING, 1000L)
-        ));
-
-        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
-
-        // when
-        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
-
-        // then
-        assertThat(result)
-                .extracting(LobbyRedisDto::getCode)
-                .containsExactly("VALID", "NO-MAP");
     }
 
     /**

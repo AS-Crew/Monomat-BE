@@ -21,6 +21,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySortType;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
@@ -39,6 +40,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.Comparator;
 
 @Slf4j
 @Service
@@ -94,6 +96,7 @@ public class LobbyQueryService {
                 .filter(this::isWaitingLobby)
                 .filter(lobby -> matchesKeyword(lobby, condition))
                 .filter(lobby -> matchesMapCategory(lobby, condition))
+                .sorted(lobbyComparator(condition.sortType()))
                 .toList();
     }
 
@@ -185,6 +188,118 @@ public class LobbyQueryService {
      */
     private String toDisplayValue(MapCategory mapCategory) {
         return mapCategory.value();
+    }
+
+    /**
+     * 공개 로비 목록 정렬 기준을 Comparator로 변환한다.
+     *
+     * [정렬 정책]
+     * - LATEST
+     *   createdAtEpochMillis 내림차순.
+     *   생성 시각 필드가 없는 기존 Redis 데이터는 0으로 취급하여 뒤로 보낸다.
+     *
+     * - MOST_PLAYERS
+     *   currentPlayers 내림차순.
+     *   동률이면 최신순으로 정렬한다.
+     *
+     * - MOST_AVAILABLE
+     *   남은 자리 수(maxPlayers - currentPlayers) 내림차순.
+     *   동률이면 최신순으로 정렬한다.
+     *
+     * [null 처리]
+     * Redis 데이터는 운영 중 TTL 만료, 과거 버전 데이터, 수동 수정 등으로 일부 숫자 필드가 누락될 수 있다.
+     * 목록 정렬은 사용자 편의 기능이므로, 숫자 필드 누락으로 전체 요청을 실패시키지 않고 안전한 기본값으로 보정한다.
+     */
+    private Comparator<LobbyRedisDto> lobbyComparator(LobbySortType sortType) {
+        return switch (sortType) {
+            case LATEST -> latestComparator();
+            case MOST_PLAYERS -> mostPlayersComparator();
+            case MOST_AVAILABLE -> mostAvailableComparator();
+        };
+    }
+
+    /**
+     * 최신순 정렬 Comparator
+     *
+     * createdAtEpochMillis 값이 클수록 최근 생성된 로비다.
+     * null은 0으로 취급하여 최신순 정렬에서 뒤로 보낸다.
+     */
+    private Comparator<LobbyRedisDto> latestComparator() {
+        return Comparator.comparingLong(this::createdAtEpochMillisOrDefault)
+                .reversed();
+    }
+
+    /**
+     * 현재 인원 많은 순 정렬 Comparator
+     *
+     * currentPlayers가 큰 로비를 먼저 보여준다.
+     * 같은 인원 수라면 사용자가 더 최근에 생성된 로비를 먼저 볼 수 있도록 최신순을 2차 정렬로 사용한다.
+     */
+    private Comparator<LobbyRedisDto> mostPlayersComparator() {
+        return Comparator.comparingInt(this::currentPlayersOrDefault)
+                .reversed()
+                .thenComparing(latestComparator());
+    }
+
+    /**
+     * 빈자리 많은 순 정렬 Comparator
+     *
+     * maxPlayers - currentPlayers 값이 큰 로비를 먼저 보여준다.
+     * 같은 빈자리 수라면 최신순을 2차 정렬로 사용한다.
+     */
+    private Comparator<LobbyRedisDto> mostAvailableComparator() {
+        return Comparator.comparingInt(this::availableSeatsOrDefault)
+                .reversed()
+                .thenComparing(latestComparator());
+    }
+
+    /**
+     * 로비 생성 시각을 정렬 가능한 long 값으로 변환한다.
+     *
+     * 기존 Redis 데이터에는 created_at_epoch_millis가 없을 수 있으므로 null이면 0으로 보정한다.
+     */
+    private long createdAtEpochMillisOrDefault(LobbyRedisDto lobby) {
+        return lobby.getCreatedAtEpochMillis() != null
+                ? lobby.getCreatedAtEpochMillis()
+                : 0L;
+    }
+
+    /**
+     * 현재 인원 값을 정렬 가능한 int 값으로 변환한다.
+     *
+     * Redis 조회 중 participants Set 크기 조회가 null이거나,
+     * 과거 데이터에서 currentPlayers가 누락된 경우 0으로 보정한다.
+     */
+    private int currentPlayersOrDefault(LobbyRedisDto lobby) {
+        return lobby.getCurrentPlayers() != null
+                ? lobby.getCurrentPlayers()
+                : 0;
+    }
+
+    /**
+     * 최대 인원 값을 정렬 가능한 int 값으로 변환한다.
+     *
+     * maxPlayers는 정상 로비라면 항상 존재해야 하지만,
+     * Redis Hash 손상 가능성을 고려해 null이면 0으로 보정한다.
+     */
+    private int maxPlayersOrDefault(LobbyRedisDto lobby) {
+        return lobby.getMaxPlayers() != null
+                ? lobby.getMaxPlayers()
+                : 0;
+    }
+
+    /**
+     * 남은 자리 수를 계산한다.
+     *
+     * [보정 정책]
+     * Redis 데이터가 손상되어 currentPlayers가 maxPlayers보다 큰 경우에도
+     * 음수 빈자리가 정렬에 영향을 주지 않도록 0으로 보정한다.
+     */
+    private int availableSeatsOrDefault(LobbyRedisDto lobby) {
+        return Math.max(
+                0,
+                maxPlayersOrDefault(lobby) - currentPlayersOrDefault(lobby)
+        );
     }
 
     /**

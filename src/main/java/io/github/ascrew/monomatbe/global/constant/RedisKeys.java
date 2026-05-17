@@ -160,6 +160,17 @@ public final class RedisKeys {
     /** 로비 Hash의 상태 필드. 저장 값: "WAITING" / "PLAYING" */
     public static final String FIELD_STATUS = "status";
 
+    /**
+     * 로비 Hash의 생성 시각 필드
+     * 저장 값 : System.currentTimeMillis() 기준 epoch milliseconds 문자열
+     *
+     * [사용 목적]
+     * 공개 로비 목록의 latest 정렬 기준으로 사용한다.
+     * Redis Set (lobby:public)은 순서를 보장하지 않으므로,
+     * 최신순 정렬을 안정적으로 제공하려면 로비 Hash에 생성 시각을 별도로 저장해야 한다.
+     */
+    public static final String FIELD_CREATED_AT_EPOCH_MILLIS = "created_at_epoch_millis";
+
     // =========================================================
     // 동적 키 생성 팩토리 메서드
     // =========================================================

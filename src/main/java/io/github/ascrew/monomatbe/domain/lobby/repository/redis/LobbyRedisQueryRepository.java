@@ -170,6 +170,7 @@ public class LobbyRedisQueryRepository {
                     .hostId((String) data.get(RedisKeys.FIELD_HOST_USER_ID))
                     .title((String) data.get(RedisKeys.FIELD_TITLE))
                     .status((String) data.get(RedisKeys.FIELD_STATUS))
+                    .createdAtEpochMillis(parseNullableLong(data.get(RedisKeys.FIELD_CREATED_AT_EPOCH_MILLIS)))
                     .mapId(parseNullableLong(data.get(RedisKeys.FIELD_MAP_ID)))
                     .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
                     .mapCategory(toDisplayMapCategory((String) data.get(RedisKeys.FIELD_MAP_CATEGORY)))

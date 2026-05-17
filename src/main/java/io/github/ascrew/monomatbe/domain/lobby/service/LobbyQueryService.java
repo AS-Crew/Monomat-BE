@@ -20,6 +20,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
@@ -65,15 +66,22 @@ public class LobbyQueryService {
      * 공개 로비 목록을 조회한다.
      *
      * [조회 기준]
-     * Redis의 공개 로비 Set을 기준으로 현재 활성화된 공개 로비만 반환한다.
+     * Redis의 공개 로비 Set을 기준으로 현재 활성화된 공개 로비만 조회한다.
      *
-     * [추후 확장]
-     * 로비 목록 검색, 카테고리 필터, 정렬 기능은 이 조회 유스케이스를 기준으로 확장할 수 있다.
+     * [조건 처리 방향]
+     * 이 메서드는 검색/필터/정렬 조건을 받는 진입점이다.
+     * 현재 단계에서는 API 계약을 먼저 연결하고,
+     * 다음 단계에서 WAITING 상태 필터, 제목 검색, 카테고리 필터, 정렬 정책을 순차적으로 적용한다.
      *
-     * @return 현재 활성화된 공개 로비 목록
+     * [책임 경계]
+     * - Repository: Redis에서 공개 로비 원본 목록 조회
+     * - Service: 로비 목록 비즈니스 정책 적용
+     *
+     * @param condition 공개 로비 목록 검색/필터/정렬 조건
+     * @return 조건에 맞는 공개 로비 목록
      */
     @Transactional(readOnly = true)
-    public List<LobbyRedisDto> getPublicLobbies() {
+    public List<LobbyRedisDto> getPublicLobbies(LobbySearchCondition condition) {
         return lobbyRepository.getPublicLobbies();
     }
 

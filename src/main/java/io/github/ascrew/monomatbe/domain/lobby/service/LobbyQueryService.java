@@ -88,6 +88,19 @@ public class LobbyQueryService {
      * enter_lobby.lua는 WAITING 상태 로비만 실제 입장을 허용하므로,
      * FE는 PLAYING 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 한다.
      *
+     * [성능 범위]
+     * 현재 구현은 Redis에서 공개 로비 원본 목록을 조회한 뒤,
+     * Java 메모리에서 상태/정원/카테고리/검색어 필터링과 정렬을 수행한다.
+     *
+     * 이 방식은 공개 로비 수가 수십~수백 개 수준인 현재 서비스 단계에서는 구현 단순성과 정책 변경 유연성이 높다.
+     * 다만 공개 로비 수가 수천 개 이상으로 증가하면 애플리케이션 CPU/메모리 비용이 커질 수 있다.
+     *
+     * 향후 트래픽 증가 시에는 다음 구조로 확장한다.
+     * - cursor/page 기반 Pagination
+     * - Redis Sorted Set 기반 latest 정렬 인덱스
+     * - currentPlayers/availableSeats 기준 정렬 인덱스
+     * - 목록 조회 상한선 예: latest TOP 100 우선 조회
+     *
      * @param condition 공개 로비 목록 검색/필터/정렬 조건
      * @return 조건에 맞는 공개 로비 목록
      */

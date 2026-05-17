@@ -94,7 +94,7 @@ public class LobbyQueryService {
         List<LobbyRedisDto> publicLobbies = lobbyRepository.getPublicLobbies();
 
         return publicLobbies.stream()
-                .filter(this::isWaitingLobby)
+                .filter(this::isVisibleLobby)
                 .filter(this::hasValidCapacity)
                 .filter(this::hasValidMapCategory)
                 .filter(lobby -> matchesKeyword(lobby, condition))
@@ -103,25 +103,15 @@ public class LobbyQueryService {
                 .toList();
     }
 
-    /**
-     * 로비가 목록 노출 가능한 WAITING 상태인지 확인한다.
-     *
-     * [정책]
-     * - 상태가 WAITING인 로비만 true
-     * - status가 null/blank/알 수 없는 값이면 목록에서 제외
-     *
-     * [이유]
-     * Redis Hash는 운영 중 수동 수정, 과거 데이터, TTL 만료 경계 상황으로 인해
-     * 일부 필드가 누락되거나 예상하지 못한 값으로 남을 수 있다.
-     * 로비 목록은 사용자가 입장 가능한 방을 보여주는 화면이므로,
-     * 상태가 확실하지 않은 로비는 보수적으로 숨기는 편이 안전하다.
-     */
-    private boolean isWaitingLobby(LobbyRedisDto lobby) {
+    private boolean isVisibleLobby(LobbyRedisDto lobby) {
         if (lobby == null || lobby.getStatus() == null || lobby.getStatus().isBlank()) {
             return false;
         }
 
-        return LobbyStatus.WAITING.name().equals(lobby.getStatus());
+        String status = lobby.getStatus();
+
+        return LobbyStatus.WAITING.name().equals(status)
+                || LobbyStatus.PLAYING.name().equals(status);
     }
 
     /**

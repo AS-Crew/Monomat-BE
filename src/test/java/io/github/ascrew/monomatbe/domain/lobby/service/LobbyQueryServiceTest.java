@@ -42,8 +42,8 @@ class LobbyQueryServiceTest {
     );
 
     @Test
-    @DisplayName("공개 로비 목록 조회 시 WAITING 상태 로비만 반환한다")
-    void getPublicLobbies_filtersWaitingLobbyOnly() {
+    @DisplayName("공개 로비 목록 조회 시 WAITING과 PLAYING 상태 로비를 반환하고 FINISHED는 제외한다")
+    void getPublicLobbies_filtersVisibleLobbyStatuses() {
         // given
         when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
                 lobby("WAITING-1", "대기 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
@@ -59,7 +59,7 @@ class LobbyQueryServiceTest {
         // then
         assertThat(result)
                 .extracting(LobbyRedisDto::getCode)
-                .containsExactly("WAITING-1");
+                .containsExactly("WAITING-1", "PLAYING-1");
     }
 
     @Test

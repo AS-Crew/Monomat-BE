@@ -235,14 +235,11 @@ Redis
 
 ### 노출 정책
 
-* Redis `lobby:public` Set을 기준으로 공개 로비 원본 목록을 조회합니다.
-* 서비스 계층에서 `WAITING` 상태 로비만 노출합니다.
-* `PLAYING`, `FINISHED` 로비는 기본 목록에서 제외합니다.
-* 비공개 로비는 `lobby:public` Set에 들어가지 않으므로 목록에 노출되지 않습니다.
-* 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외합니다.
-* Redis에 잘못된 `mapCategory` 값이 들어 있어도 전체 API를 실패시키지 않고 해당 로비만 제외합니다.
-* `maxPlayers` 또는 `currentPlayers` 값이 유효하지 않은 로비는 목록에서 제외됩니다.
-* `currentPlayers > maxPlayers`인 로비는 Redis 손상 데이터로 보고 목록에서 제외됩니다.
+* 공개 로비 목록에는 `WAITING`, `PLAYING` 상태 로비가 노출됩니다.
+* `FINISHED` 상태 로비는 목록에서 제외됩니다.
+* `WAITING` 로비는 입장 가능한 로비입니다.
+* `PLAYING` 로비는 진행 중 상태로 목록에는 노출되지만, 현재 입장은 허용하지 않습니다.
+* 클라이언트는 `status=PLAYING` 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 합니다.
 
 ### 정렬 정책
 

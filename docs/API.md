@@ -448,6 +448,8 @@ Redis 직렬화용 JsonMapper와 HTTP 응답용 JsonMapper를 분리했기 때�
 * `PLAYING`, `FINISHED` 상태 로비는 기본 목록에서 제외됩니다.
 * 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외됩니다.
 * Redis에 잘못된 `mapCategory` 값이 남아 있는 로비는 전체 API 실패 없이 해당 로비만 제외됩니다.
+* `maxPlayers` 또는 `currentPlayers` 값이 유효하지 않은 로비는 목록에서 제외됩니다.
+* `currentPlayers > maxPlayers`인 로비는 Redis 손상 데이터로 보고 목록에서 제외됩니다.
 
 > `PLAYING` 로비는 현재 WebSocket 입장 단계에서 차단되므로, 기본 로비 목록에서는 제외합니다.  
 > 추후 관전 기능이 추가될 경우 별도 상태 필터 정책으로 확장할 수 있습니다.

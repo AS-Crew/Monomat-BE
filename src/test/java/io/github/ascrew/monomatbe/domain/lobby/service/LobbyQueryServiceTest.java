@@ -274,8 +274,8 @@ class LobbyQueryServiceTest {
     }
 
     @Test
-    @DisplayName("빈자리 계산 시 현재 인원이 최대 인원보다 크면 0으로 보정한다")
-    void getPublicLobbies_clampsNegativeAvailableSeatsToZero() {
+    @DisplayName("currentPlayers가 maxPlayers보다 크면 공개 로비 목록에서 제외한다")
+    void getPublicLobbies_excludesLobbyWhenCurrentPlayersExceedsMaxPlayers() {
         // given
         when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
                 lobby("BROKEN", "손상 데이터 로비", "K-POP", 8, 6, LobbyStatus.WAITING, 4000L),
@@ -290,7 +290,7 @@ class LobbyQueryServiceTest {
         // then
         assertThat(result)
                 .extracting(LobbyRedisDto::getCode)
-                .containsExactly("NORMAL", "BROKEN");
+                .containsExactly("NORMAL");
     }
 
     @Test
@@ -343,6 +343,49 @@ class LobbyQueryServiceTest {
                 .isPrivate(false)
                 .status(status.name())
                 .createdAtEpochMillis(createdAtEpochMillis)
+                .build();
+    }
+
+    @Test
+    @DisplayName("maxPlayers 또는 currentPlayers가 유효하지 않으면 공개 로비 목록에서 제외한다")
+    void getPublicLobbies_excludesLobbyWithInvalidCapacityValues() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobbyWithCapacity("NULL-MAX", 1, null),
+                lobbyWithCapacity("ZERO-MAX", 1, 0),
+                lobbyWithCapacity("NULL-CURRENT", null, 6),
+                lobbyWithCapacity("NEGATIVE-CURRENT", -1, 6),
+                lobbyWithCapacity("VALID", 2, 6)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("VALID");
+    }
+
+    private LobbyRedisDto lobbyWithCapacity(
+            String code,
+            Integer currentPlayers,
+            Integer maxPlayers
+    ) {
+        return LobbyRedisDto.builder()
+                .code(code)
+                .hostId("host-user-id")
+                .title("테스트 로비")
+                .mapId(1L)
+                .mapTitle("테스트 맵")
+                .mapCategory("K-POP")
+                .currentPlayers(currentPlayers)
+                .maxPlayers(maxPlayers)
+                .isPrivate(false)
+                .status(LobbyStatus.WAITING.name())
+                .createdAtEpochMillis(1000L)
                 .build();
     }
 }

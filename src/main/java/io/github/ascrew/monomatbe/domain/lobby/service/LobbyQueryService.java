@@ -95,6 +95,7 @@ public class LobbyQueryService {
 
         return publicLobbies.stream()
                 .filter(this::isWaitingLobby)
+                .filter(this::hasValidCapacity)
                 .filter(this::hasValidMapCategory)
                 .filter(lobby -> matchesKeyword(lobby, condition))
                 .filter(lobby -> matchesMapCategory(lobby, condition))
@@ -121,6 +122,61 @@ public class LobbyQueryService {
         }
 
         return LobbyStatus.WAITING.name().equals(lobby.getStatus());
+    }
+
+    /**
+     * 로비 목록에 노출 가능한 인원/정원 값인지 확인한다.
+     *
+     * [정책]
+     * - maxPlayers가 null 또는 0 이하이면 제외한다.
+     * - currentPlayers가 null 또는 음수이면 제외한다.
+     * - currentPlayers가 maxPlayers보다 크면 제외한다.
+     *
+     * [필요 이유]
+     * 공개 로비 목록은 사용자가 입장 가능한 로비를 탐색하는 화면이다.
+     * Redis 데이터 손상으로 maxPlayers가 누락되거나 currentPlayers가 maxPlayers를 초과한 로비가
+     * 목록에 노출되면 FE에서는 입장 가능한 방처럼 보이지만 실제 입장 단계에서 실패할 수 있다.
+     *
+     * 따라서 정렬 단계에서 숫자를 0으로 보정하는 것과 별개로,
+     * 목록 노출 전에 capacity 값 자체가 유효한 로비만 통과시킨다.
+     */
+    private boolean hasValidCapacity(LobbyRedisDto lobby) {
+        if (lobby == null) {
+            return false;
+        }
+
+        Integer maxPlayers = lobby.getMaxPlayers();
+        Integer currentPlayers = lobby.getCurrentPlayers();
+
+        if (maxPlayers == null || maxPlayers <= 0) {
+            log.warn(
+                    "공개 로비 목록 제외 - maxPlayers 값이 유효하지 않음. lobbyCode: {}, maxPlayers: {}",
+                    lobby.getCode(),
+                    maxPlayers
+            );
+            return false;
+        }
+
+        if (currentPlayers == null || currentPlayers < 0) {
+            log.warn(
+                    "공개 로비 목록 제외 - currentPlayers 값이 유효하지 않음. lobbyCode: {}, currentPlayers: {}",
+                    lobby.getCode(),
+                    currentPlayers
+            );
+            return false;
+        }
+
+        if (currentPlayers > maxPlayers) {
+            log.warn(
+                    "공개 로비 목록 제외 - currentPlayers가 maxPlayers를 초과. lobbyCode: {}, currentPlayers: {}, maxPlayers: {}",
+                    lobby.getCode(),
+                    currentPlayers,
+                    maxPlayers
+            );
+            return false;
+        }
+
+        return true;
     }
 
     /**

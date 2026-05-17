@@ -241,6 +241,8 @@ Redis
 * 비공개 로비는 `lobby:public` Set에 들어가지 않으므로 목록에 노출되지 않습니다.
 * 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외합니다.
 * Redis에 잘못된 `mapCategory` 값이 들어 있어도 전체 API를 실패시키지 않고 해당 로비만 제외합니다.
+* `maxPlayers` 또는 `currentPlayers` 값이 유효하지 않은 로비는 목록에서 제외됩니다.
+* `currentPlayers > maxPlayers`인 로비는 Redis 손상 데이터로 보고 목록에서 제외됩니다.
 
 ### 정렬 정책
 

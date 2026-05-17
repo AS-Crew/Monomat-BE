@@ -77,14 +77,16 @@ public class LobbyQueryService {
      * Service는 그 원본 목록에 실제 화면 노출 정책을 적용한다.
      *
      * [현재 적용 정책]
-     * - WAITING 상태 로비만 목록에 노출한다.
+     * - WAITING 상태 로비는 입장 가능한 공개 로비로 목록에 노출한다.
+     * - PLAYING 상태 로비는 진행 중 공개 로비로 목록에 노출한다.
+     * - FINISHED 상태 로비는 목록에서 제외한다.
      * - keyword가 있으면 로비 제목에 keyword가 포함된 로비만 남긴다.
      * - mapCategory가 있으면 선택된 맵 카테고리가 일치하는 로비만 남긴다.
      *
-     * [PLAYING 로비 제외 이유]
-     * 현재 게임이 시작된 로비는 WebSocket 입장 단계에서 LOBBY_NOT_WAITING으로 차단된다.
-     * 따라서 기본 로비 목록에 PLAYING 로비를 노출하면 사용자는 클릭 가능한 것처럼 보이지만,
-     * 실제 입장은 실패하는 UX 불일치가 발생한다.
+     * [PLAYING 로비 노출 정책]
+     * PLAYING 로비는 목록에 노출되지만, 현재 입장은 허용하지 않는다.
+     * enter_lobby.lua는 WAITING 상태 로비만 실제 입장을 허용하므로,
+     * FE는 PLAYING 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 한다.
      *
      * @param condition 공개 로비 목록 검색/필터/정렬 조건
      * @return 조건에 맞는 공개 로비 목록
@@ -103,6 +105,17 @@ public class LobbyQueryService {
                 .toList();
     }
 
+    /**
+     * 공개 로비 목록에 노출 가능한 상태인지 확인한다.
+     *
+     * [노출 상태]
+     * - WAITING: 입장 가능한 공개 로비
+     * - PLAYING: 진행 중 공개 로비. 목록에는 노출하지만 입장은 허용하지 않음
+     *
+     * [제외 상태]
+     * - FINISHED: 종료된 로비이므로 목록에서 제외
+     * - null/blank/unknown: Redis 손상 데이터로 보고 제외
+     */
     private boolean isVisibleLobby(LobbyRedisDto lobby) {
         if (lobby == null || lobby.getStatus() == null || lobby.getStatus().isBlank()) {
             return false;

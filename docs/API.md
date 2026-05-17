@@ -436,7 +436,7 @@ JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 입장 �
 GET /api/lobbies
 ```
 
-현재 입장 가능한 공개(`isPrivate = false`) 로비 목록을 반환합니다.  
+공개(`isPrivate = false`) 로비 중 목록에 노출 가능한 로비를 반환합니다.
 Redis의 `lobby:public` Set을 기준으로 공개 로비 원본을 조회한 뒤, 서비스 계층에서 검색/필터/정렬 정책을 적용합니다.
 
 Redis 직렬화용 JsonMapper와 HTTP 응답용 JsonMapper를 분리했기 때문에, 응답은 Jackson 타입 정보가 포함되지 않은 순수 DTO 배열로 반환됩니다.
@@ -449,8 +449,8 @@ Redis 직렬화용 JsonMapper와 HTTP 응답용 JsonMapper를 분리했기 때�
 * `PLAYING` 로비는 진행 중 상태로 목록에는 노출되지만, 현재 입장은 허용하지 않습니다.
 * 클라이언트는 `status=PLAYING` 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 합니다.
 
-> `PLAYING` 로비는 현재 WebSocket 입장 단계에서 차단되므로, 기본 로비 목록에서는 제외합니다.  
-> 추후 관전 기능이 추가될 경우 별도 상태 필터 정책으로 확장할 수 있습니다.
+> `PLAYING` 로비는 현재 WebSocket 입장 단계에서 차단됩니다.  
+> 따라서 목록에는 노출되지만, 클라이언트는 `status=PLAYING` 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 합니다.
 
 **Query Parameters**
 

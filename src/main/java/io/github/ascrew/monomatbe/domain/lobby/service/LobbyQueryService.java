@@ -130,6 +130,10 @@ public class LobbyQueryService {
      * - keyword가 있으면 title에 keyword가 포함된 경우만 통과시킨다.
      * - 대소문자 차이는 무시한다.
      *
+     * [정규화 책임]
+     * LobbySearchCondition은 keyword를 생성 시점에 trim + lower-case로 정규화한다.
+     * 따라서 여기서는 로비 title만 lower-case로 변환하여 비교한다.
+     *
      * [null 처리]
      * Redis에 title 필드가 누락된 손상 데이터는 검색 조건이 있을 때 매칭하지 않는다.
      * 검색 조건이 없을 때는 상태/카테고리 등 다른 조건만 만족하면 통과할 수 있다.
@@ -149,7 +153,7 @@ public class LobbyQueryService {
         }
 
         return title.toLowerCase(Locale.ROOT)
-                .contains(condition.keyword().toLowerCase(Locale.ROOT));
+                .contains(condition.keyword());
     }
 
     /**

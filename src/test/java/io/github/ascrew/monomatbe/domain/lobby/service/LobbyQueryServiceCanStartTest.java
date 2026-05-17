@@ -24,6 +24,7 @@ import static org.mockito.Mockito.when;
  * [검증 정책]
  * - PLAYING / FINISHED 로비는 기본 목록에서 제외한다.
  * - 제목 검색은 대소문자를 무시하고 contains 기준으로 동작한다.
+ * - 검색어는 LobbySearchCondition 생성 시점에 lower-case로 정규화된다.
  * - 카테고리 필터는 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
  * - Redis에 잘못된 mapCategory 값이 있어도 전체 API가 실패하지 않고 해당 로비만 제외한다.
  * - 정렬은 최신순, 인원 많은 순, 빈자리 많은 순을 지원한다.
@@ -91,7 +92,32 @@ class LobbyQueryServiceTest {
                 lobby("LOBBY-2", "JPOP Anime Quiz", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
         ));
 
+        /*
+         * LobbySearchCondition 생성 시점에 keyword가 lower-case로 정규화된다.
+         * Service는 로비 title만 lower-case로 변환하여 비교하므로,
+         * 요청 keyword의 대소문자 차이는 결과에 영향을 주지 않아야 한다.
+         */
         LobbySearchCondition condition = LobbySearchCondition.of("random", null, "latest");
+
+        // when
+        List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);
+
+        // then
+        assertThat(result)
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("LOBBY-1");
+    }
+
+    @Test
+    @DisplayName("keyword 검색어의 앞뒤 공백은 제거된다")
+    void getPublicLobbies_trimsKeyword() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("LOBBY-1", "KPOP Random Quiz", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("LOBBY-2", "JPOP Anime Quiz", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of("  random  ", null, "latest");
 
         // when
         List<LobbyRedisDto> result = lobbyQueryService.getPublicLobbies(condition);

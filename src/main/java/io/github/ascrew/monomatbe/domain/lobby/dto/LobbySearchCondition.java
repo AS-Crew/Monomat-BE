@@ -4,6 +4,8 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Locale;
+
 /**
  * 공개 로비 목록 조회 조건
  *
@@ -38,7 +40,14 @@ public record LobbySearchCondition(
             return null;
         }
 
-        return keyword.trim();
+        /*
+         * 제목 검색은 대소문자를 구분하지 않는다.
+         *
+         * 검색어는 요청당 한 번만 생성되는 조건 값이므로,
+         * Service에서 로비마다 반복해서 lower-case 변환하지 않도록
+         * 조건 객체 생성 시점에 미리 정규화한다.
+         */
+        return keyword.trim().toLowerCase(Locale.ROOT);
     }
 
     private static MapCategory parseMapCategory(String rawCategory) {

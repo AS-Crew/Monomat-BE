@@ -12,7 +12,6 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.time.Instant;
 
 /**
  * 로비 관련 Redis Lua script 실행을 담당하는 컴포넌트
@@ -72,8 +71,7 @@ public class LobbyLuaScriptExecutor {
      * ARGV[8]  = mapId or ""
      * ARGV[9]  = mapTitle or ""
      * ARGV[10] = mapCategory or ""
-     * ARGV[11] = createdAtEpochMillis
-     * *
+     *
      * @return "OK" | "LOCK_FAILED" | null
      */
     public String executeCreateLobby(
@@ -105,14 +103,7 @@ public class LobbyLuaScriptExecutor {
                 // 맵 미선택 시 빈 문자열을 전달하여 Redis에 "null" 문자열이 저장되지 않게 한다.
                 mapMetadata != null ? String.valueOf(mapMetadata.mapId()) : EMPTY_REDIS_VALUE,
                 mapMetadata != null ? mapMetadata.mapTitle() : EMPTY_REDIS_VALUE,
-                mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE,
-
-                /*
-                 * Redis의 lobby:public Set은 순서를 보장하지 않는다.
-                 * 따라서 공개 로비 목록의 latest 정렬을 안정적으로 처리하기 위해
-                 * 로비 생성 시각을 epoch millis 문자열로 Hash에 함께 저장한다.
-                 */
-                String.valueOf(Instant.now().toEpochMilli())
+                mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE
         );
     }
 

@@ -3,6 +3,7 @@
  *
  * [책임]
  * - 공개 로비 목록 조회
+ * - 공개 로비 목록 검색/필터 정책 적용
  * - 로비 대기실 상세 조회
  * - 로비 상세 조회 접근 권한 검증
  * - 참여자 목록 조회 및 방장 누락 보정
@@ -22,8 +23,10 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 @Slf4j
@@ -66,23 +70,121 @@ public class LobbyQueryService {
      * 공개 로비 목록을 조회한다.
      *
      * [조회 기준]
-     * Redis의 공개 로비 Set을 기준으로 현재 활성화된 공개 로비만 조회한다.
+     * Repository는 Redis의 lobby:public Set을 기준으로 공개 로비 원본 목록을 반환한다.
+     * Service는 그 원본 목록에 실제 화면 노출 정책을 적용한다.
      *
-     * [조건 처리 방향]
-     * 이 메서드는 검색/필터/정렬 조건을 받는 진입점이다.
-     * 현재 단계에서는 API 계약을 먼저 연결하고,
-     * 다음 단계에서 WAITING 상태 필터, 제목 검색, 카테고리 필터, 정렬 정책을 순차적으로 적용한다.
+     * [현재 적용 정책]
+     * - WAITING 상태 로비만 목록에 노출한다.
+     * - keyword가 있으면 로비 제목에 keyword가 포함된 로비만 남긴다.
+     * - mapCategory가 있으면 선택된 맵 카테고리가 일치하는 로비만 남긴다.
      *
-     * [책임 경계]
-     * - Repository: Redis에서 공개 로비 원본 목록 조회
-     * - Service: 로비 목록 비즈니스 정책 적용
+     * [PLAYING 로비 제외 이유]
+     * 현재 게임이 시작된 로비는 WebSocket 입장 단계에서 LOBBY_NOT_WAITING으로 차단된다.
+     * 따라서 기본 로비 목록에 PLAYING 로비를 노출하면 사용자는 클릭 가능한 것처럼 보이지만,
+     * 실제 입장은 실패하는 UX 불일치가 발생한다.
      *
      * @param condition 공개 로비 목록 검색/필터/정렬 조건
      * @return 조건에 맞는 공개 로비 목록
      */
     @Transactional(readOnly = true)
     public List<LobbyRedisDto> getPublicLobbies(LobbySearchCondition condition) {
-        return lobbyRepository.getPublicLobbies();
+        List<LobbyRedisDto> publicLobbies = lobbyRepository.getPublicLobbies();
+
+        return publicLobbies.stream()
+                .filter(this::isWaitingLobby)
+                .filter(lobby -> matchesKeyword(lobby, condition))
+                .filter(lobby -> matchesMapCategory(lobby, condition))
+                .toList();
+    }
+
+    /**
+     * 로비가 목록 노출 가능한 WAITING 상태인지 확인한다.
+     *
+     * [정책]
+     * - 상태가 WAITING인 로비만 true
+     * - status가 null/blank/알 수 없는 값이면 목록에서 제외
+     *
+     * [이유]
+     * Redis Hash는 운영 중 수동 수정, 과거 데이터, TTL 만료 경계 상황으로 인해
+     * 일부 필드가 누락되거나 예상하지 못한 값으로 남을 수 있다.
+     * 로비 목록은 사용자가 입장 가능한 방을 보여주는 화면이므로,
+     * 상태가 확실하지 않은 로비는 보수적으로 숨기는 편이 안전하다.
+     */
+    private boolean isWaitingLobby(LobbyRedisDto lobby) {
+        if (lobby == null || lobby.getStatus() == null || lobby.getStatus().isBlank()) {
+            return false;
+        }
+
+        return LobbyStatus.WAITING.name().equals(lobby.getStatus());
+    }
+
+    /**
+     * 제목 검색 조건에 맞는지 확인한다.
+     *
+     * [검색 정책]
+     * - keyword가 없으면 모든 로비를 통과시킨다.
+     * - keyword가 있으면 title에 keyword가 포함된 경우만 통과시킨다.
+     * - 대소문자 차이는 무시한다.
+     *
+     * [null 처리]
+     * Redis에 title 필드가 누락된 손상 데이터는 검색 조건이 있을 때 매칭하지 않는다.
+     * 검색 조건이 없을 때는 상태/카테고리 등 다른 조건만 만족하면 통과할 수 있다.
+     */
+
+    private boolean matchesKeyword(
+            LobbyRedisDto lobby,
+            LobbySearchCondition condition
+    ) {
+        if (!condition.hasKeyword()) {
+            return true;
+        }
+
+        String title = lobby.getTitle();
+        if (title == null || title.isBlank()) {
+            return false;
+        }
+
+        return title.toLowerCase(Locale.ROOT)
+                .contains(condition.keyword().toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * 맵 카테고리 필터 조건에 맞는지 확인한다.
+     *
+     * [필터 정책]
+     * - mapCategory 조건이 없으면 모든 로비를 통과시킨다.
+     * - mapCategory 조건이 있으면 선택된 맵 카테고리가 일치하는 로비만 통과시킨다.
+     *
+     * [맵 미선택 로비 처리]
+     * 카테고리 필터가 적용된 경우, 맵이 선택되지 않은 로비는 제외된다.
+     * 사용자가 특정 카테고리를 선택했다는 것은 해당 카테고리 맵이 연결된 로비만 보겠다는 의미이기 때문이다.
+     *
+     * [정규화]
+     * Redis에는 과거 값 또는 enum 이름 (KPOP) 또는 표시값 (K-POP)이 남을 수 있다.
+     * 비교 시 MapCategory.toDisplayValue()를 사용해 FE 응답 표시값 기준으로 정규화한다.
+     */
+    private boolean matchesMapCategory(
+            LobbyRedisDto lobby,
+            LobbySearchCondition condition
+    ) {
+        if (!condition.hasMapCategory()) {
+            return true;
+        }
+
+        String lobbyMapCategory = lobby.getMapCategory();
+        if (lobbyMapCategory == null || lobbyMapCategory.isBlank()) {
+            return false;
+        }
+
+        return toDisplayValue(condition.mapCategory())
+                .equals(MapCategory.toDisplayValue(lobbyMapCategory));
+    }
+
+    /**
+     * MapCategory enum을 HTTP 응답 표시값으로 변환한다.
+     */
+    private String toDisplayValue(MapCategory mapCategory) {
+        return mapCategory.value();
     }
 
     /**

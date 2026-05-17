@@ -6,11 +6,13 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -140,7 +142,15 @@ public class LobbyRedisQueryRepository {
      * Redis에서 공개 로비 목록을 조회한다.
      *
      * [조회 기준]
-     * lobby:public Set에 들어 있는 초대 코드를 기준으로 lobby:{code} Hash를 조회한다.
+     * lobby:public Set에 들어 있는 초대 코드를 기준으로 lobby:{code} Hash와
+     * lobby:{code}:participants Set 크기를 조회한다.
+     *
+     * [성능]
+     * 공개 로비 수가 N개일 때 개별 Redis 호출을 수행하면
+     * SMEMBERS 1회 + HGETALL N회 + SCARD N회로 총 1 + 2N번의 round-trip이 발생한다.
+     *
+     * 이 메서드는 HGETALL과 SCARD를 executePipelined()로 묶어
+     * Redis 명령 수는 유지하되 네트워크 round-trip을 줄인다.
      *
      * [주의]
      * lobby:public에는 남아 있지만 lobby:{code} Hash가 TTL 만료 등으로 사라진 경우는 응답에서 제외한다.
@@ -160,15 +170,45 @@ public class LobbyRedisQueryRepository {
             return new ArrayList<>();
         }
 
+        /*
+         * Set은 순서 보장을 전제로 쓰면 안 된다.
+         * pipeline 결과는 요청을 넣은 순서 그대로 반환되므로,
+         * 먼저 List로 고정한 뒤 같은 index 기준으로 code와 결과를 매칭한다.
+         */
+        List<String> lobbyCodes = new ArrayList<>(publicLobbyCodes);
+
+        List<Object> pipelineResults = redisTemplate.executePipelined((RedisConnection connection) -> {
+            for (String code : lobbyCodes) {
+                connection.hashCommands().hGetAll(rawKey(RedisKeys.lobbyKey(code)));
+                connection.setCommands().sCard(rawKey(RedisKeys.lobbyParticipantsKey(code)));
+            }
+
+            return null;
+        });
+
         List<LobbyRedisDto> result = new ArrayList<>();
 
-        for (String code : publicLobbyCodes) {
-            Map<Object, Object> data =
-                    redisTemplate.opsForHash().entries(RedisKeys.lobbyKey(code));
+        for (int i = 0; i < lobbyCodes.size(); i++) {
+            String code = lobbyCodes.get(i);
+
+            int hashResultIndex = i * 2;
+            int countResultIndex = hashResultIndex + 1;
+
+            Map<Object, Object> data = extractHashResult(
+                    pipelineResults,
+                    hashResultIndex,
+                    code
+            );
 
             if (data.isEmpty()) {
                 continue;
             }
+
+            Integer currentPlayers = extractCurrentPlayerCount(
+                    pipelineResults,
+                    countResultIndex,
+                    code
+            );
 
             String displayMapCategory = toDisplayMapCategoryOrNull(
                     code,
@@ -195,7 +235,7 @@ public class LobbyRedisQueryRepository {
                     .mapTitle((String) data.get(RedisKeys.FIELD_MAP_TITLE))
                     .mapCategory(displayMapCategory)
                     .maxPlayers(parseNullableInt(data.get(RedisKeys.FIELD_MAX_PLAYERS)))
-                    .currentPlayers(getCurrentPlayerCount(code))
+                    .currentPlayers(currentPlayers)
                     .isPrivate(Boolean.parseBoolean((String) data.get(RedisKeys.FIELD_IS_PRIVATE)))
                     .build());
         }
@@ -268,6 +308,97 @@ public class LobbyRedisQueryRepository {
                 .size(RedisKeys.lobbyParticipantsKey(inviteCode));
 
         return count != null ? count.intValue() : 0;
+    }
+
+    /**
+     * StringRedisTemplate의 pipeline low-level connection에서 사용할 raw key를 생성한다.
+     *
+     * StringRedisTemplate은 일반 ops API에서는 String 직렬화를 자동 적용하지만,
+     * RedisConnection을 직접 사용하는 pipeline 내부에서는 byte[] key를 명시해야 한다.
+     */
+    private byte[] rawKey(String key) {
+        return key.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * pipeline 결과에서 HGETALL 결과를 안전하게 꺼낸다.
+     *
+     * [pipeline 결과 순서]
+     * - index 0: 첫 번째 로비 HGETALL
+     * - index 1: 첫 번째 로비 SCARD
+     * - index 2: 두 번째 로비 HGETALL
+     * - index 3: 두 번째 로비 SCARD
+     *
+     * Spring Data Redis는 StringRedisTemplate의 value serializer를 적용해
+     * Hash 결과를 Map<Object, Object> 형태로 역직렬화한다.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<Object, Object> extractHashResult(
+            List<Object> pipelineResults,
+            int index,
+            String lobbyCode
+    ) {
+        if (index >= pipelineResults.size()) {
+            log.warn(
+                    "Redis pipeline HGETALL 결과 누락 - lobbyCode: {}, resultIndex: {}",
+                    lobbyCode,
+                    index
+            );
+            return Map.of();
+        }
+
+        Object result = pipelineResults.get(index);
+        if (result == null) {
+            return Map.of();
+        }
+
+        if (result instanceof Map<?, ?> map) {
+            return (Map<Object, Object>) map;
+        }
+
+        log.warn(
+                "Redis pipeline HGETALL 결과 타입 불일치 - lobbyCode: {}, resultType: {}",
+                lobbyCode,
+                result.getClass().getName()
+        );
+        return Map.of();
+    }
+
+    /**
+     * pipeline 결과에서 SCARD 결과를 안전하게 꺼낸다.
+     *
+     * Redis SCARD 결과는 일반적으로 Long으로 역직렬화된다.
+     * 예상하지 못한 타입이 들어오면 null을 반환하여 Service 계층의 capacity 방어 필터가 제외하도록 한다.
+     */
+    private Integer extractCurrentPlayerCount(
+            List<Object> pipelineResults,
+            int index,
+            String lobbyCode
+    ) {
+        if (index >= pipelineResults.size()) {
+            log.warn(
+                    "Redis pipeline SCARD 결과 누락 - lobbyCode: {}, resultIndex: {}",
+                    lobbyCode,
+                    index
+            );
+            return null;
+        }
+
+        Object result = pipelineResults.get(index);
+        if (result == null) {
+            return null;
+        }
+
+        if (result instanceof Number count) {
+            return count.intValue();
+        }
+
+        log.warn(
+                "Redis pipeline SCARD 결과 타입 불일치 - lobbyCode: {}, resultType: {}",
+                lobbyCode,
+                result.getClass().getName()
+        );
+        return null;
     }
 
     private Long parseNullableLong(Object value) {

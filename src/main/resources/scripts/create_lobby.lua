@@ -23,22 +23,35 @@ local inviteCode      = ARGV[3]   -- 초대 코드
 local title           = ARGV[4]   -- 로비 제목
 local maxPlayers      = ARGV[5]   -- 최대 인원
 local isPrivate       = ARGV[6]   -- "true" | "false"
-local status         = ARGV[7]  -- "WAITING"
+local status          = ARGV[7]   -- "WAITING"
 
 local mapId           = ARGV[8]   -- 선택된 맵 ID. 미선택 시 ""
 local mapTitle        = ARGV[9]   -- 선택된 맵 제목. 미선택 시 ""
-local mapCategory    = ARGV[10]  -- 선택된 맵 카테고리. 미선택 시 ""
+local mapCategory     = ARGV[10]  -- 선택된 맵 카테고리. 미선택 시 ""
 
 -- Redis Hash 필드명은 스크립트 상단에서 중앙 관리합니다.
-local FIELD_CODE         = 'code'
-local FIELD_HOST_USER_ID = 'host_user_id'
-local FIELD_TITLE        = 'title'
-local FIELD_MAX_PLAYERS  = 'max_players'
-local FIELD_IS_PRIVATE   = 'is_private'
-local FIELD_STATUS       = 'status'
-local FIELD_MAP_ID       = 'map_id'
-local FIELD_MAP_TITLE    = 'map_title'
-local FIELD_MAP_CATEGORY = 'map_category'
+local FIELD_CODE                    = 'code'
+local FIELD_HOST_USER_ID            = 'host_user_id'
+local FIELD_TITLE                   = 'title'
+local FIELD_MAX_PLAYERS             = 'max_players'
+local FIELD_IS_PRIVATE              = 'is_private'
+local FIELD_STATUS                  = 'status'
+local FIELD_MAP_ID                  = 'map_id'
+local FIELD_MAP_TITLE               = 'map_title'
+local FIELD_MAP_CATEGORY            = 'map_category'
+local FIELD_CREATED_AT_EPOCH_MILLIS = 'created_at_epoch_millis'
+
+-- Redis 서버 기준 현재 시각을 epoch milliseconds로 계산한다.
+--
+-- [Java 서버 시간이 아니라 Redis TIME을 사용하는 이유]
+-- Monomat-BE가 멀티 인스턴스로 운영될 경우 각 애플리케이션 서버의 시간이
+-- 미세하게 다를 수 있다. latest 정렬 기준을 Java Instant.now()에 의존하면
+-- 서버 간 NTP drift로 인해 생성 순서가 흔들릴 수 있다.
+--
+-- Redis TIME은 Redis 서버 기준 단일 시간원이므로,
+-- Redis에 저장되는 로비 생성 시각 정렬 기준을 일관되게 유지할 수 있다.
+local redisTime = redis.call('TIME')
+local createdAtEpochMillis = redisTime[1] * 1000 + math.floor(redisTime[2] / 1000)
 
 -- 1. SETNX 선점 시도
 --    이미 동일한 코드가 선점되어 있으면 LOCK_FAILED 반환
@@ -49,13 +62,18 @@ if acquired == false then
 end
 
 -- 2. 로비 메타 정보 Hash 저장 (lobby:{code})
+--
+-- [created_at_epoch_millis 저장 이유]
+-- lobby:public은 Redis Set이므로 생성 순서를 보장하지 않는다.
+-- 공개 로비 목록에서 latest 정렬을 제공하려면 생성 시각을 별도 필드로 저장해야 한다.
 redis.call('HSET', lobbyKey,
-    'code',         inviteCode,
-    'host_user_id', userIdentifier,
-    'title',        title,
-    'max_players',  maxPlayers,
-    'is_private',   isPrivate,
-    'status',       status
+    FIELD_CODE,                    inviteCode,
+    FIELD_HOST_USER_ID,            userIdentifier,
+    FIELD_TITLE,                   title,
+    FIELD_MAX_PLAYERS,             maxPlayers,
+    FIELD_IS_PRIVATE,              isPrivate,
+    FIELD_STATUS,                  status,
+    FIELD_CREATED_AT_EPOCH_MILLIS, tostring(createdAtEpochMillis)
 )
 
 -- 3. 맵이 선택된 경우에만 맵 메타 정보 저장

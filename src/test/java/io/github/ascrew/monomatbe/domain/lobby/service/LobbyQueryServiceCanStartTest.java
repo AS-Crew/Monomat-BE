@@ -26,11 +26,11 @@ import static org.mockito.Mockito.when;
  *
  * [변경 배경]
  * Issue #78에서 LobbyService facade를 제거하고,
- * 로비 상세 조회 책임을 LobbyQueryService로 분리했습니다.
+ * 로비 상세 조회 책임을 LobbyQueryService로 분리했다.
  *
  * canStart 계산 자체는 LobbyCanStartPolicy가 담당하지만,
  * 이 테스트는 "로비 상세 조회 결과에 canStart가 올바르게 반영되는지"를 검증하므로
- * LobbyQueryService 기준으로 유지합니다.
+ * LobbyQueryService 기준으로 유지한다.
  */
 class LobbyQueryServiceCanStartTest {
 

@@ -18,7 +18,6 @@
 -- KEYS[1] = lobby:{code}
 -- KEYS[2] = lobby:{code}:participants
 -- KEYS[3] = lobby:{code}:ready
--- KEYS[4] = lobby:public
 --
 -- [ARGV]
 -- ARGV[1] = requesterIdentifier
@@ -32,7 +31,6 @@
 local lobbyKey = KEYS[1]
 local participantsKey = KEYS[2]
 local readyKey = KEYS[3]
-local publicLobbyKey = KEYS[4]
 
 local requesterIdentifier = ARGV[1]
 local lobbyCode = ARGV[2]
@@ -109,6 +107,5 @@ if nonHostPlayerCount == 0 then
 end
 
 redis.call('HSET', lobbyKey, fieldStatus, playingStatus)
-redis.call('SREM', publicLobbyKey, lobbyCode)
 
 return 'STARTED'

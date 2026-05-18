@@ -26,10 +26,18 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class YoutubeValidationServiceTest {
 
+    private static final String TEST_VIDEO_ID = "abcde123456";
+    private static final String TEST_YOUTUBE_URL = "https://www.youtube.com/watch?v=" + TEST_VIDEO_ID;
+    private static final String MIXED_CASE_ID = "dQw4w9WgXcQ";
+    private static final String OEMBED_RESPONSE =
+            "{\"title\":\"t\",\"author_name\":\"a\",\"thumbnail_url\":\"th\"}";
+
     @Mock
     private StringRedisTemplate redisTemplate;
+
     @Mock
     private ValueOperations<String, String> valueOperations;
+
     @Mock
     private YoutubeOEmbedClient youtubeOEmbedClient;
 
@@ -39,13 +47,18 @@ class YoutubeValidationServiceTest {
     @BeforeEach
     void setUp() {
         jsonMapper = JsonMapper.builder().build();
-        youtubeValidationService = new YoutubeValidationService(redisTemplate, jsonMapper, youtubeOEmbedClient);
+        youtubeValidationService = new YoutubeValidationService(
+                redisTemplate,
+                jsonMapper,
+                youtubeOEmbedClient
+        );
+
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     @Test
     void validateYoutubeUrl_invalidFormat_badRequest() {
-        // example.com host는 YouTube 도메인이 아니므로 거절되어야 함
+        // example.com host는 YouTube 도메인이 아니므로 oEmbed 호출 전에 거절되어야 한다.
         assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl("https://example.com/watch?v=abc"))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("유효한 YouTube URL이 아닙니다.");
@@ -55,7 +68,7 @@ class YoutubeValidationServiceTest {
 
     @Test
     void validateYoutubeUrl_nonYoutubeDomainWithValidVideoId_badRequest() {
-        // 11자 유효 videoId가 있더라도 host가 YouTube 도메인이 아니면 거절되어야 함
+        // 11자 유효 videoId가 있더라도 host가 YouTube 도메인이 아니면 거절되어야 한다.
         assertThatThrownBy(() -> youtubeValidationService
                 .validateYoutubeUrl("https://example.com/watch?v=dQw4w9WgXcQ"))
                 .isInstanceOf(ResponseStatusException.class)
@@ -66,11 +79,10 @@ class YoutubeValidationServiceTest {
 
     @Test
     void validateYoutubeUrl_negativeCacheHit_blocksWithoutRevalidate() {
-        String url = "https://www.youtube.com/watch?v=abcde123456";
-        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey("abcde123456"))).thenReturn(null);
-        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey("abcde123456"))).thenReturn(true);
+        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))).thenReturn(null);
+        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID))).thenReturn(true);
 
-        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl(url))
+        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl(TEST_YOUTUBE_URL))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("임베드 가능한 YouTube 영상이 아닙니다.");
 
@@ -78,11 +90,10 @@ class YoutubeValidationServiceTest {
     }
 
     @Test
-    void validateYoutubeUrl_oembedReturnsBlankTitle_badRequestAndStoresFailureCache() {
-        String url = "https://www.youtube.com/watch?v=abcde123456";
-        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey("abcde123456"))).thenReturn(null);
-        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey("abcde123456"))).thenReturn(false);
-        when(youtubeOEmbedClient.fetchByVideoId("abcde123456"))
+    void validateYoutubeUrl_oembedReturnsBlankTitle_badRequestAndDoesNotStoreFailureCache() {
+        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))).thenReturn(null);
+        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID))).thenReturn(false);
+        when(youtubeOEmbedClient.fetchByVideoId(TEST_VIDEO_ID))
                 .thenReturn("""
                         {
                           "author_name":"artist",
@@ -90,19 +101,29 @@ class YoutubeValidationServiceTest {
                         }
                         """);
 
-        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl(url))
+        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl(TEST_YOUTUBE_URL))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("임베드 가능한 YouTube 영상이 아닙니다.");
 
-        verify(valueOperations).set(eq(RedisKeys.youtubeOembedFailureKey("abcde123456")), anyString(), any());
+        /*
+         * title 누락은 현재 요청에서는 사용할 수 없는 응답이지만,
+         * YouTube가 401/403/404를 반환한 영구적 임베드 불가 상태는 아니다.
+         *
+         * 따라서 Negative Cache에 저장하지 않아야 한다.
+         * 저장해버리면 일시적인 oEmbed 응답 이상이 30분 동안 영구 실패처럼 고정된다.
+         */
+        verify(valueOperations, never()).set(
+                eq(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID)),
+                anyString(),
+                any()
+        );
     }
 
     @Test
-    void validateYoutubeUrl_oembedReturnsBlankArtist_badRequestAndStoresFailureCache() {
-        String url = "https://www.youtube.com/watch?v=abcde123456";
-        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey("abcde123456"))).thenReturn(null);
-        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey("abcde123456"))).thenReturn(false);
-        when(youtubeOEmbedClient.fetchByVideoId("abcde123456"))
+    void validateYoutubeUrl_oembedReturnsBlankArtist_badRequestAndDoesNotStoreFailureCache() {
+        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))).thenReturn(null);
+        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID))).thenReturn(false);
+        when(youtubeOEmbedClient.fetchByVideoId(TEST_VIDEO_ID))
                 .thenReturn("""
                         {
                           "title":"title",
@@ -110,35 +131,42 @@ class YoutubeValidationServiceTest {
                         }
                         """);
 
-        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl(url))
+        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrl(TEST_YOUTUBE_URL))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("임베드 가능한 YouTube 영상이 아닙니다.");
 
-        verify(valueOperations).set(eq(RedisKeys.youtubeOembedFailureKey("abcde123456")), anyString(), any());
+        /*
+         * author_name 누락도 title 누락과 동일하게 영구 실패로 단정하지 않는다.
+         * Negative Cache는 401/403/404처럼 임베드 불가가 명확한 경우에만 저장한다.
+         */
+        verify(valueOperations, never()).set(
+                eq(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID)),
+                anyString(),
+                any()
+        );
     }
 
     @Test
-    void validateYoutubeUrl_successCacheHit_returnsCachedMetadata() throws Exception {
-        YoutubeMetadata cached = new YoutubeMetadata("abcde123456", "title", "artist", "thumb");
+    void validateYoutubeUrl_successCacheHit_returnsCachedMetadata() {
+        YoutubeMetadata cached = new YoutubeMetadata(TEST_VIDEO_ID, "title", "artist", "thumb");
         String serialized = jsonMapper.writeValueAsString(cached);
 
-        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey("abcde123456"))).thenReturn(serialized);
+        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))).thenReturn(serialized);
 
-        YoutubeMetadata result = youtubeValidationService
-                .validateYoutubeUrl("https://www.youtube.com/watch?v=abcde123456");
+        YoutubeMetadata result = youtubeValidationService.validateYoutubeUrl(TEST_YOUTUBE_URL);
 
-        assertThat(result.videoId()).isEqualTo("abcde123456");
+        assertThat(result.videoId()).isEqualTo(TEST_VIDEO_ID);
         assertThat(result.title()).isEqualTo("title");
         verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
     }
 
     @Test
     void validateYoutubeUrl_successFetch_storesSuccessCache() {
-        String url = "https://youtu.be/abcde123456";
+        String url = "https://youtu.be/" + TEST_VIDEO_ID;
 
-        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey("abcde123456"))).thenReturn(null);
-        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey("abcde123456"))).thenReturn(false);
-        when(youtubeOEmbedClient.fetchByVideoId("abcde123456"))
+        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))).thenReturn(null);
+        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID))).thenReturn(false);
+        when(youtubeOEmbedClient.fetchByVideoId(TEST_VIDEO_ID))
                 .thenReturn("""
                         {
                           "title":"new title",
@@ -149,7 +177,7 @@ class YoutubeValidationServiceTest {
 
         YoutubeMetadata result = youtubeValidationService.validateYoutubeUrl(url);
 
-        assertThat(result.videoId()).isEqualTo("abcde123456");
+        assertThat(result.videoId()).isEqualTo(TEST_VIDEO_ID);
         assertThat(result.artist()).isEqualTo("new artist");
         verify(valueOperations).set(anyString(), anyString(), any());
     }
@@ -158,21 +186,13 @@ class YoutubeValidationServiceTest {
     // URL 형식별 videoId 추출 + 케이스 보존 검증
     // ─────────────────────────────────────────────
 
-    private static final String MIXED_CASE_ID = "dQw4w9WgXcQ";
-    private static final String OEMBED_RESPONSE =
-            "{\"title\":\"t\",\"author_name\":\"a\",\"thumbnail_url\":\"th\"}";
-
-    private void stubSuccess(String videoId) {
-        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(videoId))).thenReturn(null);
-        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(videoId))).thenReturn(false);
-        when(youtubeOEmbedClient.fetchByVideoId(videoId)).thenReturn(OEMBED_RESPONSE);
-    }
-
     @Test
     void extractVideoId_standardUrl_extractsCorrectId() {
         stubSuccess(MIXED_CASE_ID);
+
         YoutubeMetadata result = youtubeValidationService
                 .validateYoutubeUrl("https://www.youtube.com/watch?v=" + MIXED_CASE_ID);
+
         assertThat(result.videoId()).isEqualTo(MIXED_CASE_ID);
         verify(youtubeOEmbedClient).fetchByVideoId(eq(MIXED_CASE_ID));
     }
@@ -180,8 +200,10 @@ class YoutubeValidationServiceTest {
     @Test
     void extractVideoId_shortUrl_extractsCorrectId() {
         stubSuccess(MIXED_CASE_ID);
+
         YoutubeMetadata result = youtubeValidationService
                 .validateYoutubeUrl("https://youtu.be/" + MIXED_CASE_ID);
+
         assertThat(result.videoId()).isEqualTo(MIXED_CASE_ID);
         verify(youtubeOEmbedClient).fetchByVideoId(eq(MIXED_CASE_ID));
     }
@@ -189,8 +211,10 @@ class YoutubeValidationServiceTest {
     @Test
     void extractVideoId_shortsUrl_extractsCorrectId() {
         stubSuccess(MIXED_CASE_ID);
+
         YoutubeMetadata result = youtubeValidationService
                 .validateYoutubeUrl("https://www.youtube.com/shorts/" + MIXED_CASE_ID);
+
         assertThat(result.videoId()).isEqualTo(MIXED_CASE_ID);
         verify(youtubeOEmbedClient).fetchByVideoId(eq(MIXED_CASE_ID));
     }
@@ -198,8 +222,10 @@ class YoutubeValidationServiceTest {
     @Test
     void extractVideoId_embedUrl_extractsCorrectId() {
         stubSuccess(MIXED_CASE_ID);
+
         YoutubeMetadata result = youtubeValidationService
                 .validateYoutubeUrl("https://www.youtube.com/embed/" + MIXED_CASE_ID);
+
         assertThat(result.videoId()).isEqualTo(MIXED_CASE_ID);
         verify(youtubeOEmbedClient).fetchByVideoId(eq(MIXED_CASE_ID));
     }
@@ -207,17 +233,21 @@ class YoutubeValidationServiceTest {
     @Test
     void extractVideoId_mobileUrl_extractsCorrectId() {
         stubSuccess(MIXED_CASE_ID);
+
         YoutubeMetadata result = youtubeValidationService
                 .validateYoutubeUrl("https://m.youtube.com/watch?v=" + MIXED_CASE_ID);
+
         assertThat(result.videoId()).isEqualTo(MIXED_CASE_ID);
         verify(youtubeOEmbedClient).fetchByVideoId(eq(MIXED_CASE_ID));
     }
 
     @Test
     void extractVideoId_preservesMixedCase_notLowercased() {
-        // URI 파싱 경로에서도 videoId가 소문자화되지 않는지 검증
+        // URI 파싱 경로에서도 videoId가 소문자화되지 않는지 검증한다.
         stubSuccess(MIXED_CASE_ID);
+
         youtubeValidationService.validateYoutubeUrl("https://youtu.be/" + MIXED_CASE_ID);
+
         verify(youtubeOEmbedClient, never()).fetchByVideoId(eq(MIXED_CASE_ID.toLowerCase()));
         verify(youtubeOEmbedClient).fetchByVideoId(eq(MIXED_CASE_ID));
     }
@@ -228,6 +258,7 @@ class YoutubeValidationServiceTest {
                 .validateYoutubeUrl("https://www.youtube.com/watch?v=abcdefg"))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("유효한 YouTube URL이 아닙니다.");
+
         verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
     }
 
@@ -237,6 +268,21 @@ class YoutubeValidationServiceTest {
                 .validateYoutubeUrl("https://www.youtube.com/watch?v=abcdefghijklm"))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("유효한 YouTube URL이 아닙니다.");
+
         verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
+    }
+
+    /**
+     * 정상 oEmbed 응답을 반환하도록 공통 mock을 구성한다.
+     *
+     * [사용 목적]
+     * videoId 추출 테스트들은 oEmbed 파싱 자체가 목적이 아니다.
+     * 따라서 성공 응답을 공통으로 stub 처리하고,
+     * 각 테스트에서는 URL 형식별 videoId 추출 결과만 검증한다.
+     */
+    private void stubSuccess(String videoId) {
+        when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(videoId))).thenReturn(null);
+        when(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(videoId))).thenReturn(false);
+        when(youtubeOEmbedClient.fetchByVideoId(videoId)).thenReturn(OEMBED_RESPONSE);
     }
 }

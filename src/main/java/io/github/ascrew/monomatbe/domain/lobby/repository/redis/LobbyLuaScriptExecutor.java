@@ -100,7 +100,7 @@ public class LobbyLuaScriptExecutor {
                 isPrivateValue,
                 LobbyStatus.WAITING.name(),
 
-                // 맵 미선택 시 빈 문자열을 전달하여 Redis에 "null" 문자열이 저장되지 않게 합니다.
+                // 맵 미선택 시 빈 문자열을 전달하여 Redis에 "null" 문자열이 저장되지 않게 한다.
                 mapMetadata != null ? String.valueOf(mapMetadata.mapId()) : EMPTY_REDIS_VALUE,
                 mapMetadata != null ? mapMetadata.mapTitle() : EMPTY_REDIS_VALUE,
                 mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE
@@ -186,7 +186,16 @@ public class LobbyLuaScriptExecutor {
      * KEYS[1] = lobby:{code}
      * KEYS[2] = lobby:{code}:participants
      * KEYS[3] = lobby:{code}:ready
-     * KEYS[4] = lobby:public
+     *
+     * [정책]
+     * 게임 시작 후에도 공개 로비 목록에는 PLAYING 로비를 유지한다.
+     * 공개 로비 목록 API는 WAITING + PLAYING 상태를 내려주고,
+     * 클라이언트는 PLAYING 로비를 "진행 중" 상태로 표시한다.
+     *
+     * [주의]
+     * PLAYING 로비를 목록에 노출하더라도 실제 입장은 허용하지 않는다.
+     * enter_lobby.lua는 WAITING 상태 로비만 입장을 허용하므로,
+     * PLAYING 로비 클릭 시 FE는 입장 요청을 보내지 않거나 비활성화 처리해야 한다.
      *
      * [ARGV 계약]
      * ARGV[1] = requesterIdentifier
@@ -206,8 +215,7 @@ public class LobbyLuaScriptExecutor {
         List<String> keys = List.of(
                 RedisKeys.lobbyKey(code),
                 RedisKeys.lobbyParticipantsKey(code),
-                RedisKeys.lobbyReadyKey(code),
-                RedisKeys.LOBBY_PUBLIC
+                RedisKeys.lobbyReadyKey(code)
         );
 
         return redisTemplate.execute(

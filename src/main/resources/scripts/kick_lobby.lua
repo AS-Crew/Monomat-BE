@@ -93,8 +93,8 @@ if isPrivate == 'false' then
             availableSeats = 0
         end
 
-        redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, targetUserIdentifier)
-        redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, targetUserIdentifier)
+        redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, lobbyCode)
+        redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
     end
 end
 

@@ -196,18 +196,31 @@ public class LobbyQueryService {
         long scanOffset = pageRequest.offset();
 
         /*
-         * stale code가 많은 상황에서도 무한히 Redis를 훑지 않도록 제한한다.
-         * 정상 상황에서는 대부분 1회 조회로 끝난다.
+         * stale index가 누적된 상황에서도 필요한 page를 최대한 채우기 위한 스캔 상한이다.
+         *
+         * 고정 횟수 방식은 stale code가 앞쪽에 몰려 있을 때 유효 로비를 충분히 탐색하지 못한다.
+         * 따라서 요청한 targetItemCount 대비 일정 배수만큼 ZSET member를 스캔하도록 제한한다.
+         *
+         * 예:
+         * - size=20이면 targetItemCount=21
+         * - 최대 105개까지 ZSET member를 훑음
          */
-        int remainingScanAttempts = 3;
+        int maxScannedIndexCount = targetItemCount * 5;
+        int scannedIndexCount = 0;
 
-        while (collectedItems.size() < targetItemCount && remainingScanAttempts > 0) {
+        while (collectedItems.size() < targetItemCount && scannedIndexCount < maxScannedIndexCount) {
             int remainingItemCount = targetItemCount - collectedItems.size();
+            int remainingScanBudget = maxScannedIndexCount - scannedIndexCount;
+
+            int scanLimit = Math.min(
+                    remainingItemCount,
+                    remainingScanBudget
+            );
 
             List<String> indexedLobbyCodes = getLobbyCodesBySortIndex(
                     condition.sortType(),
                     scanOffset,
-                    remainingItemCount
+                    scanLimit
             );
 
             if (indexedLobbyCodes.isEmpty()) {
@@ -223,13 +236,8 @@ public class LobbyQueryService {
 
             collectedItems.addAll(fetchedItems);
 
-            /*
-             * 다음 조회는 이번에 ZSET에서 읽은 code 수만큼 뒤에서 시작한다.
-             * fetchedItems 수가 아니라 indexedLobbyCodes 수를 기준으로 이동해야
-             * stale code를 다시 읽지 않는다.
-             */
             scanOffset += indexedLobbyCodes.size();
-            remainingScanAttempts--;
+            scannedIndexCount += indexedLobbyCodes.size();
         }
 
         boolean hasNext = collectedItems.size() > requestedSize;

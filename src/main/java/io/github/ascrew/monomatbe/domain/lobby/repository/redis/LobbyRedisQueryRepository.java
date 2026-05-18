@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.redis.core.ZSetOperations;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -139,43 +140,75 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
-     * Redis에서 공개 로비 목록을 조회한다.
+     * 공개 로비 최신순 ZSET 인덱스가 존재하는지 확인한다.
      *
-     * [조회 기준]
-     * lobby:public Set에 들어 있는 초대 코드를 기준으로 lobby:{code} Hash와
-     * lobby:{code}:participants Set 크기를 조회한다.
+     * [사용 목적]
+     * 배포 직후에는 과거 Redis 데이터에 lobby:public:latest 인덱스가 없을 수 있다.
+     * 이 경우 Service는 기존 lobby:public Set 전체 조회 방식으로 폴백할 수 있어야 한다.
+     */
+    public boolean existsPublicLatestIndex() {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.LOBBY_PUBLIC_LATEST));
+    }
+
+    /**
+     * 공개 로비 최신순 ZSET 인덱스에서 page 범위에 해당하는 로비 코드를 조회한다.
      *
-     * [성능]
-     * 공개 로비 수가 N개일 때 개별 Redis 호출을 수행하면
-     * SMEMBERS 1회 + HGETALL N회 + SCARD N회로 총 1 + 2N번의 round-trip이 발생한다.
+     * [조회 방식]
+     * Redis ZSET score는 created_at_epoch_millis다.
+     * 최신순은 score가 큰 값부터 내려와야 하므로 reverseRange를 사용한다.
      *
-     * 이 메서드는 HGETALL과 SCARD를 executePipelined()로 묶어
-     * Redis 명령 수는 유지하되 네트워크 round-trip을 줄인다.
+     * [size + 1 조회]
+     * hasNext 계산을 위해 요청 size보다 1개 더 조회한다.
+     * Service는 초과분을 잘라내고 hasNext를 계산한다.
      *
      * [주의]
-     * lobby:public에는 남아 있지만 lobby:{code} Hash가 TTL 만료 등으로 사라진 경우는 응답에서 제외한다.
+     * 이 메서드는 코드 목록만 반환한다.
+     * 실제 lobby:{code} Hash 조회와 손상 데이터 필터링은 별도 메서드에서 처리한다.
      *
-     * [mapCategory 방어 정책]
-     * - mapCategory가 없거나 blank이면 맵 미선택 로비로 보고 목록에 포함한다.
-     * - mapCategory가 정상 값이면 FE 표시값(K-POP, J-POP, POP)으로 변환한다.
-     * - mapCategory 필드는 존재하지만 정규화할 수 없는 값이면 Redis 손상 데이터로 보고 목록에서 제외한다.
-     *
-     * @return 공개 로비 목록
+     * @param offset 0-based 조회 시작 offset
+     * @param limit 조회 개수. 일반적으로 pageSize + 1
+     * @return 최신순 로비 코드 목록
      */
-    public List<LobbyRedisDto> getPublicLobbies() {
-        Set<String> publicLobbyCodes =
-                redisTemplate.opsForSet().members(RedisKeys.LOBBY_PUBLIC);
-
-        if (publicLobbyCodes == null || publicLobbyCodes.isEmpty()) {
-            return new ArrayList<>();
+    public List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit) {
+        if (limit <= 0) {
+            return List.of();
         }
 
-        /*
-         * Set은 순서 보장을 전제로 쓰면 안 된다.
-         * pipeline 결과는 요청을 넣은 순서 그대로 반환되므로,
-         * 먼저 List로 고정한 뒤 같은 index 기준으로 code와 결과를 매칭한다.
-         */
-        List<String> lobbyCodes = new ArrayList<>(publicLobbyCodes);
+        Set<String> codes = redisTemplate.opsForZSet()
+                .reverseRange(
+                        RedisKeys.LOBBY_PUBLIC_LATEST,
+                        offset,
+                        offset + limit - 1L
+                );
+
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+
+        return new ArrayList<>(codes);
+    }
+
+    /**
+     * 주어진 로비 코드 목록에 대해서만 Redis Hash와 현재 참여자 수를 조회한다.
+     *
+     * [사용 목적]
+     * - 기존 lobby:public Set 전체 조회
+     * - 신규 lobby:public:latest ZSET 범위 조회
+     *
+     * 두 경로 모두 code 목록만 다르고 DTO 조립 방식은 동일하므로,
+     * 이 메서드로 HGETALL + SCARD pipeline 로직을 공통화한다.
+     *
+     * [정합성 방어]
+     * - code는 인덱스에 있지만 lobby:{code} Hash가 없으면 제외한다.
+     * - mapCategory 필드가 손상된 로비는 제외한다.
+     *
+     * @param lobbyCodes 조회할 로비 코드 목록
+     * @return 조회 가능한 로비 DTO 목록
+     */
+    public List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes) {
+        if (lobbyCodes == null || lobbyCodes.isEmpty()) {
+            return new ArrayList<>();
+        }
 
         List<Object> pipelineResults = redisTemplate.executePipelined((RedisConnection connection) -> {
             for (String code : lobbyCodes) {
@@ -201,6 +234,11 @@ public class LobbyRedisQueryRepository {
             );
 
             if (data.isEmpty()) {
+                /*
+                 * ZSET/Set 인덱스에는 남아 있지만 Hash가 TTL 만료 또는 수동 삭제된 경우다.
+                 * 이번 단계에서는 조회 결과에서 제외만 한다.
+                 * 정리 작업은 다음 단계의 정합성 복구 전략에서 다룬다.
+                 */
                 continue;
             }
 
@@ -241,6 +279,45 @@ public class LobbyRedisQueryRepository {
         }
 
         return result;
+    }
+
+    /**
+     * Redis에서 공개 로비 목록을 조회한다.
+     *
+     * [조회 기준]
+     * lobby:public Set에 들어 있는 초대 코드를 기준으로 lobby:{code} Hash와
+     * lobby:{code}:participants Set 크기를 조회한다.
+     *
+     * [성능]
+     * 공개 로비 수가 N개일 때 개별 Redis 호출을 수행하면
+     * SMEMBERS 1회 + HGETALL N회 + SCARD N회로 총 1 + 2N번의 round-trip이 발생한다.
+     *
+     * 이 메서드는 HGETALL과 SCARD를 executePipelined()로 묶어
+     * Redis 명령 수는 유지하되 네트워크 round-trip을 줄인다.
+     *
+     * [주의]
+     * lobby:public에는 남아 있지만 lobby:{code} Hash가 TTL 만료 등으로 사라진 경우는 응답에서 제외한다.
+     *
+     * [mapCategory 방어 정책]
+     * - mapCategory가 없거나 blank이면 맵 미선택 로비로 보고 목록에 포함한다.
+     * - mapCategory가 정상 값이면 FE 표시값(K-POP, J-POP, POP)으로 변환한다.
+     * - mapCategory 필드는 존재하지만 정규화할 수 없는 값이면 Redis 손상 데이터로 보고 목록에서 제외한다.
+     *
+     * @return 공개 로비 목록
+     */
+    public List<LobbyRedisDto> getPublicLobbies() {
+        Set<String> publicLobbyCodes =
+                redisTemplate.opsForSet().members(RedisKeys.LOBBY_PUBLIC);
+
+        if (publicLobbyCodes == null || publicLobbyCodes.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        /*
+         * Set은 순서 보장을 전제로 쓰면 안 된다.
+         * 기존 전체 조회 경로는 Service 계층에서 정렬하므로 여기서는 순서가 중요하지 않다.
+         */
+        return getPublicLobbiesByCodes(new ArrayList<>(publicLobbyCodes));
     }
 
     /**

@@ -7,6 +7,10 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.anyInt;
 
 import java.util.List;
 
@@ -498,5 +502,132 @@ class LobbyQueryServiceTest {
                 .status(LobbyStatus.WAITING.name())
                 .createdAtEpochMillis(1000L)
                 .build();
+    }
+
+    @Test
+    @DisplayName("latest 정렬이고 필터가 없으면 공개 로비 최신순 ZSET 인덱스로 페이징 조회한다")
+    void getPublicLobbyPage_usesLatestIndexWhenLatestSortWithoutFilters() {
+        // given
+        when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
+        when(lobbyRepository.getPublicLobbyCodesByLatestIndex(0L, 3)).thenReturn(List.of(
+                "NEW",
+                "MID",
+                "OLD"
+        ));
+        when(lobbyRepository.getPublicLobbiesByCodes(List.of("NEW", "MID"))).thenReturn(List.of(
+                lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                2
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("NEW", "MID");
+        assertThat(result.hasNext()).isTrue();
+
+        verify(lobbyRepository).getPublicLobbyCodesByLatestIndex(0L, 3);
+        verify(lobbyRepository).getPublicLobbiesByCodes(List.of("NEW", "MID"));
+        verify(lobbyRepository, never()).getPublicLobbies();
+    }
+
+    @Test
+    @DisplayName("keyword 필터가 있으면 latest 정렬이어도 ZSET 인덱스를 사용하지 않고 전체 조회로 폴백한다")
+    void getPublicLobbyPage_fallsBackToFullScanWhenKeywordExists() {
+        // given
+        when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("MATCHED", "KPOP 랜덤 퀴즈", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("UNMATCHED", "JPOP 애니송", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                "랜덤",
+                null,
+                "latest",
+                0,
+                20
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("MATCHED");
+
+        verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
+        verify(lobbyRepository).getPublicLobbies();
+    }
+
+    @Test
+    @DisplayName("mapCategory 필터가 있으면 latest 정렬이어도 ZSET 인덱스를 사용하지 않고 전체 조회로 폴백한다")
+    void getPublicLobbyPage_fallsBackToFullScanWhenMapCategoryExists() {
+        // given
+        when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("KPOP", "케이팝 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("JPOP", "제이팝 로비", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                "K-POP",
+                "latest",
+                0,
+                20
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("KPOP");
+
+        verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
+        verify(lobbyRepository).getPublicLobbies();
+    }
+
+    @Test
+    @DisplayName("latest ZSET 인덱스가 없으면 기존 공개 로비 전체 조회 방식으로 폴백한다")
+    void getPublicLobbyPage_fallsBackToFullScanWhenLatestIndexDoesNotExist() {
+        // given
+        when(lobbyRepository.existsPublicLatestIndex()).thenReturn(false);
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                20
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("NEW", "OLD");
+
+        verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
+        verify(lobbyRepository).getPublicLobbies();
     }
 }

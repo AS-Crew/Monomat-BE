@@ -309,4 +309,19 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   public void incrementStartReconciliationMetric(String metricKey) {
     lobbyStartReconciliationRepository.incrementStartReconciliationMetric(metricKey);
   }
+
+  @Override
+  public boolean existsPublicLatestIndex() {
+    return lobbyRedisQueryRepository.existsPublicLatestIndex();
+  }
+
+  @Override
+  public List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit) {
+    return lobbyRedisQueryRepository.getPublicLobbyCodesByLatestIndex(offset, limit);
+  }
+
+  @Override
+  public List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes) {
+    return lobbyRedisQueryRepository.getPublicLobbiesByCodes(lobbyCodes);
+  }
 }

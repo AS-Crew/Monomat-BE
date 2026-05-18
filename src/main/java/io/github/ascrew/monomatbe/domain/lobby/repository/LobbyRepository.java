@@ -153,4 +153,29 @@ public interface LobbyRepository {
    * @return 현재 참여 인원 수
    */
   int getCurrentPlayerCount(String inviteCode);
+
+  /**
+   * 공개 로비 최신순 ZSET 인덱스 존재 여부를 확인한다.
+   *
+   * 배포 직후 과거 Redis 데이터에는 인덱스가 없을 수 있으므로,
+   * Service 계층에서 기존 전체 조회 방식으로 폴백할 때 사용한다.
+   */
+  boolean existsPublicLatestIndex();
+
+  /**
+   * 공개 로비 최신순 ZSET 인덱스에서 필요한 범위의 로비 코드만 조회한다.
+   *
+   * @param offset 0-based 조회 시작 offset
+   * @param limit 조회 개수
+   * @return 최신순 로비 코드 목록
+   */
+  List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit);
+
+  /**
+   * 주어진 로비 코드 목록에 대해서만 공개 로비 DTO를 조회한다.
+   *
+   * @param lobbyCodes 조회할 로비 코드 목록
+   * @return 조회 가능한 공개 로비 DTO 목록
+   */
+  List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes);
 }

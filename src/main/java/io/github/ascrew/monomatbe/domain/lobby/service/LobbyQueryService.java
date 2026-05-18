@@ -140,11 +140,84 @@ public class LobbyQueryService {
      */
     @Transactional(readOnly = true)
     public LobbyPageResponse<LobbyRedisDto> getPublicLobbyPage(LobbySearchCondition condition) {
+        if (canUseLatestIndex(condition)) {
+            return getPublicLobbyPageByLatestIndex(condition);
+        }
+
         List<LobbyRedisDto> filteredLobbies = getPublicLobbies(condition);
 
         return toPageResponse(
                 filteredLobbies,
                 condition.pageRequest()
+        );
+    }
+
+    /**
+     * latest 정렬 인덱스를 사용할 수 있는 조건인지 확인한다.
+     *
+     * [사용 조건]
+     * - sort=latest
+     * - keyword 없음
+     * - mapCategory 없음
+     * - lobby:public:latest ZSET 인덱스 존재
+     *
+     * [필터 조건이 있을 때 인덱스를 사용하지 않는 이유]
+     * keyword/mapCategory 필터가 있는 상태에서 ZSET page 범위만 먼저 자르면
+     * 전체 필터링 결과 기준의 page가 깨질 수 있다.
+     *
+     * 예를 들어 page=0,size=20으로 ZSET 상위 20개만 조회한 뒤 K-POP 필터를 적용하면,
+     * 실제 21번째 이후에 있는 K-POP 로비를 첫 페이지에 포함하지 못한다.
+     *
+     * 따라서 필터 조건이 있는 경우는 기존 전체 조회 후 필터링 방식으로 폴백한다.
+     */
+    private boolean canUseLatestIndex(LobbySearchCondition condition) {
+        return condition.sortType() == LobbySortType.LATEST
+                && !condition.hasKeyword()
+                && !condition.hasMapCategory()
+                && lobbyRepository.existsPublicLatestIndex();
+    }
+
+    /**
+     * Redis ZSET 최신순 인덱스를 사용해 공개 로비 목록을 페이징 조회한다.
+     *
+     * [조회 전략]
+     * - lobby:public:latest에서 page size + 1개 코드를 최신순으로 조회한다.
+     * - size + 1번째 데이터가 있으면 hasNext=true로 판단한다.
+     * - 조회한 코드에 대해서만 HGETALL/SCARD를 수행한다.
+     *
+     * [정합성 방어]
+     * ZSET에 남아 있지만 lobby:{code} Hash가 사라진 로비는 Repository에서 제외된다.
+     * 이 경우 반환 items 수가 size보다 작아질 수 있다.
+     *
+     * 이 문제를 완전히 해결하려면 ZSET stale member 정리 또는 oversampling 전략이 필요하다.
+     * 이번 단계에서는 인덱스 도입을 우선하고, 정합성 복구는 다음 단계에서 다룬다.
+     */
+    private LobbyPageResponse<LobbyRedisDto> getPublicLobbyPageByLatestIndex(
+            LobbySearchCondition condition
+    ) {
+        LobbyPageRequest pageRequest = condition.pageRequest();
+
+        List<String> indexedLobbyCodes = lobbyRepository.getPublicLobbyCodesByLatestIndex(
+                pageRequest.offset(),
+                pageRequest.size() + 1
+        );
+
+        boolean hasNext = indexedLobbyCodes.size() > pageRequest.size();
+
+        List<String> pageLobbyCodes = hasNext
+                ? indexedLobbyCodes.subList(0, pageRequest.size())
+                : indexedLobbyCodes;
+
+        List<LobbyRedisDto> pageItems = lobbyRepository.getPublicLobbiesByCodes(pageLobbyCodes).stream()
+                .filter(this::isPublicLobby)
+                .filter(this::isVisibleLobby)
+                .filter(this::hasValidCapacity)
+                .toList();
+
+        return LobbyPageResponse.of(
+                pageItems,
+                pageRequest,
+                hasNext
         );
     }
 

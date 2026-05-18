@@ -104,6 +104,23 @@ public final class RedisKeys {
     public static final String LOBBY_PUBLIC = "lobby:public";
 
     /**
+     * 공개 로비 최신순 정렬 인덱스 ZSET 키
+     *
+     * 저장 구조 :
+     * - Key    : lobby:public:latest
+     * - Type   : Sorted Set
+     * - Member : lobby inviteCode
+     * - Score  : lobby:{code}.created_at_epoch_millis
+     *
+     * [사용 목적]
+     * 기존 lobby:public Set은 순서를 보장하지 않기 때문에
+     * 최신순 페이징 조회 시 전체 로비를 모두 조회한 뒤 Java에서 정렬해야 했다.
+     *
+     * 이 ZSET은 Redis score 기준으로 최신 로비 코드 범위만 조회하기 위한 인덱스다.
+     */
+    public static final String LOBBY_PUBLIC_LATEST = "lobby:public:latest";
+
+    /**
      * WebSocket 세션 sequence 발급용 전역 키.
      *
      * 동일 userIdentifier의 재접속이 거의 동시에 발생할 때,

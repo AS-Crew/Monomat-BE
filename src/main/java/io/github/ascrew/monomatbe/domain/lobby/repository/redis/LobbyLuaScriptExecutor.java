@@ -59,6 +59,7 @@ public class LobbyLuaScriptExecutor {
      * KEYS[1] = lobby:{code}:lock
      * KEYS[2] = lobby:{code}
      * KEYS[3] = lobby:public
+     * KEYS[4] = lobby:public:latest
      *
      * [ARGV 계약]
      * ARGV[1]  = host userIdentifier
@@ -83,7 +84,8 @@ public class LobbyLuaScriptExecutor {
         List<String> keys = List.of(
                 RedisKeys.lobbyCodeLockKey(inviteCode),
                 RedisKeys.lobbyKey(inviteCode),
-                RedisKeys.LOBBY_PUBLIC
+                RedisKeys.LOBBY_PUBLIC,
+                RedisKeys.LOBBY_PUBLIC_LATEST
         );
 
         String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
@@ -116,6 +118,7 @@ public class LobbyLuaScriptExecutor {
      * KEYS[3] = lobby:{code}:order
      * KEYS[4] = lobby:{code}:kicked
      * KEYS[5] = lobby:public
+     * KEYS[6] = lobby:public:latest
      *
      * [ARGV 계약]
      * ARGV[1] = userIdentifier
@@ -124,12 +127,14 @@ public class LobbyLuaScriptExecutor {
      * @return leave_lobby.lua 반환 문자열
      */
     public String executeLeaveLobby(String code, String userIdentifier) {
+
         List<String> keys = List.of(
                 RedisKeys.lobbyKey(code),
                 RedisKeys.lobbyParticipantsKey(code),
                 RedisKeys.lobbyOrderKey(code),
                 RedisKeys.lobbyKickedKey(code),
-                RedisKeys.LOBBY_PUBLIC
+                RedisKeys.LOBBY_PUBLIC,
+                RedisKeys.LOBBY_PUBLIC_LATEST
         );
 
         return redisTemplate.execute(

@@ -509,14 +509,25 @@ class LobbyQueryServiceTest {
     void getPublicLobbyPage_usesLatestIndexWhenLatestSortWithoutFilters() {
         // given
         when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
+
+        /*
+         * page=0, size=2이면 Service는 hasNext 계산을 위해 size + 1개를 조회한다.
+         * 따라서 Repository에는 limit=3 요청이 들어간다.
+         */
         when(lobbyRepository.getPublicLobbyCodesByLatestIndex(0L, 3)).thenReturn(List.of(
                 "NEW",
                 "MID",
                 "OLD"
         ));
-        when(lobbyRepository.getPublicLobbiesByCodes(List.of("NEW", "MID"))).thenReturn(List.of(
+
+        /*
+         * 3단계 이후 Service는 ZSET에서 읽은 code 목록 전체를 Repository에 넘긴다.
+         * 이 중 size + 1번째인 OLD는 응답 items에는 포함되지 않고 hasNext 계산에만 사용된다.
+         */
+        when(lobbyRepository.getPublicLobbiesByCodes(List.of("NEW", "MID", "OLD"))).thenReturn(List.of(
                 lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
-                lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+                lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L),
+                lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
         ));
 
         LobbySearchCondition condition = LobbySearchCondition.of(
@@ -534,10 +545,12 @@ class LobbyQueryServiceTest {
         assertThat(result.items())
                 .extracting(LobbyRedisDto::getCode)
                 .containsExactly("NEW", "MID");
+        assertThat(result.page()).isEqualTo(0);
+        assertThat(result.size()).isEqualTo(2);
         assertThat(result.hasNext()).isTrue();
 
         verify(lobbyRepository).getPublicLobbyCodesByLatestIndex(0L, 3);
-        verify(lobbyRepository).getPublicLobbiesByCodes(List.of("NEW", "MID"));
+        verify(lobbyRepository).getPublicLobbiesByCodes(List.of("NEW", "MID", "OLD"));
         verify(lobbyRepository, never()).getPublicLobbies();
     }
 
@@ -629,5 +642,92 @@ class LobbyQueryServiceTest {
 
         verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
         verify(lobbyRepository).getPublicLobbies();
+    }
+
+    @Test
+    @DisplayName("latest ZSET 조회 중 stale code가 있으면 다음 범위를 추가 조회해 page size를 채운다")
+    void getPublicLobbyPageByLatestIndex_fetchesAdditionalRangeWhenStaleCodeExists() {
+        // given
+        when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
+
+        /*
+         * 첫 조회에서는 STALE, NEW를 반환한다.
+         * STALE은 Repository에서 Hash 없음으로 제외되고 NEW만 DTO로 반환된다고 가정한다.
+         */
+        when(lobbyRepository.getPublicLobbyCodesByLatestIndex(0L, 3))
+                .thenReturn(List.of("STALE", "NEW", "MID"));
+
+        when(lobbyRepository.getPublicLobbiesByCodes(List.of("STALE", "NEW", "MID")))
+                .thenReturn(List.of(
+                        lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                        lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+                ));
+
+        /*
+         * 첫 조회에서 size + 1개를 확보하지 못했으므로,
+         * 다음 offset에서 추가 조회가 발생해야 한다.
+         */
+        when(lobbyRepository.getPublicLobbyCodesByLatestIndex(3L, 1))
+                .thenReturn(List.of("OLD"));
+
+        when(lobbyRepository.getPublicLobbiesByCodes(List.of("OLD")))
+                .thenReturn(List.of(
+                        lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
+                ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                2
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("NEW", "MID");
+        assertThat(result.hasNext()).isTrue();
+
+        verify(lobbyRepository).getPublicLobbyCodesByLatestIndex(0L, 3);
+        verify(lobbyRepository).getPublicLobbyCodesByLatestIndex(3L, 1);
+    }
+
+    @Test
+    @DisplayName("latest ZSET 조회에서 유효 로비가 부족하면 가능한 만큼만 반환하고 hasNext=false를 반환한다")
+    void getPublicLobbyPageByLatestIndex_returnsAvailableItemsWhenValidItemsAreInsufficient() {
+        // given
+        when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
+
+        when(lobbyRepository.getPublicLobbyCodesByLatestIndex(0L, 3))
+                .thenReturn(List.of("STALE-1", "STALE-2", "ONLY"));
+
+        when(lobbyRepository.getPublicLobbiesByCodes(List.of("STALE-1", "STALE-2", "ONLY")))
+                .thenReturn(List.of(
+                        lobby("ONLY", "유일한 유효 로비", "K-POP", 1, 6, LobbyStatus.WAITING, 1000L)
+                ));
+
+        when(lobbyRepository.getPublicLobbyCodesByLatestIndex(3L, 2))
+                .thenReturn(List.of());
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                2
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("ONLY");
+        assertThat(result.hasNext()).isFalse();
     }
 }

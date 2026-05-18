@@ -181,38 +181,69 @@ public class LobbyQueryService {
      * Redis ZSET 최신순 인덱스를 사용해 공개 로비 목록을 페이징 조회한다.
      *
      * [조회 전략]
-     * - lobby:public:latest에서 page size + 1개 코드를 최신순으로 조회한다.
-     * - size + 1번째 데이터가 있으면 hasNext=true로 판단한다.
-     * - 조회한 코드에 대해서만 HGETALL/SCARD를 수행한다.
+     * - lobby:public:latest에서 최신순으로 로비 코드를 조회한다.
+     * - stale code가 섞여 있을 수 있으므로 한 번에 끝내지 않고 필요한 만큼 추가 조회한다.
+     * - Repository는 lobby:{code} Hash가 없는 stale code를 발견하면 공개 인덱스에서 제거한다.
      *
-     * [정합성 방어]
-     * ZSET에 남아 있지만 lobby:{code} Hash가 사라진 로비는 Repository에서 제외된다.
-     * 이 경우 반환 items 수가 size보다 작아질 수 있다.
+     * [size + 1 조회]
+     * hasNext 계산을 위해 최종적으로 page size보다 1개 더 확보하려고 시도한다.
+     * 확보된 유효 로비가 size보다 많으면 초과 1개를 잘라내고 hasNext=true로 반환한다.
      *
-     * 이 문제를 완전히 해결하려면 ZSET stale member 정리 또는 oversampling 전략이 필요하다.
-     * 이번 단계에서는 인덱스 도입을 우선하고, 정합성 복구는 다음 단계에서 다룬다.
+     * [한계]
+     * page offset 이전에 존재하는 stale code까지 완전히 보정하지는 않는다.
+     * 다만 요청 중 만난 stale code는 즉시 제거되므로 반복 조회할수록 인덱스 정합성이 회복된다.
      */
     private LobbyPageResponse<LobbyRedisDto> getPublicLobbyPageByLatestIndex(
             LobbySearchCondition condition
     ) {
         LobbyPageRequest pageRequest = condition.pageRequest();
 
-        List<String> indexedLobbyCodes = lobbyRepository.getPublicLobbyCodesByLatestIndex(
-                pageRequest.offset(),
-                pageRequest.size() + 1
-        );
+        int requestedSize = pageRequest.size();
+        int targetItemCount = requestedSize + 1;
 
-        boolean hasNext = indexedLobbyCodes.size() > pageRequest.size();
+        List<LobbyRedisDto> collectedItems = new ArrayList<>();
+        long scanOffset = pageRequest.offset();
 
-        List<String> pageLobbyCodes = hasNext
-                ? indexedLobbyCodes.subList(0, pageRequest.size())
-                : indexedLobbyCodes;
+        /*
+         * stale code가 많을 때 무한히 Redis를 훑지 않도록 조회 반복 횟수를 제한한다.
+         * 정상 상황에서는 대부분 1회 조회로 끝난다.
+         */
+        int remainingScanAttempts = 3;
 
-        List<LobbyRedisDto> pageItems = lobbyRepository.getPublicLobbiesByCodes(pageLobbyCodes).stream()
-                .filter(this::isPublicLobby)
-                .filter(this::isVisibleLobby)
-                .filter(this::hasValidCapacity)
-                .toList();
+        while (collectedItems.size() < targetItemCount && remainingScanAttempts > 0) {
+            int remainingItemCount = targetItemCount - collectedItems.size();
+
+            List<String> indexedLobbyCodes = lobbyRepository.getPublicLobbyCodesByLatestIndex(
+                    scanOffset,
+                    remainingItemCount
+            );
+
+            if (indexedLobbyCodes.isEmpty()) {
+                break;
+            }
+
+            List<LobbyRedisDto> fetchedItems = lobbyRepository.getPublicLobbiesByCodes(indexedLobbyCodes).stream()
+                    .filter(this::isPublicLobby)
+                    .filter(this::isVisibleLobby)
+                    .filter(this::hasValidCapacity)
+                    .toList();
+
+            collectedItems.addAll(fetchedItems);
+
+            /*
+             * 다음 조회는 이번에 ZSET에서 읽은 code 수만큼 뒤에서 시작한다.
+             * fetchedItems 수가 아니라 indexedLobbyCodes 수를 기준으로 이동해야
+             * stale code를 다시 읽지 않는다.
+             */
+            scanOffset += indexedLobbyCodes.size();
+            remainingScanAttempts--;
+        }
+
+        boolean hasNext = collectedItems.size() > requestedSize;
+
+        List<LobbyRedisDto> pageItems = hasNext
+                ? collectedItems.subList(0, requestedSize)
+                : collectedItems;
 
         return LobbyPageResponse.of(
                 pageItems,

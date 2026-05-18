@@ -178,4 +178,15 @@ public interface LobbyRepository {
    * @return 조회 가능한 공개 로비 DTO 목록
    */
   List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes);
+
+  /**
+   * 공개 로비 인덱스에서 특정 로비 코드를 제거한다.
+   *
+   * [사용 목적]
+   * lobby:public 또는 lobby:public:latest에는 남아 있지만
+   * lobby:{code} Hash가 TTL 만료/수동 삭제/복구 누락 등으로 사라진 stale index를 정리한다.
+   *
+   * @param lobbyCode 제거할 로비 코드
+   */
+  void removePublicLobbyIndexes(String lobbyCode);
 }

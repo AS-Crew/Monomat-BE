@@ -324,4 +324,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   public List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes) {
     return lobbyRedisQueryRepository.getPublicLobbiesByCodes(lobbyCodes);
   }
+
+  @Override
+  public void removePublicLobbyIndexes(String lobbyCode) {
+    lobbyRedisQueryRepository.removePublicLobbyIndexes(lobbyCode);
+  }
 }

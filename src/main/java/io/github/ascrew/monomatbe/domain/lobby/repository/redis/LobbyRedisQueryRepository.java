@@ -189,6 +189,35 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
+     * 공개 로비 인덱스에서 특정 로비 코드를 제거한다.
+     *
+     * [정리 대상]
+     * - lobby:public Set
+     * - lobby:public:latest ZSET
+     *
+     * [사용 상황]
+     * Redis 인덱스에는 로비 코드가 남아 있지만 lobby:{code} Hash가 없는 경우,
+     * 해당 코드는 더 이상 조회 가능한 로비가 아니므로 공개 목록 인덱스에서 제거한다.
+     *
+     * [주의]
+     * 이 메서드는 조회 중 발견된 stale index를 방어적으로 정리하는 용도다.
+     * 정상 로비 삭제/폭파 경로에서는 Lua 스크립트가 원자적으로 SREM/ZREM을 수행해야 한다.
+     */
+    public void removePublicLobbyIndexes(String lobbyCode) {
+        if (lobbyCode == null || lobbyCode.isBlank()) {
+            return;
+        }
+
+        redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, lobbyCode);
+        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_LATEST, lobbyCode);
+
+        log.warn(
+                "공개 로비 stale index 정리 - lobbyCode: {}",
+                lobbyCode
+        );
+    }
+
+    /**
      * 주어진 로비 코드 목록에 대해서만 Redis Hash와 현재 참여자 수를 조회한다.
      *
      * [사용 목적]
@@ -235,10 +264,17 @@ public class LobbyRedisQueryRepository {
 
             if (data.isEmpty()) {
                 /*
-                 * ZSET/Set 인덱스에는 남아 있지만 Hash가 TTL 만료 또는 수동 삭제된 경우다.
-                 * 이번 단계에서는 조회 결과에서 제외만 한다.
-                 * 정리 작업은 다음 단계의 정합성 복구 전략에서 다룬다.
+                 * 인덱스에는 남아 있지만 lobby:{code} Hash가 없는 상태다.
+                 *
+                 * 가능한 원인:
+                 * - TTL 만료
+                 * - Redis 수동 삭제
+                 * - 과거 버전의 폭파 로직에서 ZSET 정리 누락
+                 *
+                 * 이 코드를 계속 인덱스에 남겨두면 이후 latest 페이징 조회마다
+                 * 비어 있는 로비를 반복 조회하게 되므로 즉시 공개 인덱스에서 제거한다.
                  */
+                removePublicLobbyIndexes(code);
                 continue;
             }
 

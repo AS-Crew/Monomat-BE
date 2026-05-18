@@ -46,17 +46,20 @@ public class MapService {
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final UserRepository userRepository;
+    private final MapPublicationValidator publicationValidator;
     private final StringRedisTemplate redisTemplate;
     private final JsonMapper jsonMapper;
 
     public MapService(
             QuizMapJpaRepository quizMapJpaRepository,
             UserRepository userRepository,
+            MapPublicationValidator publicationValidator,
             StringRedisTemplate redisTemplate,
             @Qualifier("cacheJsonMapper") JsonMapper jsonMapper
     ) {
         this.quizMapJpaRepository = quizMapJpaRepository;
         this.userRepository = userRepository;
+        this.publicationValidator = publicationValidator;
         this.redisTemplate = redisTemplate;
         this.jsonMapper = jsonMapper;
     }
@@ -167,12 +170,15 @@ public class MapService {
             );
         }
 
+        // 생성 시점에는 아이템이 0개이므로 공개 조건을 만족할 수 없다.
+        // isPublic=true 요청은 의도만 pendingPublic 으로 보존하고, 첫 유효 아이템 추가 시 자동 공개로 전환된다.
         QuizMap created = quizMapJpaRepository.save(QuizMap.builder()
                 .owner(owner)
                 .title(request.title())
                 .description(request.description())
                 .category(request.category())
-                .isPublic(request.isPublic())
+                .isPublic(false)
+                .pendingPublic(request.isPublic())
                 .build());
 
         safeEvictMapCache(created.getId());
@@ -195,13 +201,25 @@ public class MapService {
         quizMap.update(
                 request.title(),
                 request.description(),
-                request.category(),
-                request.isPublic()
+                request.category()
         );
+
+        applyPublicationChange(quizMap, request.isPublic());
 
         safeEvictMapCache(quizMap.getId());
 
         return toDetailResponse(quizMap);
+    }
+
+    // 명시적인 공개 상태 변경 요청을 처리한다.
+    // 공개 전환은 검증을 통과해야만 허용되며, 실패 시 409 Conflict 로 거부한다.
+    private void applyPublicationChange(QuizMap quizMap, boolean requestedPublic) {
+        if (requestedPublic) {
+            publicationValidator.requirePublishable(quizMap.getId());
+            quizMap.markAsPublished();
+        } else {
+            quizMap.markAsUnpublished(false);
+        }
     }
 
     @Transactional
@@ -316,6 +334,7 @@ public class MapService {
                 .numOfSong(quizMap.getNumOfSong())
                 .totalPlayTime(quizMap.getTotalPlayTime())
                 .isPublic(Boolean.TRUE.equals(quizMap.getIsPublic()))
+                .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
                 .ownerId(quizMap.getOwner().getId())
                 .build();
     }
@@ -330,6 +349,7 @@ public class MapService {
                 .numOfSong(quizMap.getNumOfSong())
                 .totalPlayTime(quizMap.getTotalPlayTime())
                 .isPublic(Boolean.TRUE.equals(quizMap.getIsPublic()))
+                .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
                 .createdAt(quizMap.getCreatedAt())
                 .updatedAt(quizMap.getUpdatedAt())
                 .build();

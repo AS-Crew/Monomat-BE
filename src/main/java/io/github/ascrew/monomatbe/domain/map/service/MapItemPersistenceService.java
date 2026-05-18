@@ -25,13 +25,16 @@ public class MapItemPersistenceService {
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
+    private final MapPublicationValidator publicationValidator;
 
     public MapItemPersistenceService(
             QuizMapJpaRepository quizMapJpaRepository,
-            MapItemJpaRepository mapItemJpaRepository
+            MapItemJpaRepository mapItemJpaRepository,
+            MapPublicationValidator publicationValidator
     ) {
         this.quizMapJpaRepository = quizMapJpaRepository;
         this.mapItemJpaRepository = mapItemJpaRepository;
+        this.publicationValidator = publicationValidator;
     }
 
     @Transactional(readOnly = true)
@@ -128,6 +131,25 @@ public class MapItemPersistenceService {
         Long sum = mapItemJpaRepository.sumPlayTimeByMapId(quizMap.getId());
         int totalPlayTime = sum == null ? 0 : Math.toIntExact(sum);
         quizMap.updateMetadata(numOfSong, totalPlayTime);
+
+        applyPublicationAutoFlip(quizMap, numOfSong);
+    }
+
+    // 아이템 CRUD 후 공개 상태를 자동 조정한다.
+    //   - 아이템 0개 + isPublic=true: 무효한 상태이므로 자동 비공개. 의도(pendingPublic)는 보존해 재공개 가능.
+    //   - 비공개 + pendingPublic=true + 검증 통과: 사용자가 원래 의도한 공개로 자동 전환.
+    private void applyPublicationAutoFlip(QuizMap quizMap, int numOfSong) {
+        boolean isPublic = Boolean.TRUE.equals(quizMap.getIsPublic());
+        boolean pendingPublic = Boolean.TRUE.equals(quizMap.getPendingPublic());
+
+        if (isPublic && numOfSong == 0) {
+            quizMap.markAsUnpublished(true);
+            return;
+        }
+
+        if (!isPublic && pendingPublic && publicationValidator.isPublishable(quizMap.getId())) {
+            quizMap.markAsPublished();
+        }
     }
 
     private QuizMap getOwnedMapOrThrow(Long mapId, Long ownerId) {

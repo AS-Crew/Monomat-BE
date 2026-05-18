@@ -34,12 +34,18 @@ class MapItemPersistenceServiceTest {
     private QuizMapJpaRepository quizMapJpaRepository;
     @Mock
     private MapItemJpaRepository mapItemJpaRepository;
+    @Mock
+    private MapPublicationValidator publicationValidator;
 
     private MapItemPersistenceService persistenceService;
 
     @BeforeEach
     void setUp() {
-        persistenceService = new MapItemPersistenceService(quizMapJpaRepository, mapItemJpaRepository);
+        persistenceService = new MapItemPersistenceService(
+                quizMapJpaRepository,
+                mapItemJpaRepository,
+                publicationValidator
+        );
     }
 
     @Test
@@ -143,6 +149,116 @@ class MapItemPersistenceServiceTest {
         assertThat(mapItem.getIsDeleted()).isTrue();
         assertThat(quizMap.getNumOfSong()).isZero();
         assertThat(quizMap.getTotalPlayTime()).isZero();
+    }
+
+    @Test
+    void create_onPendingPublicMap_passesValidation_autoFlipToPublic() {
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        quizMap.setPendingPublicIntent(true);
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
+        when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
+        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
+        when(publicationValidator.isPublishable(1L)).thenReturn(true);
+
+        persistenceService.create(
+                1L, 10L, createRequest(1),
+                new YoutubeMetadata("v", "t", "a", "th"),
+                "정답", "[]", "ㅈㄷ", 15
+        );
+
+        assertThat(quizMap.getIsPublic()).isTrue();
+        assertThat(quizMap.getPendingPublic()).isFalse();
+    }
+
+    @Test
+    void create_onPendingPublicMap_failsValidation_remainsPrivate() {
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        quizMap.setPendingPublicIntent(true);
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
+        when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
+        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
+        when(publicationValidator.isPublishable(1L)).thenReturn(false);
+
+        persistenceService.create(
+                1L, 10L, createRequest(1),
+                new YoutubeMetadata("v", "t", "a", "th"),
+                "정답", "[]", "ㅈㄷ", 15
+        );
+
+        assertThat(quizMap.getIsPublic()).isFalse();
+        assertThat(quizMap.getPendingPublic()).isTrue();
+    }
+
+    @Test
+    void delete_lastItemFromPublicMap_autoFlipToPrivate_keepsPendingTrue() {
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        quizMap.markAsPublished(); // 공개 상태
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+
+        MapItem mapItem = MapItem.builder()
+                .id(50L)
+                .map(quizMap)
+                .orderNum(1)
+                .youtubeUrl("u")
+                .videoId("v")
+                .startTime(0)
+                .endTime(30)
+                .title("t")
+                .artist("a")
+                .thumbnailUrl("th")
+                .answer("정답")
+                .altAnswers(null)
+                .hint("ㅈㄷ")
+                .hintTime(15)
+                .isDeleted(false)
+                .build();
+        when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(50L, 1L)).thenReturn(Optional.of(mapItem));
+        when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(0L);
+        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(0L);
+
+        persistenceService.delete(1L, 50L, 10L);
+
+        assertThat(quizMap.getIsPublic()).isFalse();
+        assertThat(quizMap.getPendingPublic()).isTrue();
+    }
+
+    @Test
+    void delete_nonLastItemFromPublicMap_remainsPublic() {
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        quizMap.markAsPublished();
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+
+        MapItem mapItem = MapItem.builder()
+                .id(51L)
+                .map(quizMap)
+                .orderNum(2)
+                .youtubeUrl("u")
+                .videoId("v")
+                .startTime(0)
+                .endTime(30)
+                .title("t")
+                .artist("a")
+                .thumbnailUrl("th")
+                .answer("정답")
+                .altAnswers(null)
+                .hint("ㅈㄷ")
+                .hintTime(15)
+                .isDeleted(false)
+                .build();
+        when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(51L, 1L)).thenReturn(Optional.of(mapItem));
+        when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
+        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
+
+        persistenceService.delete(1L, 51L, 10L);
+
+        assertThat(quizMap.getIsPublic()).isTrue();
+        assertThat(quizMap.getPendingPublic()).isFalse();
     }
 
     private CreateMapItemRequest createRequest(int orderNum) {

@@ -11,6 +11,7 @@ public record MapSummaryResponse(
         int numOfSong,
         int totalPlayTime,
         boolean isPublic,
+        boolean pendingPublic,
         Long ownerId
 ) {
 }

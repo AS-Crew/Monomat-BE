@@ -15,6 +15,7 @@ public record MapDetailResponse(
         int numOfSong,
         int totalPlayTime,
         boolean isPublic,
+        boolean pendingPublic,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

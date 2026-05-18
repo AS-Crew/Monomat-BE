@@ -169,6 +169,22 @@ public final class RedisKeys {
     public static final String FIELD_MAX_PLAYERS = "max_players";
 
     /**
+     * 로비 Hash의 현재 참여 인원 필드.
+     *
+     * 저장 값:
+     * - lobby:{code}:participants Set의 SCARD 결과
+     *
+     * [중요]
+     * 이 값은 participants Set과 중복 상태다.
+     * 따라서 Java 서비스에서 직접 증가/감소시키지 않고,
+     * participants 변경을 수행하는 Redis Lua 스크립트에서만 함께 갱신한다.
+     *
+     * [사용 목적]
+     * 공개 로비 목록 조회와 향후 most_players / most_available ZSET score 갱신의 기준으로 사용한다.
+     */
+    public static final String FIELD_CURRENT_PLAYERS = "current_players";
+
+    /**
      * 로비 Hash의 공개/비공개 여부 필드.
      * 저장 값: "true" (비공개) / "false" (공개)
      */

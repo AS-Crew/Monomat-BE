@@ -13,8 +13,11 @@ local kickedKey = KEYS[4]               -- 로비 강퇴 명단 (Set)
 local publicListKey = KEYS[5]           -- 전역 공개 로비 목록 (Set)
 local publicLatestIndexKey = KEYS[6]    -- 공개 로비 최신순 정렬 인덱스 (ZSET)
 
-local userId = ARGV[1]           -- 퇴장하려는 유저 ID
-local lobbyCode = ARGV[2]        -- 퇴장하려는 로비 코드
+local userId = ARGV[1]                  -- 퇴장하려는 유저 ID
+local lobbyCode = ARGV[2]               -- 퇴장하려는 로비 코드
+
+-- Redis Hash 필드명
+local FIELD_CURRENT_PLAYERS = 'current_players'
 
 -- 1. 참여자 명단(Set)과 입장 순서(List)에서 해당 유저를 즉시 제거
 redis.call('SREM', participantsKey, userId)
@@ -25,13 +28,18 @@ local remainCount = redis.call('SCARD', participantsKey)
 
 if remainCount == 0 then
     -- [Case A: 남은 인원이 0명인 경우 -> 로비 폭파]
-    -- 로비와 관련된 모든 키를 일괄 삭제하여 Redis 메모리 누수(좀비 방)를 방지한다.
+    -- 로비가 폭파되므로 lobby Hash 자체를 삭제한다.
+    -- 따라서 current_players를 별도로 0으로 갱신할 필요가 없다.
     redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
-    redis.call('SREM', publicListKey, lobbyCode)        -- 공개 방 목록에서도 제외
-    redis.call('ZREM', publicLatestIndexKey, lobbyCode) -- 최신순 정렬 인덱스에서도 제외
+    redis.call('SREM', publicListKey, lobbyCode)
+    redis.call('ZREM', publicLatestIndexKey, lobbyCode)
     return "DESTROYED"
 else
     -- [Case B: 인원이 남아있는 경우 -> 방장 위임 여부 확인]
+    -- participants Set을 기준으로 현재 인원 캐시를 재계산한다.
+    -- 단순 감소가 아니라 SCARD 결과를 저장해 Redis 데이터 불일치 상황에서도 복구력을 높인다.
+    redis.call('HSET', lobbyKey, FIELD_CURRENT_PLAYERS, tostring(remainCount))
+
     local currentHost = redis.call('HGET', lobbyKey, 'host_user_id')
 
     if currentHost == userId then

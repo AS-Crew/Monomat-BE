@@ -29,6 +29,8 @@ local targetLobbyUserSeqKey     = KEYS[6] -- lobby:{code}:user_session_seq:{targ
 local requesterIdentifier       = ARGV[1] -- 강퇴 요청자 식별자
 local targetUserIdentifier      = ARGV[2] -- 강퇴 대상 식별자
 
+local FIELD_CURRENT_PLAYERS = 'current_players'
+
 -- 1. 로비 존재 여부 검증
 if redis.call('EXISTS', lobbyKey) == 0 then
     return "LOBBY_NOT_FOUND"
@@ -67,6 +69,12 @@ end
 -- 6. participants / order에서 강퇴 대상 제거
 redis.call('SREM', participantsKey, targetUserIdentifier)
 redis.call('LREM', orderKey, 0, targetUserIdentifier)
+
+-- participants Set을 기준으로 현재 인원 캐시를 재계산한다.
+-- 강퇴는 participants 변경과 같은 원자 단위에서 처리되므로,
+-- current_players 캐시도 같은 Lua 스크립트 내부에서만 갱신한다.
+local currentPlayers = redis.call('SCARD', participantsKey)
+redis.call('HSET', lobbyKey, FIELD_CURRENT_PLAYERS, tostring(currentPlayers))
 
 -- 7. 강퇴 대상 재입장 차단 등록
 redis.call('SADD', kickedKey, targetUserIdentifier)

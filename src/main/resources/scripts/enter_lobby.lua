@@ -41,6 +41,7 @@ local userField                 = ARGV[4] -- WebSocketHeaders.SESSION_USER_ID
 local lobbyField                = ARGV[5] -- WebSocketHeaders.SESSION_LOBBY_CODE
 local wsSessionId               = ARGV[6] -- 현재 WebSocket 세션 ID
 local sessionSequence           = tonumber(ARGV[7]) -- 현재 WebSocket 세션 sequence
+local FIELD_CURRENT_PLAYERS = 'current_players' -- Hash 필드명
 
 -- 1. 로비가 존재하지 않으면 입장 상태를 만들지 않는다.
 if redis.call('EXISTS', lobbyKey) == 0 then
@@ -112,9 +113,15 @@ end
 -- 9. 참여자 Set에 추가한다.
 local added = redis.call('SADD', participantsKey, userIdentifier)
 
--- 10. 신규 참여자일 때만 order List에 추가한다.
+-- 10. 신규 참여자일 때만 order List와 current_players를 갱신한다.
 if added == 1 then
     redis.call('RPUSH', orderKey, userIdentifier)
+
+    -- participants Set이 현재 인원의 단일 진실의 원천이다.
+    -- current_players는 조회/정렬 최적화를 위한 캐시 필드이므로,
+    -- participants 변경과 같은 Lua 원자 단위에서만 갱신한다.
+    local currentPlayers = redis.call('SCARD', participantsKey)
+    redis.call('HSET', lobbyKey, FIELD_CURRENT_PLAYERS, tostring(currentPlayers))
 end
 
 -- 11. 현재 WebSocket 세션 기준 역추적 정보를 저장한다.

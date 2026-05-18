@@ -35,7 +35,9 @@ local FIELD_CODE                    = 'code'
 local FIELD_HOST_USER_ID            = 'host_user_id'
 local FIELD_TITLE                   = 'title'
 local FIELD_MAX_PLAYERS             = 'max_players'
+local FIELD_CURRENT_PLAYERS         = 'current_players'
 local FIELD_IS_PRIVATE              = 'is_private'
+local FIELD_STATUS                  = 'status'
 local FIELD_STATUS                  = 'status'
 local FIELD_MAP_ID                  = 'map_id'
 local FIELD_MAP_TITLE               = 'map_title'
@@ -72,6 +74,7 @@ redis.call('HSET', lobbyKey,
     FIELD_HOST_USER_ID,            userIdentifier,
     FIELD_TITLE,                   title,
     FIELD_MAX_PLAYERS,             maxPlayers,
+    FIELD_CURRENT_PLAYERS,         '0',
     FIELD_IS_PRIVATE,              isPrivate,
     FIELD_STATUS,                  status,
     FIELD_CREATED_AT_EPOCH_MILLIS, tostring(createdAtEpochMillis)

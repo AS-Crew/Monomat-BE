@@ -278,7 +278,8 @@ public class LobbyRedisQueryRepository {
                 continue;
             }
 
-            Integer currentPlayers = extractCurrentPlayerCount(
+            Integer currentPlayers = resolveCurrentPlayers(
+                    data,
                     pipelineResults,
                     countResultIndex,
                     code
@@ -409,14 +410,27 @@ public class LobbyRedisQueryRepository {
     /**
      * 해당 로비의 현재 참여 인원 수를 반환한다.
      *
-     * [구현 방식]
-     * lobby:{code}:participants Set의 SCARD 명령으로 조회한다.
-     * null 반환 시 Redis 연결 이상일 수 있으므로 0으로 폴백하여 NPE를 방지한다.
+     * [조회 우선순위]
+     * 1. lobby:{code}.current_players
+     * 2. 기존 데이터 호환을 위한 lobby:{code}:participants SCARD
+     *
+     * [주의]
+     * current_players는 Lua에서 관리하는 캐시 값이다.
+     * Java 조회 경로에서는 누락 시 fallback만 수행하고 직접 복구 쓰기는 하지 않는다.
      *
      * @param inviteCode 로비 초대 코드
      * @return 현재 참여 인원 수
      */
     public int getCurrentPlayerCount(String inviteCode) {
+        Object cachedCurrentPlayers = redisTemplate.opsForHash()
+                .get(RedisKeys.lobbyKey(inviteCode), RedisKeys.FIELD_CURRENT_PLAYERS);
+
+        Integer parsedCurrentPlayers = parseNullableInt(cachedCurrentPlayers);
+
+        if (parsedCurrentPlayers != null) {
+            return parsedCurrentPlayers;
+        }
+
         Long count = redisTemplate.opsForSet()
                 .size(RedisKeys.lobbyParticipantsKey(inviteCode));
 
@@ -512,6 +526,47 @@ public class LobbyRedisQueryRepository {
                 result.getClass().getName()
         );
         return null;
+    }
+
+    /**
+     * 공개 로비 목록 응답에 사용할 현재 참여 인원 수를 결정한다.
+     *
+     * [우선순위]
+     * 1. lobby:{code} Hash의 current_players 필드
+     * 2. 기존 Redis 데이터 호환을 위한 participants Set SCARD pipeline 결과
+     *
+     * [설계 이유]
+     * current_players는 4단계부터 Lua에서 관리하는 캐시 필드다.
+     * 다만 배포 전에 생성된 기존 로비에는 해당 필드가 없을 수 있으므로,
+     * 조회 안정성을 위해 SCARD 결과를 fallback으로 사용한다.
+     *
+     * [주의]
+     * fallback은 읽기 호환성만 제공한다.
+     * Java에서 current_players를 직접 HSET하지 않는다.
+     * current_players의 갱신 책임은 participants 변경 Lua 스크립트에 있다.
+     */
+    private Integer resolveCurrentPlayers(
+            Map<Object, Object> data,
+            List<Object> pipelineResults,
+            int countResultIndex,
+            String lobbyCode
+    ) {
+        Integer cachedCurrentPlayers = parseNullableInt(data.get(RedisKeys.FIELD_CURRENT_PLAYERS));
+
+        if (cachedCurrentPlayers != null) {
+            return cachedCurrentPlayers;
+        }
+
+        log.debug(
+                "current_players 필드 없음 - SCARD fallback 사용. lobbyCode: {}",
+                lobbyCode
+        );
+
+        return extractCurrentPlayerCount(
+                pipelineResults,
+                countResultIndex,
+                lobbyCode
+        );
     }
 
     private Long parseNullableLong(Object value) {

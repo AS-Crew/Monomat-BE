@@ -213,6 +213,97 @@ class LobbyQueryServiceTest {
     }
 
     @Test
+    @DisplayName("공개 로비 목록 페이징 조회는 정렬된 결과를 page와 size 기준으로 잘라 반환한다")
+    void getPublicLobbyPage_returnsPagedItemsAfterSorting() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L),
+                lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 4000L),
+                lobby("MID-2", "중간 로비 2", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("MID-1", "중간 로비 1", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+        ));
+
+        /*
+         * latest 정렬 결과는 NEW, MID-2, MID-1, OLD 순서다.
+         * page=1, size=2이면 두 번째 페이지이므로 MID-1, OLD가 반환되어야 한다.
+         */
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                1,
+                2
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("MID-1", "OLD");
+        assertThat(result.page()).isEqualTo(1);
+        assertThat(result.size()).isEqualTo(2);
+        assertThat(result.hasNext()).isFalse();
+    }
+
+    @Test
+    @DisplayName("공개 로비 목록 페이징 조회는 다음 페이지가 있으면 hasNext=true를 반환한다")
+    void getPublicLobbyPage_returnsHasNextTrueWhenNextPageExists() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("LOBBY-5", "로비 5", "K-POP", 2, 6, LobbyStatus.WAITING, 5000L),
+                lobby("LOBBY-4", "로비 4", "K-POP", 2, 6, LobbyStatus.WAITING, 4000L),
+                lobby("LOBBY-3", "로비 3", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
+                lobby("LOBBY-2", "로비 2", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L),
+                lobby("LOBBY-1", "로비 1", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                2
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyRedisDto::getCode)
+                .containsExactly("LOBBY-5", "LOBBY-4");
+        assertThat(result.hasNext()).isTrue();
+    }
+
+    @Test
+    @DisplayName("공개 로비 목록 페이징 조회에서 범위를 초과한 page는 빈 items를 반환한다")
+    void getPublicLobbyPage_returnsEmptyItemsWhenPageExceedsRange() {
+        // given
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobby("LOBBY-1", "로비 1", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
+        ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                10,
+                20
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items()).isEmpty();
+        assertThat(result.page()).isEqualTo(10);
+        assertThat(result.size()).isEqualTo(20);
+        assertThat(result.hasNext()).isFalse();
+    }
+
+    @Test
     @DisplayName("latest 정렬에서 생성 시각이 없는 기존 Redis 데이터는 후순위로 정렬한다")
     void getPublicLobbies_sortsLobbyWithoutCreatedAtLastByLatest() {
         // given

@@ -20,6 +20,8 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageRequest;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySortType;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
@@ -114,6 +116,80 @@ public class LobbyQueryService {
                 .filter(lobby -> matchesMapCategory(lobby, condition))
                 .sorted(lobbyComparator(condition.sortType()))
                 .toList();
+    }
+
+    /**
+     * 공개 로비 목록을 페이징 응답으로 조회한다.
+     *
+     * [현재 단계]
+     * Redis에서는 기존처럼 공개 로비 원본 전체를 조회한다.
+     * 이후 Service 계층에서 공개 여부, 상태, capacity, keyword, mapCategory, sort 정책을 적용하고,
+     * 마지막에 page/size 기준으로 slice한다.
+     *
+     * [이슈 #88 단계적 구현 전략]
+     * 1단계에서는 API 응답 계약과 페이징 정책만 먼저 도입한다.
+     * 2단계부터 Redis ZSET 정렬 인덱스를 도입하여 Repository 조회 범위를 줄인다.
+     *
+     * [주의]
+     * 이 메서드는 현재 전체 필터링 결과를 만든 뒤 slice하므로,
+     * 성능 최적화의 최종 형태는 아니다.
+     * 하지만 FE 계약 변경과 기존 정책 회귀 테스트를 먼저 안정화하기 위한 중간 단계다.
+     *
+     * @param condition 공개 로비 목록 검색/필터/정렬/페이징 조건
+     * @return 페이징된 공개 로비 목록 응답
+     */
+    @Transactional(readOnly = true)
+    public LobbyPageResponse<LobbyRedisDto> getPublicLobbyPage(LobbySearchCondition condition) {
+        List<LobbyRedisDto> filteredLobbies = getPublicLobbies(condition);
+
+        return toPageResponse(
+                filteredLobbies,
+                condition.pageRequest()
+        );
+    }
+
+    /**
+     * 이미 필터링/정렬된 로비 목록을 page/size 기준으로 잘라낸다.
+     *
+     * [hasNext 계산]
+     * endExclusive가 전체 개수보다 작으면 다음 페이지가 존재한다.
+     *
+     * [범위 초과 page 처리]
+     * 요청 page가 전체 목록 범위를 넘어가면 빈 items를 반환한다.
+     * page 값 자체는 유효한 0 이상 값이므로 400으로 보지 않는다.
+     */
+    private LobbyPageResponse<LobbyRedisDto> toPageResponse(
+            List<LobbyRedisDto> sortedLobbies,
+            LobbyPageRequest pageRequest
+    ) {
+        long offset = pageRequest.offset();
+
+        if (offset >= sortedLobbies.size()) {
+            return LobbyPageResponse.of(
+                    List.of(),
+                    pageRequest,
+                    false
+            );
+        }
+
+        int startInclusive = Math.toIntExact(offset);
+        int endExclusive = Math.min(
+                startInclusive + pageRequest.size(),
+                sortedLobbies.size()
+        );
+
+        List<LobbyRedisDto> pageItems = sortedLobbies.subList(
+                startInclusive,
+                endExclusive
+        );
+
+        boolean hasNext = endExclusive < sortedLobbies.size();
+
+        return LobbyPageResponse.of(
+                pageItems,
+                pageRequest,
+                hasNext
+        );
     }
 
     /**

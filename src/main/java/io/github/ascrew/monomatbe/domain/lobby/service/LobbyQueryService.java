@@ -3,7 +3,8 @@
  *
  * [책임]
  * - 공개 로비 목록 조회
- * - 공개 로비 목록 검색/필터 정책 적용
+ * - 공개 로비 목록 검색/필터/정렬/페이징 정책 적용
+ * - Redis 정렬 인덱스 기반 공개 로비 목록 최적화 조회
  * - 로비 대기실 상세 조회
  * - 로비 상세 조회 접근 권한 검증
  * - 참여자 목록 조회 및 방장 누락 보정
@@ -19,12 +20,12 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySortType;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySortType;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
@@ -38,10 +39,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.Comparator;
 
 @Slf4j
 @Service
@@ -83,23 +84,10 @@ public class LobbyQueryService {
      * - keyword가 있으면 로비 제목에 keyword가 포함된 로비만 남긴다.
      * - mapCategory가 있으면 선택된 맵 카테고리가 일치하는 로비만 남긴다.
      *
-     * [PLAYING 로비 노출 정책]
-     * PLAYING 로비는 목록에 노출되지만, 현재 입장은 허용하지 않는다.
-     * enter_lobby.lua는 WAITING 상태 로비만 실제 입장을 허용하므로,
-     * FE는 PLAYING 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 한다.
-     *
-     * [성능 범위]
-     * 현재 구현은 Redis에서 공개 로비 원본 목록을 조회한 뒤,
-     * Java 메모리에서 상태/정원/카테고리/검색어 필터링과 정렬을 수행한다.
-     *
-     * 이 방식은 공개 로비 수가 수십~수백 개 수준인 현재 서비스 단계에서는 구현 단순성과 정책 변경 유연성이 높다.
-     * 다만 공개 로비 수가 수천 개 이상으로 증가하면 애플리케이션 CPU/메모리 비용이 커질 수 있다.
-     *
-     * 향후 트래픽 증가 시에는 다음 구조로 확장한다.
-     * - cursor/page 기반 Pagination
-     * - Redis Sorted Set 기반 latest 정렬 인덱스
-     * - currentPlayers/availableSeats 기준 정렬 인덱스
-     * - 목록 조회 상한선 예: latest TOP 100 우선 조회
+     * [사용 상황]
+     * - keyword/mapCategory 필터가 있는 경우
+     * - Redis 정렬 인덱스가 아직 없는 경우
+     * - 기존 테스트/호환 경로
      *
      * @param condition 공개 로비 목록 검색/필터/정렬 조건
      * @return 조건에 맞는 공개 로비 목록
@@ -121,27 +109,21 @@ public class LobbyQueryService {
     /**
      * 공개 로비 목록을 페이징 응답으로 조회한다.
      *
-     * [현재 단계]
-     * Redis에서는 기존처럼 공개 로비 원본 전체를 조회한다.
-     * 이후 Service 계층에서 공개 여부, 상태, capacity, keyword, mapCategory, sort 정책을 적용하고,
-     * 마지막에 page/size 기준으로 slice한다.
+     * [최적화 경로]
+     * keyword/mapCategory 필터가 없고 요청 정렬 타입에 맞는 Redis ZSET 인덱스가 존재하면,
+     * 전체 lobby:public을 조회하지 않고 정렬 인덱스에서 필요한 범위의 code만 조회한다.
      *
-     * [이슈 #88 단계적 구현 전략]
-     * 1단계에서는 API 응답 계약과 페이징 정책만 먼저 도입한다.
-     * 2단계부터 Redis ZSET 정렬 인덱스를 도입하여 Repository 조회 범위를 줄인다.
-     *
-     * [주의]
-     * 이 메서드는 현재 전체 필터링 결과를 만든 뒤 slice하므로,
-     * 성능 최적화의 최종 형태는 아니다.
-     * 하지만 FE 계약 변경과 기존 정책 회귀 테스트를 먼저 안정화하기 위한 중간 단계다.
+     * [폴백 경로]
+     * keyword/mapCategory 필터가 있거나 정렬 인덱스가 없으면 기존 전체 조회 후
+     * Java 필터/정렬/slice 방식으로 처리한다.
      *
      * @param condition 공개 로비 목록 검색/필터/정렬/페이징 조건
      * @return 페이징된 공개 로비 목록 응답
      */
     @Transactional(readOnly = true)
     public LobbyPageResponse<LobbyRedisDto> getPublicLobbyPage(LobbySearchCondition condition) {
-        if (canUseLatestIndex(condition)) {
-            return getPublicLobbyPageByLatestIndex(condition);
+        if (canUseSortIndex(condition)) {
+            return getPublicLobbyPageBySortIndex(condition);
         }
 
         List<LobbyRedisDto> filteredLobbies = getPublicLobbies(condition);
@@ -153,47 +135,56 @@ public class LobbyQueryService {
     }
 
     /**
-     * latest 정렬 인덱스를 사용할 수 있는 조건인지 확인한다.
+     * 정렬 인덱스를 사용할 수 있는 조건인지 확인한다.
      *
      * [사용 조건]
-     * - sort=latest
-     * - keyword 없음
-     * - mapCategory 없음
-     * - lobby:public:latest ZSET 인덱스 존재
+     * - keyword 필터 없음
+     * - mapCategory 필터 없음
+     * - 요청 sortType에 대응하는 Redis ZSET 인덱스 존재
      *
      * [필터 조건이 있을 때 인덱스를 사용하지 않는 이유]
-     * keyword/mapCategory 필터가 있는 상태에서 ZSET page 범위만 먼저 자르면
-     * 전체 필터링 결과 기준의 page가 깨질 수 있다.
-     *
-     * 예를 들어 page=0,size=20으로 ZSET 상위 20개만 조회한 뒤 K-POP 필터를 적용하면,
-     * 실제 21번째 이후에 있는 K-POP 로비를 첫 페이지에 포함하지 못한다.
-     *
-     * 따라서 필터 조건이 있는 경우는 기존 전체 조회 후 필터링 방식으로 폴백한다.
+     * ZSET에서 page 범위만 먼저 자른 뒤 필터링하면 전체 필터링 결과 기준의 page가 깨질 수 있다.
+     * 예를 들어 ZSET 상위 20개에는 K-POP 로비가 없지만 21번째 이후에 K-POP 로비가 있을 수 있다.
      */
-    private boolean canUseLatestIndex(LobbySearchCondition condition) {
-        return condition.sortType() == LobbySortType.LATEST
-                && !condition.hasKeyword()
+    private boolean canUseSortIndex(LobbySearchCondition condition) {
+        return !condition.hasKeyword()
                 && !condition.hasMapCategory()
-                && lobbyRepository.existsPublicLatestIndex();
+                && existsSortIndex(condition.sortType());
     }
 
     /**
-     * Redis ZSET 최신순 인덱스를 사용해 공개 로비 목록을 페이징 조회한다.
+     * 정렬 타입에 대응하는 Redis ZSET 인덱스 존재 여부를 확인한다.
+     *
+     * [폴백 전략]
+     * 인덱스가 없으면 기존 lobby:public 전체 조회 방식으로 폴백한다.
+     * 배포 직후 기존 Redis 데이터에는 신규 인덱스가 없을 수 있기 때문이다.
+     */
+    private boolean existsSortIndex(LobbySortType sortType) {
+        return switch (sortType) {
+            case LATEST -> lobbyRepository.existsPublicLatestIndex();
+            case MOST_PLAYERS -> lobbyRepository.existsPublicMostPlayersIndex();
+            case MOST_AVAILABLE -> lobbyRepository.existsPublicMostAvailableIndex();
+        };
+    }
+
+    /**
+     * Redis ZSET 정렬 인덱스를 사용해 공개 로비 목록을 페이징 조회한다.
      *
      * [조회 전략]
-     * - lobby:public:latest에서 최신순으로 로비 코드를 조회한다.
-     * - stale code가 섞여 있을 수 있으므로 한 번에 끝내지 않고 필요한 만큼 추가 조회한다.
-     * - Repository는 lobby:{code} Hash가 없는 stale code를 발견하면 공개 인덱스에서 제거한다.
+     * - sortType에 맞는 ZSET에서 로비 코드를 조회한다.
+     * - 조회된 코드에 대해서만 HGETALL/SCARD 또는 current_players 조회를 수행한다.
+     * - stale code가 섞여 있을 수 있으므로 필요한 경우 다음 범위를 추가 조회한다.
      *
-     * [size + 1 조회]
-     * hasNext 계산을 위해 최종적으로 page size보다 1개 더 확보하려고 시도한다.
-     * 확보된 유효 로비가 size보다 많으면 초과 1개를 잘라내고 hasNext=true로 반환한다.
+     * [정렬 보정]
+     * Redis ZSET은 score 기준 정렬만 보장한다.
+     * 같은 score의 로비끼리는 member 문자열 순서가 개입할 수 있으므로,
+     * DTO 조회 후 Service comparator로 한 번 더 보정한다.
      *
      * [한계]
      * page offset 이전에 존재하는 stale code까지 완전히 보정하지는 않는다.
-     * 다만 요청 중 만난 stale code는 즉시 제거되므로 반복 조회할수록 인덱스 정합성이 회복된다.
+     * 다만 요청 중 만난 stale code는 Repository에서 제거하므로 반복 조회할수록 정합성이 회복된다.
      */
-    private LobbyPageResponse<LobbyRedisDto> getPublicLobbyPageByLatestIndex(
+    private LobbyPageResponse<LobbyRedisDto> getPublicLobbyPageBySortIndex(
             LobbySearchCondition condition
     ) {
         LobbyPageRequest pageRequest = condition.pageRequest();
@@ -205,7 +196,7 @@ public class LobbyQueryService {
         long scanOffset = pageRequest.offset();
 
         /*
-         * stale code가 많을 때 무한히 Redis를 훑지 않도록 조회 반복 횟수를 제한한다.
+         * stale code가 많은 상황에서도 무한히 Redis를 훑지 않도록 제한한다.
          * 정상 상황에서는 대부분 1회 조회로 끝난다.
          */
         int remainingScanAttempts = 3;
@@ -213,7 +204,8 @@ public class LobbyQueryService {
         while (collectedItems.size() < targetItemCount && remainingScanAttempts > 0) {
             int remainingItemCount = targetItemCount - collectedItems.size();
 
-            List<String> indexedLobbyCodes = lobbyRepository.getPublicLobbyCodesByLatestIndex(
+            List<String> indexedLobbyCodes = getLobbyCodesBySortIndex(
+                    condition.sortType(),
                     scanOffset,
                     remainingItemCount
             );
@@ -226,6 +218,7 @@ public class LobbyQueryService {
                     .filter(this::isPublicLobby)
                     .filter(this::isVisibleLobby)
                     .filter(this::hasValidCapacity)
+                    .sorted(lobbyComparator(condition.sortType()))
                     .toList();
 
             collectedItems.addAll(fetchedItems);
@@ -250,6 +243,21 @@ public class LobbyQueryService {
                 pageRequest,
                 hasNext
         );
+    }
+
+    /**
+     * 정렬 타입에 맞는 Redis ZSET 인덱스에서 로비 코드를 조회한다.
+     */
+    private List<String> getLobbyCodesBySortIndex(
+            LobbySortType sortType,
+            long offset,
+            int limit
+    ) {
+        return switch (sortType) {
+            case LATEST -> lobbyRepository.getPublicLobbyCodesByLatestIndex(offset, limit);
+            case MOST_PLAYERS -> lobbyRepository.getPublicLobbyCodesByMostPlayersIndex(offset, limit);
+            case MOST_AVAILABLE -> lobbyRepository.getPublicLobbyCodesByMostAvailableIndex(offset, limit);
+        };
     }
 
     /**
@@ -412,7 +420,6 @@ public class LobbyQueryService {
      * Redis에 title 필드가 누락된 손상 데이터는 검색 조건이 있을 때 매칭하지 않는다.
      * 검색 조건이 없을 때는 상태/카테고리 등 다른 조건만 만족하면 통과할 수 있다.
      */
-
     private boolean matchesKeyword(
             LobbyRedisDto lobby,
             LobbySearchCondition condition

@@ -28,7 +28,7 @@ import java.util.Set;
  * 로비 Redis Repository 구현체
  *
  * [역할]
- * 이 클래스는 기존 LobbyRepository 인터페이스 계약을 유지하는 Facade
+ * 이 클래스는 기존 LobbyRepository 인터페이스 계약을 유지하는 Facade다.
  * Redis 접근 세부 책임은 역할별 하위 컴포넌트로 위임한다.
  *
  * [분리된 책임]
@@ -90,6 +90,46 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public List<LobbyRedisDto> getPublicLobbies() {
     return lobbyRedisQueryRepository.getPublicLobbies();
+  }
+
+  @Override
+  public boolean existsPublicLatestIndex() {
+    return lobbyRedisQueryRepository.existsPublicLatestIndex();
+  }
+
+  @Override
+  public boolean existsPublicMostPlayersIndex() {
+    return lobbyRedisQueryRepository.existsPublicMostPlayersIndex();
+  }
+
+  @Override
+  public boolean existsPublicMostAvailableIndex() {
+    return lobbyRedisQueryRepository.existsPublicMostAvailableIndex();
+  }
+
+  @Override
+  public List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit) {
+    return lobbyRedisQueryRepository.getPublicLobbyCodesByLatestIndex(offset, limit);
+  }
+
+  @Override
+  public List<String> getPublicLobbyCodesByMostPlayersIndex(long offset, int limit) {
+    return lobbyRedisQueryRepository.getPublicLobbyCodesByMostPlayersIndex(offset, limit);
+  }
+
+  @Override
+  public List<String> getPublicLobbyCodesByMostAvailableIndex(long offset, int limit) {
+    return lobbyRedisQueryRepository.getPublicLobbyCodesByMostAvailableIndex(offset, limit);
+  }
+
+  @Override
+  public List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes) {
+    return lobbyRedisQueryRepository.getPublicLobbiesByCodes(lobbyCodes);
+  }
+
+  @Override
+  public void removePublicLobbyIndexes(String lobbyCode) {
+    lobbyRedisQueryRepository.removePublicLobbyIndexes(lobbyCode);
   }
 
   @Override
@@ -308,25 +348,5 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public void incrementStartReconciliationMetric(String metricKey) {
     lobbyStartReconciliationRepository.incrementStartReconciliationMetric(metricKey);
-  }
-
-  @Override
-  public boolean existsPublicLatestIndex() {
-    return lobbyRedisQueryRepository.existsPublicLatestIndex();
-  }
-
-  @Override
-  public List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit) {
-    return lobbyRedisQueryRepository.getPublicLobbyCodesByLatestIndex(offset, limit);
-  }
-
-  @Override
-  public List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes) {
-    return lobbyRedisQueryRepository.getPublicLobbiesByCodes(lobbyCodes);
-  }
-
-  @Override
-  public void removePublicLobbyIndexes(String lobbyCode) {
-    lobbyRedisQueryRepository.removePublicLobbyIndexes(lobbyCode);
   }
 }

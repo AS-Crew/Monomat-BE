@@ -405,6 +405,17 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
     /**
      * enter_lobby.lua를 1회 실행한다.
+     *
+     * [KEYS 계약]
+     * KEYS[1] = lobby:{code}
+     * KEYS[2] = lobby:{code}:participants
+     * KEYS[3] = lobby:{code}:order
+     * KEYS[4] = lobby:{code}:kicked
+     * KEYS[5] = ws:connection:{wsSessionId}
+     * KEYS[6] = lobby:{code}:user_session:{userIdentifier}
+     * KEYS[7] = lobby:{code}:user_session_seq:{userIdentifier}
+     * KEYS[8] = lobby:public:most_players
+     * KEYS[9] = lobby:public:most_available
      */
     private String executeEnterLobbyScript(
             String lobbyCode,
@@ -419,7 +430,9 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                 RedisKeys.lobbyKickedKey(lobbyCode),
                 RedisKeys.wsConnectionKey(wsSessionId),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier),
-                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, userIdentifier)
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, userIdentifier),
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
         );
 
         return stringRedisTemplate.execute(

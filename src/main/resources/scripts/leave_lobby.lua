@@ -12,12 +12,16 @@ local orderKey = KEYS[3]                -- 로비 입장 순서 (List)
 local kickedKey = KEYS[4]               -- 로비 강퇴 명단 (Set)
 local publicListKey = KEYS[5]           -- 전역 공개 로비 목록 (Set)
 local publicLatestIndexKey = KEYS[6]    -- 공개 로비 최신순 정렬 인덱스 (ZSET)
+local publicMostPlayersIndexKey = KEYS[7]     -- 공개 로비 현재 인원 많은 순 정렬 인덱스 (ZSET)
+local publicMostAvailableIndexKey = KEYS[8]   -- 공개 로비 빈자리 많은 순 정렬 인덱스 (ZSET)
 
 local userId = ARGV[1]                  -- 퇴장하려는 유저 ID
-local lobbyCode = ARGV[2]               -- 퇴장하려는 로비 코드
+local lobbyCode = ARGV[2]                   -- 퇴장하려는 로비 코드
 
 -- Redis Hash 필드명
 local FIELD_CURRENT_PLAYERS = 'current_players'
+local FIELD_MAX_PLAYERS = 'max_players'
+local FIELD_IS_PRIVATE = 'is_private'
 
 -- 1. 참여자 명단(Set)과 입장 순서(List)에서 해당 유저를 즉시 제거
 redis.call('SREM', participantsKey, userId)
@@ -33,6 +37,8 @@ if remainCount == 0 then
     redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
     redis.call('SREM', publicListKey, lobbyCode)
     redis.call('ZREM', publicLatestIndexKey, lobbyCode)
+    redis.call('ZREM', publicMostPlayersIndexKey, lobbyCode)
+    redis.call('ZREM', publicMostAvailableIndexKey, lobbyCode)
     return "DESTROYED"
 else
     -- [Case B: 인원이 남아있는 경우 -> 방장 위임 여부 확인]
@@ -41,6 +47,25 @@ else
     redis.call('HSET', lobbyKey, FIELD_CURRENT_PLAYERS, tostring(remainCount))
 
     local currentHost = redis.call('HGET', lobbyKey, 'host_user_id')
+
+        -- 공개 로비인 경우 인원 기준 정렬 인덱스를 함께 갱신한다.
+        -- 비공개 로비를 공개 ZSET에 넣으면 목록 노출 버그가 되므로 is_private=false일 때만 갱신한다.
+        local isPrivate = redis.call('HGET', lobbyKey, FIELD_IS_PRIVATE)
+
+        if isPrivate == 'false' then
+            local maxPlayersForIndex = tonumber(redis.call('HGET', lobbyKey, FIELD_MAX_PLAYERS))
+
+            if maxPlayersForIndex ~= nil and maxPlayersForIndex > 0 then
+                local availableSeats = maxPlayersForIndex - remainCount
+
+                if availableSeats < 0 then
+                    availableSeats = 0
+                end
+
+                redis.call('ZADD', publicMostPlayersIndexKey, remainCount, lobbyCode)
+                redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
+            end
+        end
 
     if currentHost == userId then
         local nextHost = redis.call('LINDEX', orderKey, 0)

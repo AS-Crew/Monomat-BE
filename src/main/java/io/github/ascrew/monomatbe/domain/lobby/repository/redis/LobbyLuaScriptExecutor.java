@@ -60,6 +60,8 @@ public class LobbyLuaScriptExecutor {
      * KEYS[2] = lobby:{code}
      * KEYS[3] = lobby:public
      * KEYS[4] = lobby:public:latest
+     * KEYS[5] = lobby:public:most_players
+     * KEYS[6] = lobby:public:most_available
      *
      * [ARGV 계약]
      * ARGV[1]  = host userIdentifier
@@ -85,7 +87,9 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.lobbyCodeLockKey(inviteCode),
                 RedisKeys.lobbyKey(inviteCode),
                 RedisKeys.LOBBY_PUBLIC,
-                RedisKeys.LOBBY_PUBLIC_LATEST
+                RedisKeys.LOBBY_PUBLIC_LATEST,
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
         );
 
         String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
@@ -119,6 +123,8 @@ public class LobbyLuaScriptExecutor {
      * KEYS[4] = lobby:{code}:kicked
      * KEYS[5] = lobby:public
      * KEYS[6] = lobby:public:latest
+     * KEYS[7] = lobby:public:most_players
+     * KEYS[8] = lobby:public:most_available
      *
      * [ARGV 계약]
      * ARGV[1] = userIdentifier
@@ -134,7 +140,9 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.lobbyOrderKey(code),
                 RedisKeys.lobbyKickedKey(code),
                 RedisKeys.LOBBY_PUBLIC,
-                RedisKeys.LOBBY_PUBLIC_LATEST
+                RedisKeys.LOBBY_PUBLIC_LATEST,
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
         );
 
         return redisTemplate.execute(
@@ -155,10 +163,13 @@ public class LobbyLuaScriptExecutor {
      * KEYS[4] = lobby:{code}:kicked
      * KEYS[5] = lobby:{code}:user_session:{targetUserIdentifier}
      * KEYS[6] = lobby:{code}:user_session_seq:{targetUserIdentifier}
+     * KEYS[7] = lobby:public:most_players
+     * KEYS[8] = lobby:public:most_available
      *
      * [ARGV 계약]
      * ARGV[1] = requesterIdentifier
      * ARGV[2] = targetUserIdentifier
+     * ARGV[3] = lobbyCode
      *
      * @return kick_lobby.lua 반환 문자열
      */
@@ -173,14 +184,17 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.lobbyOrderKey(code),
                 RedisKeys.lobbyKickedKey(code),
                 RedisKeys.lobbyUserSessionKey(code, targetUserIdentifier),
-                RedisKeys.lobbyUserSessionSequenceKey(code, targetUserIdentifier)
+                RedisKeys.lobbyUserSessionSequenceKey(code, targetUserIdentifier),
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
         );
 
         return redisTemplate.execute(
                 kickLobbyScript,
                 keys,
                 requesterIdentifier,
-                targetUserIdentifier
+                targetUserIdentifier,
+                code
         );
     }
 

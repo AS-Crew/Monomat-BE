@@ -17,6 +17,8 @@ local lockKey               = KEYS[1]   -- lobby:code:lock:{code}
 local lobbyKey              = KEYS[2]   -- lobby:{code}
 local publicListKey         = KEYS[3]   -- lobby:public
 local publicLatestIndexKey  = KEYS[4]   -- lobby:public:latest
+local publicMostPlayersIndexKey   = KEYS[5]   -- lobby:public:most_players
+local publicMostAvailableIndexKey   = KEYS[6] -- lobby:public:most_available
 
 local userIdentifier  = ARGV[1]   -- 방장 식별자 (SETNX 선점자)
 local lockTtlMs       = ARGV[2]   -- 락 TTL (밀리초)
@@ -102,6 +104,13 @@ end
 if isPrivate == "false" then
     redis.call('SADD', publicListKey, inviteCode)
     redis.call('ZADD', publicLatestIndexKey, createdAtEpochMillis, inviteCode)
+
+    -- 생성 직후 실제 participants 등록은 WebSocket 구독 시점에 수행된다.
+    -- 따라서 생성 직후 current_players는 0이다.
+    redis.call('ZADD', publicMostPlayersIndexKey, 0, inviteCode)
+
+    -- 빈자리 수는 max_players - current_players 이므로 생성 직후에는 maxPlayers와 같다.
+    redis.call('ZADD', publicMostAvailableIndexKey, tonumber(maxPlayers), inviteCode)
 end
 
 return "OK"

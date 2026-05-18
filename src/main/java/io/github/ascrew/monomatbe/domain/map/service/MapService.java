@@ -47,6 +47,7 @@ public class MapService {
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final UserRepository userRepository;
     private final MapPublicationValidator publicationValidator;
+    private final MapCacheEvictor mapCacheEvictor;
     private final StringRedisTemplate redisTemplate;
     private final JsonMapper jsonMapper;
 
@@ -54,12 +55,14 @@ public class MapService {
             QuizMapJpaRepository quizMapJpaRepository,
             UserRepository userRepository,
             MapPublicationValidator publicationValidator,
+            MapCacheEvictor mapCacheEvictor,
             StringRedisTemplate redisTemplate,
             @Qualifier("cacheJsonMapper") JsonMapper jsonMapper
     ) {
         this.quizMapJpaRepository = quizMapJpaRepository;
         this.userRepository = userRepository;
         this.publicationValidator = publicationValidator;
+        this.mapCacheEvictor = mapCacheEvictor;
         this.redisTemplate = redisTemplate;
         this.jsonMapper = jsonMapper;
     }
@@ -181,7 +184,7 @@ public class MapService {
                 .pendingPublic(request.isPublic())
                 .build());
 
-        safeEvictMapCache(created.getId());
+        mapCacheEvictor.evictPublicMapCaches(created.getId());
 
         return toDetailResponse(created);
     }
@@ -206,7 +209,7 @@ public class MapService {
 
         applyPublicationChange(quizMap, request.isPublic());
 
-        safeEvictMapCache(quizMap.getId());
+        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
 
         return toDetailResponse(quizMap);
     }
@@ -235,7 +238,7 @@ public class MapService {
         validateOwnership(quizMap, principal);
 
         quizMap.softDelete();
-        safeEvictMapCache(quizMap.getId());
+        mapCacheEvictor.evictPublicMapCaches(quizMap.getId());
     }
 
     private void validatePrincipal(CustomPrincipal principal) {
@@ -264,26 +267,6 @@ public class MapService {
                     HttpStatus.FORBIDDEN,
                     ERROR_MAP_FORBIDDEN
             );
-        }
-    }
-
-    private void safeEvictMapCache(Long mapId) {
-        try {
-            redisTemplate.opsForValue().increment(RedisKeys.mapPublicListVersionKey());
-        } catch (Exception e) {
-            log.warn(
-                    "공개 맵 목록 캐시 버전 무효화 실패 - key: {}",
-                    RedisKeys.mapPublicListVersionKey(),
-                    e
-            );
-        }
-
-        String detailKey = RedisKeys.mapPublicDetailKey(mapId);
-
-        try {
-            redisTemplate.delete(detailKey);
-        } catch (Exception e) {
-            log.warn("공개 맵 단건 캐시 무효화 실패 - key: {}", detailKey, e);
         }
     }
 

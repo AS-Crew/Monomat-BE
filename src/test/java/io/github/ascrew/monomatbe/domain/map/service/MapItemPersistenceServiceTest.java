@@ -221,6 +221,7 @@ class MapItemPersistenceServiceTest {
         when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(50L, 1L)).thenReturn(Optional.of(mapItem));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(0L);
         when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(0L);
+        when(publicationValidator.isPublishable(1L)).thenReturn(false);
 
         persistenceService.delete(1L, 50L, 10L);
 
@@ -254,11 +255,49 @@ class MapItemPersistenceServiceTest {
         when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(51L, 1L)).thenReturn(Optional.of(mapItem));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
         when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
+        when(publicationValidator.isPublishable(1L)).thenReturn(true);
 
         persistenceService.delete(1L, 51L, 10L);
 
         assertThat(quizMap.getIsPublic()).isTrue();
         assertThat(quizMap.getPendingPublic()).isFalse();
+    }
+
+    @Test
+    void delete_publicMapBecomesInvalidNotEmpty_autoFlipToPrivate() {
+        // 회귀 방어: numOfSong > 0 이어도 검증 미달이면 자동 비공개되어야 한다.
+        // (데이터 오염, 수동 DB 수정, 향후 부분 수정 API 도입 등으로 공개 맵이 무효 상태에 놓이는 케이스)
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        quizMap.markAsPublished();
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+
+        MapItem mapItem = MapItem.builder()
+                .id(60L)
+                .map(quizMap)
+                .orderNum(2)
+                .youtubeUrl("u")
+                .videoId("v")
+                .startTime(0)
+                .endTime(30)
+                .title("t")
+                .artist("a")
+                .thumbnailUrl("th")
+                .answer("정답")
+                .altAnswers(null)
+                .hint("ㅈㄷ")
+                .hintTime(15)
+                .isDeleted(false)
+                .build();
+        when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(60L, 1L)).thenReturn(Optional.of(mapItem));
+        when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
+        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
+        // 아이템이 남아있어도(numOfSong=1) 검증기가 실패를 알리면 자동 비공개되어야 한다.
+        when(publicationValidator.isPublishable(1L)).thenReturn(false);
+
+        persistenceService.delete(1L, 60L, 10L);
+
+        assertThat(quizMap.getIsPublic()).isFalse();
+        assertThat(quizMap.getPendingPublic()).isTrue();
     }
 
     private CreateMapItemRequest createRequest(int orderNum) {

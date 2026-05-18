@@ -132,22 +132,24 @@ public class MapItemPersistenceService {
         int totalPlayTime = sum == null ? 0 : Math.toIntExact(sum);
         quizMap.updateMetadata(numOfSong, totalPlayTime);
 
-        applyPublicationAutoFlip(quizMap, numOfSong);
+        applyPublicationAutoFlip(quizMap);
     }
 
     // 아이템 CRUD 후 공개 상태를 자동 조정한다.
-    //   - 아이템 0개 + isPublic=true: 무효한 상태이므로 자동 비공개. 의도(pendingPublic)는 보존해 재공개 가능.
+    //   - isPublic 상태에서 검증 미달(아이템 0개·시간 구간·정답 비어있음 등): 자동 비공개. 의도(pendingPublic)는 보존해 재공개 가능.
     //   - 비공개 + pendingPublic=true + 검증 통과: 사용자가 원래 의도한 공개로 자동 전환.
-    private void applyPublicationAutoFlip(QuizMap quizMap, int numOfSong) {
+    private void applyPublicationAutoFlip(QuizMap quizMap) {
         boolean isPublic = Boolean.TRUE.equals(quizMap.getIsPublic());
         boolean pendingPublic = Boolean.TRUE.equals(quizMap.getPendingPublic());
 
-        if (isPublic && numOfSong == 0) {
-            quizMap.markAsUnpublished(true);
+        if (isPublic) {
+            if (!publicationValidator.isPublishable(quizMap.getId())) {
+                quizMap.markAsUnpublished(true);
+            }
             return;
         }
 
-        if (!isPublic && pendingPublic && publicationValidator.isPublishable(quizMap.getId())) {
+        if (pendingPublic && publicationValidator.isPublishable(quizMap.getId())) {
             quizMap.markAsPublished();
         }
     }

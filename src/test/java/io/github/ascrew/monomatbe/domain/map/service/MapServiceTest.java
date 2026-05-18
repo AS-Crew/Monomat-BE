@@ -10,7 +10,6 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
-import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +42,8 @@ class MapServiceTest {
     @Mock
     private MapPublicationValidator publicationValidator;
     @Mock
+    private MapCacheEvictor mapCacheEvictor;
+    @Mock
     private StringRedisTemplate redisTemplate;
     @Mock
     private ValueOperations<String, String> valueOperations;
@@ -57,6 +58,7 @@ class MapServiceTest {
                 quizMapJpaRepository,
                 userRepository,
                 publicationValidator,
+                mapCacheEvictor,
                 redisTemplate,
                 jsonMapper
         );
@@ -112,8 +114,8 @@ class MapServiceTest {
         // 생성 시 아이템이 0이므로 공개 의도는 pendingPublic 으로 보존되고 isPublic 은 false 로 저장된다.
         assertThat(response.isPublic()).isFalse();
         assertThat(response.pendingPublic()).isTrue();
-        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
-        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(300L));    }
+        verify(mapCacheEvictor).evictPublicMapCaches(300L);
+    }
 
     @Test
     void updateMap_notOwner_forbidden() {
@@ -171,8 +173,8 @@ class MapServiceTest {
 
         mapService.updateMap(200L, request, ownerPrincipal);
 
-        verify(valueOperations).increment(RedisKeys.mapPublicListVersionKey());
-        verify(redisTemplate).delete(RedisKeys.mapPublicDetailKey(200L));    }
+        verify(mapCacheEvictor).evictPublicMapCaches(200L);
+    }
 
     @Test
     void updateMap_toPublic_withNoItems_throws409() {

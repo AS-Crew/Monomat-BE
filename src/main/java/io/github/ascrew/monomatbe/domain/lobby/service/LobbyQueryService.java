@@ -35,6 +35,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -69,6 +70,15 @@ public class LobbyQueryService {
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyCanStartPolicy lobbyCanStartPolicy;
+
+    /**
+     * ZSET 기반 페이징 중 stale index를 감안해 추가 스캔할 배수.
+     *
+     * Spring Context 밖에서 생성되는 단위 테스트에서는 @Value가 주입되지 않을 수 있다.
+     * 따라서 필드 기본값도 함께 지정해 테스트와 운영 기본 동작을 일치시킨다.
+     */
+    @Value("${monomat.lobby.public-index-query.scan-multiplier:5}")
+    private int publicIndexQueryScanMultiplier = 5;
 
     /**
      * 공개 로비 목록을 조회한다.
@@ -205,7 +215,8 @@ public class LobbyQueryService {
          * - size=20이면 targetItemCount=21
          * - 최대 105개까지 ZSET member를 훑음
          */
-        int maxScannedIndexCount = targetItemCount * 5;
+        int scanMultiplier = Math.max(1, publicIndexQueryScanMultiplier);
+        int maxScannedIndexCount = targetItemCount * scanMultiplier;
         int scannedIndexCount = 0;
 
         while (collectedItems.size() < targetItemCount && scannedIndexCount < maxScannedIndexCount) {
@@ -227,10 +238,10 @@ public class LobbyQueryService {
                 break;
             }
 
-            /**
+            /*
              * ZSET 경로에서는 Redis가 반환한 code 순서를 그대로 유지한다.
              *
-             * 이유 :
+             * 이유:
              * - Redis ZSET이 이미 score 기준 정렬을 수행한다.
              * - DTO 조회 후 Java comparator로 다시 정렬하면 Redis의 동점 member 순서와
              *   Service comparator의 동점 기준이 달라져 응답 순서가 흔들릴 수 있다.
@@ -245,6 +256,18 @@ public class LobbyQueryService {
 
             scanOffset += indexedLobbyCodes.size();
             scannedIndexCount += indexedLobbyCodes.size();
+        }
+
+        if (collectedItems.size() < targetItemCount && scannedIndexCount >= maxScannedIndexCount) {
+            log.warn(
+                    "공개 로비 ZSET 페이징 스캔 상한 도달 - sortType: {}, page: {}, size: {}, collected: {}, scanned: {}, scanMultiplier: {}",
+                    condition.sortType(),
+                    pageRequest.page(),
+                    pageRequest.size(),
+                    collectedItems.size(),
+                    scannedIndexCount,
+                    scanMultiplier
+            );
         }
 
         boolean hasNext = collectedItems.size() > requestedSize;

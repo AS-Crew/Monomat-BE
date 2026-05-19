@@ -86,16 +86,18 @@ local isPrivate = redis.call('HGET', lobbyKey, FIELD_IS_PRIVATE)
 if isPrivate == 'false' then
     local maxPlayersForIndex = tonumber(redis.call('HGET', lobbyKey, FIELD_MAX_PLAYERS))
 
-    if maxPlayersForIndex ~= nil and maxPlayersForIndex > 0 then
-        local availableSeats = maxPlayersForIndex - currentPlayers
-
-        if availableSeats < 0 then
-            availableSeats = 0
-        end
-
-        redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, lobbyCode)
-        redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
+    if maxPlayersForIndex == nil or maxPlayersForIndex <= 0 then
+        return "INVALID_LOBBY_CAPACITY"
     end
+
+    local availableSeats = maxPlayersForIndex - currentPlayers
+
+    if availableSeats < 0 then
+        availableSeats = 0
+    end
+
+    redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, lobbyCode)
+    redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
 end
 
 -- 7. 강퇴 대상 재입장 차단 등록

@@ -140,6 +140,21 @@ public class LobbyLuaResultMapper {
             return new KickLobbyResult.TargetNotParticipant(code, targetUserIdentifier);
         }
 
+        if (RESULT_INVALID_LOBBY_CAPACITY.equals(result)) {
+            log.error(
+                    "{} kick_lobby.lua Redis 로비 capacity 필드 손상 감지 - lobbyCode: {}, requester: {}, target: {}, result: {}",
+                    LOG_MONITORING_REQUIRED,
+                    code,
+                    requesterIdentifier,
+                    targetUserIdentifier,
+                    result
+            );
+
+            return new KickLobbyResult.Error(
+                    "Redis 로비 capacity 필드가 유효하지 않습니다. lobbyCode=" + code
+            );
+        }
+
         return new KickLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
     }
 

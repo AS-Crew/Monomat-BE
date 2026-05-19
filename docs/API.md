@@ -470,8 +470,11 @@ FINISHED 상태 로비는 목록에서 제외됩니다.
 | 값                | 설명                    | Redis 인덱스                     |
 | ---------------- | --------------------- | ----------------------------- |
 | `latest`         | 최신 생성 로비 순            | `lobby:public:latest`         |
-| `most_players`   | 현재 인원이 많은 순. 동률이면 최신순 | `lobby:public:most_players`   |
-| `most_available` | 빈자리가 많은 순. 동률이면 최신순   | `lobby:public:most_available` |
+| `most_players` | 현재 인원이 많은 순. 동률은 Redis ZSET member 순서 기준 | `lobby:public:most_players` |
+| `most_available` | 빈자리가 많은 순. 동률은 Redis ZSET member 순서 기준 | `lobby:public:most_available` |
+
+> `most_players`, `most_available`는 Redis ZSET score 기준으로 정렬됩니다.  
+> 같은 score를 가진 로비 간 최신순 보장은 하지 않습니다. 동률 최신순 보장이 필요하면 복합 score 또는 별도 인덱스 설계가 필요합니다.
 
 **Redis 정렬 인덱스 사용 조건**
 

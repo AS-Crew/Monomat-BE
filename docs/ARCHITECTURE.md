@@ -339,11 +339,26 @@ local createdAtEpochMillis = redisTime[1] * 1000 + math.floor(redisTime[2] / 100
 | `is_private`              | 비공개 여부. 공개 로비 목록은 `false`만 노출                |
 | `max_players`             | 최대 참여 인원                                     |
 
-**Redis 정합성 방어**
+### Redis 정합성 방어
 
 공개 로비 인덱스에는 남아 있지만 `lobby:{code}` Hash가 TTL 만료, 수동 삭제, 과거 버전 로직 등으로 사라질 수 있습니다.
 
-이 경우 `LobbyRedisQueryRepository`는 해당 code를 응답에서 제외하고 아래 인덱스에서 제거합니다.
+이 경우 공개 로비 목록 조회 경로에서는 해당 code를 응답에서 제외만 합니다.  
+조회 요청 중 즉시 인덱스를 삭제하지 않습니다.
+
+인덱스 정리는 `LobbyPublicIndexCleanupScheduler`가 주기적으로 수행합니다.
+
+```text
+LobbyPublicIndexCleanupScheduler
+    │ fixedDelay 기반 주기 실행
+    ▼
+lobby:public Set에서 일부 code 샘플 조회
+    ▼
+각 code에 대해 lobby:{code} Hash 존재 여부 확인
+    ▼
+Hash가 없으면 아래 공개 인덱스에서 제거
+```
+정리 대상은 다음과 같습니다.
 
 ```
 lobby:public
@@ -352,7 +367,16 @@ lobby:public:most_players
 lobby:public:most_available
 ```
 
-정렬 인덱스 기반 조회 중 stale code가 섞이면 `LobbyQueryService`는 최대 3회까지 추가 범위를 조회하여 요청한 page size를 최대한 채우려고 시도합니다.
+이 구조는 조회 경로와 정리 경로를 분리하기 위한 설계입니다.
+
+| 구분                                                    | 책임                                      |
+| ----------------------------------------------------- | --------------------------------------- |
+| `LobbyRedisQueryRepository#getPublicLobbiesByCodes()` | stale code를 응답에서 제외                     |
+| `LobbyPublicIndexCleanupScheduler`                    | stale code를 public Set/ZSET 인덱스에서 배치 정리 |
+| `removePublicLobbyIndexes()`                          | 보정/정리 경로에서 특정 lobbyCode를 공개 인덱스에서 제거    |
+
+정렬 인덱스 기반 조회 중 stale code가 섞이면 `LobbyQueryService`는 요청한 page size를 최대한 채우기 위해 추가 범위를 스캔합니다.
+스캔 상한은 `targetItemCount * 5` 기준으로 제한하여 stale index가 누적된 상황에서도 무한 조회를 방지합니다.
 
 ---
 

@@ -20,19 +20,19 @@
 --
 -- [이미 참여 중인 유저 처리]
 -- 재접속 (ALREADY_JOINED, SESSION_REPLACED)인 경우에는 인원 초과 검증을 건너뛴다.
--- 이미 participants Set에 존재하므로 SCARD가 증가하지 않기 때문
+-- 이미 participants Set에 존재하므로 SCARD가 증가하지 않기 때문이다.
 --
 -- [동일 userIdentifier 다중 세션 정책]
 -- 같은 userIdentifier가 같은 로비에 다시 입장하면 sessionSequence가 더 큰 세션을 현재 유효 세션으로 본다.
 -- ============================================================================
 
-local lobbyKey                  = KEYS[1] -- lobby:{code}
-local participantsKey           = KEYS[2] -- lobby:{code}:participants
-local orderKey                  = KEYS[3] -- lobby:{code}:order
-local kickedKey                 = KEYS[4] -- lobby:{code}:kicked
-local wsConnectionKey           = KEYS[5] -- ws:connection:{wsSessionId}
-local lobbyUserSessionKey       = KEYS[6] -- lobby:{code}:user_session:{userIdentifier}
-local lobbyUserSessionSeqKey    = KEYS[7] -- lobby:{code}:user_session_seq:{userIdentifier}
+local lobbyKey                      = KEYS[1] -- lobby:{code}
+local participantsKey               = KEYS[2] -- lobby:{code}:participants
+local orderKey                      = KEYS[3] -- lobby:{code}:order
+local kickedKey                     = KEYS[4] -- lobby:{code}:kicked
+local wsConnectionKey               = KEYS[5] -- ws:connection:{wsSessionId}
+local lobbyUserSessionKey           = KEYS[6] -- lobby:{code}:user_session:{userIdentifier}
+local lobbyUserSessionSeqKey        = KEYS[7] -- lobby:{code}:user_session_seq:{userIdentifier}
 local publicMostPlayersIndexKey     = KEYS[8] -- lobby:public:most_players
 local publicMostAvailableIndexKey   = KEYS[9] -- lobby:public:most_available
 
@@ -94,19 +94,24 @@ if previousSequence ~= false and tonumber(previousSequence) > sessionSequence th
     return "STALE_SESSION:" .. currentWsSessionId
 end
 
-
 -- 7. 이미 참여 중인 유저인지 먼저 확인한다.
 --    재접속(SESSION_REPLACED, ALREADY_JOINED)인 경우에는 인원 초과 검증을 건너뛴다.
 --    participants Set에 이미 존재하므로 SADD 결과가 0이 되어 SCARD가 증가하지 않기 때문이다.
 local alreadyInLobby = redis.call('SISMEMBER', participantsKey, userIdentifier)
+
+-- 신규 입장자일 때만 max_players를 검증한다.
+-- 이미 참여 중인 유저의 재접속은 participants 수를 증가시키지 않으므로 capacity 검증 대상이 아니다.
+local maxPlayers = nil
 
 -- 8. 신규 입장자에 한해서만 최대 인원 초과를 검증한다.
 --    [Race Condition 방어]
 --    REST API의 인원 검증과 달리, SADD 직전에 검증하므로 원자적으로 처리된다.
 if alreadyInLobby == 0 then
     local currentCount = redis.call('SCARD', participantsKey)
-    local maxPlayers   = tonumber(redis.call('HGET', lobbyKey, 'max_players'))
+    maxPlayers = tonumber(redis.call('HGET', lobbyKey, FIELD_MAX_PLAYERS))
 
+    -- max_players가 없거나 유효하지 않으면 Redis 로비 데이터 손상으로 본다.
+    -- 이 경우 participants 변경 전에 즉시 실패시켜 current_players/ZSET 불일치를 만들지 않는다.
     if maxPlayers == nil or maxPlayers <= 0 then
         return "INVALID_LOBBY_CAPACITY"
     end
@@ -132,18 +137,16 @@ if added == 1 then
     local isPrivate = redis.call('HGET', lobbyKey, FIELD_IS_PRIVATE)
 
     if isPrivate == 'false' then
-        local maxPlayersForIndex = tonumber(redis.call('HGET', lobbyKey, FIELD_MAX_PLAYERS))
+        -- added == 1인 경우는 신규 입장자이므로 위 capacity 검증에서 maxPlayers가 반드시 유효해야 한다.
+        -- 여기서 Redis를 다시 읽고 조용히 skip하지 않는다. skip은 current_players와 ZSET score 불일치를 만든다.
+        local availableSeats = maxPlayers - currentPlayers
 
-        if maxPlayersForIndex ~= nil and maxPlayersForIndex > 0 then
-            local availableSeats = maxPlayersForIndex - currentPlayers
-
-            if availableSeats < 0 then
-                availableSeats = 0
-            end
-
-            redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, lobbyCode)
-            redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
+        if availableSeats < 0 then
+            availableSeats = 0
         end
+
+        redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, lobbyCode)
+        redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
     end
 end
 
@@ -155,7 +158,7 @@ redis.call('HSET', wsConnectionKey,
 redis.call('PEXPIRE', wsConnectionKey, connectionTtlMs)
 
 -- 12. userIdentifier 기준 현재 유효 세션을 최신 wsSessionId로 갱신한다.
-redis.call('SET', lobbyUserSessionKey,    wsSessionId,                 'PX', connectionTtlMs)
+redis.call('SET', lobbyUserSessionKey,    wsSessionId,                'PX', connectionTtlMs)
 redis.call('SET', lobbyUserSessionSeqKey, tostring(sessionSequence),  'PX', connectionTtlMs)
 
 -- 13. 반환값 결정

@@ -90,7 +90,7 @@ public class LobbyLuaResultMapper {
 
         return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
     }
-    
+
     /**
      * kick_lobby.lua 반환 문자열을 KickLobbyResult로 변환한다.
      *

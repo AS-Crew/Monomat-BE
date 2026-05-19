@@ -349,4 +349,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   public void incrementStartReconciliationMetric(String metricKey) {
     lobbyStartReconciliationRepository.incrementStartReconciliationMetric(metricKey);
   }
+
+  @Override
+  public List<String> getPublicLobbyCodesForCleanup(int limit) {
+    return lobbyRedisQueryRepository.getPublicLobbyCodesForCleanup(limit);
+  }
 }

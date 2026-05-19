@@ -145,6 +145,18 @@ public interface LobbyRepository {
   List<LobbyRedisDto> getPublicLobbies();
 
   /**
+   * 공개 로비 stale index 정리용으로 lobby:public Set의 일부 로비 코드를 조회한다.
+   *
+   * [사용 목적]
+   * 조회 API 경로에서 stale index를 즉시 삭제하지 않고,
+   * 스케줄러가 제한된 개수만 점진적으로 정리하기 위해 사용한다.
+   *
+   * @param limit 조회할 최대 code 수
+   * @return 정리 후보 로비 코드 목록
+   */
+  List<String> getPublicLobbyCodesForCleanup(int limit);
+
+  /**
    * 공개 로비 최신순 ZSET 인덱스 존재 여부를 확인한다.
    *
    * @return lobby:public:latest 존재 여부

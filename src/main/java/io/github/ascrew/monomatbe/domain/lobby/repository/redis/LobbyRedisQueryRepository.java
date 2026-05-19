@@ -175,6 +175,34 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
+     * 공개 로비 stale index 정리용 후보 코드를 조회한다.
+     *
+     * [조회 기준]
+     * lobby:public Set을 기준으로 일부 code만 가져온다.
+     *
+     * [주의]
+     * Set은 순서를 보장하지 않으므로 이 메서드는 정렬 용도가 아니다.
+     * 배치 스캐너가 한 번에 처리할 후보 수를 제한하기 위한 용도다.
+     *
+     * @param limit 조회할 최대 code 수
+     * @return 정리 후보 code 목록
+     */
+    public List<String> getPublicLobbyCodesForCleanup(int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+
+        Set<String> codes = redisTemplate.opsForSet()
+                .distinctRandomMembers(RedisKeys.LOBBY_PUBLIC, limit);
+
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+
+        return new ArrayList<>(codes);
+    }
+
+    /**
      * 공개 로비 최신순 ZSET 인덱스 존재 여부를 확인한다.
      *
      * @return lobby:public:latest 존재 여부
@@ -336,15 +364,17 @@ public class LobbyRedisQueryRepository {
                 /*
                  * 인덱스에는 남아 있지만 lobby:{code} Hash가 없는 상태다.
                  *
-                 * 가능한 원인:
-                 * - TTL 만료
-                 * - Redis 수동 삭제
-                 * - 과거 버전의 폭파 로직에서 ZSET 정리 누락
+                 * 조회 경로에서는 stale code를 응답에서 제외만 한다.
+                 * 인덱스 삭제는 별도 스케줄러가 수행한다.
                  *
-                 * 이 코드를 계속 인덱스에 남겨두면 이후 정렬 인덱스 조회마다
-                 * 비어 있는 로비를 반복 조회하게 되므로 즉시 공개 인덱스에서 제거한다.
+                 * 이유:
+                 * - 목록 조회 요청이 Redis 인덱스를 직접 변경하면 읽기 경로와 정리 책임이 섞인다.
+                 * - 동시 요청 중 같은 code를 참조하는 다른 요청과 타이밍이 겹치면 일시적인 목록 누락/순서 흔들림을 유발할 수 있다.
                  */
-                removePublicLobbyIndexes(code);
+                log.warn(
+                        "공개 로비 stale index 감지 - 배치 스캐너에서 정리 예정. lobbyCode: {}",
+                        code
+                );
                 continue;
             }
 
@@ -398,12 +428,12 @@ public class LobbyRedisQueryRepository {
      * - lobby:public:most_available ZSET
      *
      * [사용 상황]
-     * Redis 인덱스에는 로비 코드가 남아 있지만 lobby:{code} Hash가 없는 경우,
-     * 해당 코드는 더 이상 조회 가능한 로비가 아니므로 공개 목록 인덱스에서 제거한다.
+     * - stale index 배치 스캐너가 lobby:{code} Hash가 없는 code를 정리할 때
+     * - 운영성 보정 로직에서 명시적으로 공개 인덱스를 제거할 때
      *
      * [주의]
-     * 이 메서드는 조회 중 발견된 stale index를 방어적으로 정리하는 용도다.
      * 정상 로비 삭제/폭파 경로에서는 Lua 스크립트가 원자적으로 SREM/ZREM을 수행해야 한다.
+     * 이 메서드는 정상 상태 전이 경로가 아니라 보정/정리 경로에서만 사용한다.
      */
     public void removePublicLobbyIndexes(String lobbyCode) {
         if (lobbyCode == null || lobbyCode.isBlank()) {

@@ -28,6 +28,7 @@ public class LobbyLuaResultMapper {
     private static final String RESULT_DESTROYED = "DESTROYED";
     private static final String RESULT_LEFT = "LEFT";
     private static final String RESULT_DELEGATED_PREFIX = "DELEGATED:";
+    private static final String RESULT_INVALID_LOBBY_CAPACITY = "INVALID_LOBBY_CAPACITY";
 
     // =========================================================
     // kick_lobby.lua 반환값 상수
@@ -73,9 +74,23 @@ public class LobbyLuaResultMapper {
             return new LeaveLobbyResult.Delegated(code, newHostId);
         }
 
+        if (RESULT_INVALID_LOBBY_CAPACITY.equals(result)) {
+            log.error(
+                    "{} leave_lobby.lua Redis 로비 capacity 필드 손상 감지 - lobbyCode: {}, userId: {}, result: {}",
+                    LOG_MONITORING_REQUIRED,
+                    code,
+                    userId,
+                    result
+            );
+
+            return new LeaveLobbyResult.Error(
+                    "Redis 로비 capacity 필드가 유효하지 않습니다. lobbyCode=" + code
+            );
+        }
+
         return new LeaveLobbyResult.Error("알 수 없는 Lua 반환값: " + result);
     }
-
+    
     /**
      * kick_lobby.lua 반환 문자열을 KickLobbyResult로 변환한다.
      *

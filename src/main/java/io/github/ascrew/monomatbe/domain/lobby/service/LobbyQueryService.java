@@ -227,11 +227,18 @@ public class LobbyQueryService {
                 break;
             }
 
+            /**
+             * ZSET 경로에서는 Redis가 반환한 code 순서를 그대로 유지한다.
+             *
+             * 이유 :
+             * - Redis ZSET이 이미 score 기준 정렬을 수행한다.
+             * - DTO 조회 후 Java comparator로 다시 정렬하면 Redis의 동점 member 순서와
+             *   Service comparator의 동점 기준이 달라져 응답 순서가 흔들릴 수 있다.
+             */
             List<LobbyRedisDto> fetchedItems = lobbyRepository.getPublicLobbiesByCodes(indexedLobbyCodes).stream()
                     .filter(this::isPublicLobby)
                     .filter(this::isVisibleLobby)
                     .filter(this::hasValidCapacity)
-                    .sorted(lobbyComparator(condition.sortType()))
                     .toList();
 
             collectedItems.addAll(fetchedItems);

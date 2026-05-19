@@ -215,11 +215,15 @@ public class MapService {
     }
 
     // 명시적인 공개 상태 변경 요청을 처리한다.
-    // 공개 전환은 검증을 통과해야만 허용되며, 실패 시 409 Conflict 로 거부한다.
+    // 비공개 → 공개 전이일 때만 검증한다. 이미 공개 상태인 맵의 메타데이터 수정에서
+    // 재검증을 강제하면 데이터 오염 시 단순 수정도 409로 막혀 복구 경로가 좁아진다.
+    // 공개 상태의 무결성은 MapItemPersistenceService.applyPublicationAutoFlip 가 보장한다.
     private void applyPublicationChange(QuizMap quizMap, boolean requestedPublic) {
         if (requestedPublic) {
-            publicationValidator.requirePublishable(quizMap.getId());
-            quizMap.markAsPublished();
+            if (!Boolean.TRUE.equals(quizMap.getIsPublic())) {
+                publicationValidator.requirePublishable(quizMap.getId());
+                quizMap.markAsPublished();
+            }
         } else {
             quizMap.markAsUnpublished(false);
         }

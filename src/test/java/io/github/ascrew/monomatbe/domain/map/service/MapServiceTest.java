@@ -281,4 +281,78 @@ class MapServiceTest {
         assertThat(quizMap.getIsPublic()).isFalse();
         assertThat(quizMap.getPendingPublic()).isFalse();
     }
+
+    @Test
+    void updateMap_alreadyPublic_metadataOnly_doesNotCallValidator() {
+        // 공개 → 공개 (메타데이터 수정만) 케이스: 검증을 다시 호출해선 안 된다.
+        // 공개 상태의 무결성은 자동 토글이 보장하므로 단순 수정은 재검증 없이 통과.
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(700L)
+                .owner(owner)
+                .title("old")
+                .description("old")
+                .category(MapCategory.POP)
+                .isPublic(true)
+                .pendingPublic(false)
+                .numOfSong(1)
+                .totalPlayTime(30)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(700L)).thenReturn(Optional.of(quizMap));
+
+        UpdateMapRequest request = new UpdateMapRequest("new title", "new desc", MapCategory.KPOP, true);
+        CustomPrincipal ownerPrincipal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        var response = mapService.updateMap(700L, request, ownerPrincipal);
+
+        verify(publicationValidator, never()).requirePublishable(any());
+        assertThat(quizMap.getIsPublic()).isTrue();
+        assertThat(response.title()).isEqualTo("new title");
+        assertThat(response.isPublic()).isTrue();
+    }
+
+    @Test
+    void updateMap_alreadyPublicWithInvalidData_metadataUpdateSucceeds() {
+        // 데이터 오염으로 isPublishable=false 인 공개 맵이어도, 단순 메타데이터 수정은
+        // 검증 경로를 타지 않으므로 409 로 막히지 않고 통과해야 한다 (복구 경로 보장).
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(800L)
+                .owner(owner)
+                .title("old")
+                .description("old")
+                .category(MapCategory.POP)
+                .isPublic(true)
+                .pendingPublic(false)
+                .numOfSong(1)
+                .totalPlayTime(30)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(800L)).thenReturn(Optional.of(quizMap));
+        // 검증기는 throw 하도록 stub 해두지만, 공개→공개 케이스라 실제로는 호출되지 않아야 한다.
+        lenient().doThrow(new ResponseStatusException(HttpStatus.CONFLICT, "오염 데이터"))
+                .when(publicationValidator).requirePublishable(800L);
+
+        UpdateMapRequest request = new UpdateMapRequest("fixed title", "fixed desc", MapCategory.KPOP, true);
+        CustomPrincipal ownerPrincipal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        var response = mapService.updateMap(800L, request, ownerPrincipal);
+
+        verify(publicationValidator, never()).requirePublishable(any());
+        assertThat(response.title()).isEqualTo("fixed title");
+        assertThat(response.isPublic()).isTrue();
+    }
 }

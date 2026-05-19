@@ -11,8 +11,12 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.ZSetOperations;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -178,11 +182,20 @@ public class LobbyRedisQueryRepository {
      * 공개 로비 stale index 정리용 후보 코드를 조회한다.
      *
      * [조회 기준]
-     * lobby:public Set을 기준으로 일부 code만 가져온다.
+     * 다음 공개 로비 인덱스 전체에서 일부 후보를 수집한다.
+     *
+     * - lobby:public
+     * - lobby:public:latest
+     * - lobby:public:most_players
+     * - lobby:public:most_available
+     *
+     * [필요 이유]
+     * stale code가 lobby:public Set에는 없고 ZSET에만 남는 경우가 있다.
+     * 이때 lobby:public Set만 cleanup 후보로 삼으면 ZSET-only stale code가 영구적으로 정리되지 않는다.
      *
      * [주의]
-     * Set은 순서를 보장하지 않으므로 이 메서드는 정렬 용도가 아니다.
-     * 배치 스캐너가 한 번에 처리할 후보 수를 제한하기 위한 용도다.
+     * 이 메서드는 정렬 용도가 아니다.
+     * 배치 스캐너가 stale 후보를 점진적으로 수집하기 위한 용도다.
      *
      * @param limit 조회할 최대 code 수
      * @return 정리 후보 code 목록
@@ -192,14 +205,141 @@ public class LobbyRedisQueryRepository {
             return List.of();
         }
 
-        Set<String> codes = redisTemplate.opsForSet()
-                .distinctRandomMembers(RedisKeys.LOBBY_PUBLIC, limit);
+        /*
+         * LinkedHashSet을 사용해 중복을 제거하면서 수집 순서를 유지한다.
+         * 같은 lobbyCode가 Set과 여러 ZSET에 동시에 존재할 수 있으므로 중복 제거가 필요하다.
+         */
+        Set<String> candidates = new LinkedHashSet<>();
 
-        if (codes == null || codes.isEmpty()) {
+        addPublicSetCleanupCandidates(candidates, limit);
+
+        addZSetCleanupCandidates(
+                candidates,
+                RedisKeys.LOBBY_PUBLIC_LATEST,
+                limit
+        );
+
+        addZSetCleanupCandidates(
+                candidates,
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                limit
+        );
+
+        addZSetCleanupCandidates(
+                candidates,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
+                limit
+        );
+
+        if (candidates.isEmpty()) {
             return List.of();
         }
 
-        return new ArrayList<>(codes);
+        return candidates.stream()
+                .limit(limit)
+                .toList();
+    }
+
+    /**
+     * lobby:public Set에서 cleanup 후보를 수집한다.
+     *
+     * [정책]
+     * Set은 순서가 없으므로 distinctRandomMembers()로 일부 후보만 가져온다.
+     * 이 메서드는 정리 후보 수집용이며, 목록 조회 정렬에는 사용하지 않는다.
+     */
+    private void addPublicSetCleanupCandidates(
+            Set<String> candidates,
+            int limit
+    ) {
+        if (candidates.size() >= limit) {
+            return;
+        }
+
+        long remainingLimit = limit - candidates.size();
+
+        Set<String> codes = redisTemplate.opsForSet()
+                .distinctRandomMembers(RedisKeys.LOBBY_PUBLIC, remainingLimit);
+
+        if (codes == null || codes.isEmpty()) {
+            return;
+        }
+
+        for (String code : codes) {
+            addCleanupCandidate(candidates, code, limit);
+        }
+    }
+
+    /**
+     * 공개 로비 ZSET 인덱스에서 cleanup 후보를 수집한다.
+     *
+     * [ZSCAN 사용 이유]
+     * ZRANGE 0..N 방식은 항상 앞쪽 score 구간만 보게 된다.
+     * stale code가 뒤쪽에 몰려 있으면 영구적으로 발견하지 못할 수 있다.
+     *
+     * ZSCAN은 전체 ZSET을 점진적으로 훑을 수 있으므로,
+     * ZSET-only stale code를 장기적으로 정리하는 데 적합하다.
+     *
+     * [주의]
+     * ScanOptions.count()는 정확한 개수가 아니라 Redis에 전달하는 hint다.
+     * 따라서 최종 후보 개수 제한은 candidates.size()와 limit으로 한 번 더 제어한다.
+     */
+    private void addZSetCleanupCandidates(
+            Set<String> candidates,
+            String zsetKey,
+            int limit
+    ) {
+        if (candidates.size() >= limit) {
+            return;
+        }
+
+        ScanOptions scanOptions = ScanOptions.scanOptions()
+                .count(limit)
+                .build();
+
+        try (Cursor<ZSetOperations.TypedTuple<String>> cursor =
+                     redisTemplate.opsForZSet().scan(zsetKey, scanOptions)) {
+
+            while (cursor.hasNext() && candidates.size() < limit) {
+                ZSetOperations.TypedTuple<String> tuple = cursor.next();
+
+                if (tuple == null) {
+                    continue;
+                }
+
+                addCleanupCandidate(candidates, tuple.getValue(), limit);
+            }
+
+        } catch (Exception e) {
+            log.warn(
+                    "공개 로비 ZSET cleanup 후보 스캔 실패 - zsetKey: {}",
+                    zsetKey,
+                    e
+            );
+        }
+    }
+
+    /**
+     * cleanup 후보 code를 안전하게 추가한다.
+     *
+     * [방어 조건]
+     * - null 제외
+     * - blank 제외
+     * - limit 초과 방지
+     */
+    private void addCleanupCandidate(
+            Set<String> candidates,
+            String code,
+            int limit
+    ) {
+        if (candidates.size() >= limit) {
+            return;
+        }
+
+        if (code == null || code.isBlank()) {
+            return;
+        }
+
+        candidates.add(code);
     }
 
     /**

@@ -11,8 +11,12 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.ZSetOperations;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +32,7 @@ import java.util.Set;
  * - 입장 순서 기반 참여자 목록 조회
  * - ready 참여자 목록 조회
  * - 공개 로비 목록 조회
+ * - Redis ZSET 정렬 인덱스 기반 로비 코드 조회
  * - 초대 코드 기반 로비 기본 정보 조회
  * - 현재 참여 인원 수 조회
  */
@@ -153,12 +158,8 @@ public class LobbyRedisQueryRepository {
      * Redis 명령 수는 유지하되 네트워크 round-trip을 줄인다.
      *
      * [주의]
-     * lobby:public에는 남아 있지만 lobby:{code} Hash가 TTL 만료 등으로 사라진 경우는 응답에서 제외한다.
-     *
-     * [mapCategory 방어 정책]
-     * - mapCategory가 없거나 blank이면 맵 미선택 로비로 보고 목록에 포함한다.
-     * - mapCategory가 정상 값이면 FE 표시값(K-POP, J-POP, POP)으로 변환한다.
-     * - mapCategory 필드는 존재하지만 정규화할 수 없는 값이면 Redis 손상 데이터로 보고 목록에서 제외한다.
+     * lobby:public에는 남아 있지만 lobby:{code} Hash가 TTL 만료 등으로 사라진 경우는
+     * getPublicLobbiesByCodes()에서 응답 제외 및 stale index 정리를 수행한다.
      *
      * @return 공개 로비 목록
      */
@@ -172,10 +173,309 @@ public class LobbyRedisQueryRepository {
 
         /*
          * Set은 순서 보장을 전제로 쓰면 안 된다.
-         * pipeline 결과는 요청을 넣은 순서 그대로 반환되므로,
-         * 먼저 List로 고정한 뒤 같은 index 기준으로 code와 결과를 매칭한다.
+         * 기존 전체 조회 경로는 Service 계층에서 정렬하므로 여기서는 순서가 중요하지 않다.
          */
-        List<String> lobbyCodes = new ArrayList<>(publicLobbyCodes);
+        return getPublicLobbiesByCodes(new ArrayList<>(publicLobbyCodes));
+    }
+
+    /**
+     * 공개 로비 stale index 정리용 후보 코드를 조회한다.
+     *
+     * [조회 기준]
+     * 다음 공개 로비 인덱스 전체에서 일부 후보를 수집한다.
+     *
+     * - lobby:public
+     * - lobby:public:latest
+     * - lobby:public:most_players
+     * - lobby:public:most_available
+     *
+     * [필요 이유]
+     * stale code가 lobby:public Set에는 없고 ZSET에만 남는 경우가 있다.
+     * 이때 lobby:public Set만 cleanup 후보로 삼으면 ZSET-only stale code가 영구적으로 정리되지 않는다.
+     *
+     * [주의]
+     * 이 메서드는 정렬 용도가 아니다.
+     * 배치 스캐너가 stale 후보를 점진적으로 수집하기 위한 용도다.
+     *
+     * @param limit 조회할 최대 code 수
+     * @return 정리 후보 code 목록
+     */
+    public List<String> getPublicLobbyCodesForCleanup(int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+
+        /*
+         * LinkedHashSet을 사용해 중복을 제거하면서 수집 순서를 유지한다.
+         * 같은 lobbyCode가 Set과 여러 ZSET에 동시에 존재할 수 있으므로 중복 제거가 필요하다.
+         */
+        Set<String> candidates = new LinkedHashSet<>();
+
+        addPublicSetCleanupCandidates(candidates, limit);
+
+        addZSetCleanupCandidates(
+                candidates,
+                RedisKeys.LOBBY_PUBLIC_LATEST,
+                limit
+        );
+
+        addZSetCleanupCandidates(
+                candidates,
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                limit
+        );
+
+        addZSetCleanupCandidates(
+                candidates,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
+                limit
+        );
+
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+
+        return candidates.stream()
+                .limit(limit)
+                .toList();
+    }
+
+    /**
+     * lobby:public Set에서 cleanup 후보를 수집한다.
+     *
+     * [정책]
+     * Set은 순서가 없으므로 distinctRandomMembers()로 일부 후보만 가져온다.
+     * 이 메서드는 정리 후보 수집용이며, 목록 조회 정렬에는 사용하지 않는다.
+     */
+    private void addPublicSetCleanupCandidates(
+            Set<String> candidates,
+            int limit
+    ) {
+        if (candidates.size() >= limit) {
+            return;
+        }
+
+        long remainingLimit = limit - candidates.size();
+
+        Set<String> codes = redisTemplate.opsForSet()
+                .distinctRandomMembers(RedisKeys.LOBBY_PUBLIC, remainingLimit);
+
+        if (codes == null || codes.isEmpty()) {
+            return;
+        }
+
+        for (String code : codes) {
+            addCleanupCandidate(candidates, code, limit);
+        }
+    }
+
+    /**
+     * 공개 로비 ZSET 인덱스에서 cleanup 후보를 수집한다.
+     *
+     * [ZSCAN 사용 이유]
+     * ZRANGE 0..N 방식은 항상 앞쪽 score 구간만 보게 된다.
+     * stale code가 뒤쪽에 몰려 있으면 영구적으로 발견하지 못할 수 있다.
+     *
+     * ZSCAN은 전체 ZSET을 점진적으로 훑을 수 있으므로,
+     * ZSET-only stale code를 장기적으로 정리하는 데 적합하다.
+     *
+     * [주의]
+     * ScanOptions.count()는 정확한 개수가 아니라 Redis에 전달하는 hint다.
+     * 따라서 최종 후보 개수 제한은 candidates.size()와 limit으로 한 번 더 제어한다.
+     */
+    private void addZSetCleanupCandidates(
+            Set<String> candidates,
+            String zsetKey,
+            int limit
+    ) {
+        if (candidates.size() >= limit) {
+            return;
+        }
+
+        ScanOptions scanOptions = ScanOptions.scanOptions()
+                .count(limit)
+                .build();
+
+        try (Cursor<ZSetOperations.TypedTuple<String>> cursor =
+                     redisTemplate.opsForZSet().scan(zsetKey, scanOptions)) {
+
+            while (cursor.hasNext() && candidates.size() < limit) {
+                ZSetOperations.TypedTuple<String> tuple = cursor.next();
+
+                if (tuple == null) {
+                    continue;
+                }
+
+                addCleanupCandidate(candidates, tuple.getValue(), limit);
+            }
+
+        } catch (Exception e) {
+            log.warn(
+                    "공개 로비 ZSET cleanup 후보 스캔 실패 - zsetKey: {}",
+                    zsetKey,
+                    e
+            );
+        }
+    }
+
+    /**
+     * cleanup 후보 code를 안전하게 추가한다.
+     *
+     * [방어 조건]
+     * - null 제외
+     * - blank 제외
+     * - limit 초과 방지
+     */
+    private void addCleanupCandidate(
+            Set<String> candidates,
+            String code,
+            int limit
+    ) {
+        if (candidates.size() >= limit) {
+            return;
+        }
+
+        if (code == null || code.isBlank()) {
+            return;
+        }
+
+        candidates.add(code);
+    }
+
+    /**
+     * 공개 로비 최신순 ZSET 인덱스 존재 여부를 확인한다.
+     *
+     * @return lobby:public:latest 존재 여부
+     */
+    public boolean existsPublicLatestIndex() {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.LOBBY_PUBLIC_LATEST));
+    }
+
+    /**
+     * 공개 로비 현재 인원 많은 순 ZSET 인덱스 존재 여부를 확인한다.
+     *
+     * @return lobby:public:most_players 존재 여부
+     */
+    public boolean existsPublicMostPlayersIndex() {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS));
+    }
+
+    /**
+     * 공개 로비 빈자리 많은 순 ZSET 인덱스 존재 여부를 확인한다.
+     *
+     * @return lobby:public:most_available 존재 여부
+     */
+    public boolean existsPublicMostAvailableIndex() {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE));
+    }
+
+    /**
+     * 공개 로비 최신순 ZSET 인덱스에서 로비 코드를 조회한다.
+     *
+     * score가 높은 로비가 먼저 와야 하므로 reverseRange를 사용한다.
+     *
+     * @param offset 0-based 조회 시작 offset
+     * @param limit 조회 개수
+     * @return 최신순 로비 코드 목록
+     */
+    public List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit) {
+        return getPublicLobbyCodesFromZSet(
+                RedisKeys.LOBBY_PUBLIC_LATEST,
+                offset,
+                limit,
+                true
+        );
+    }
+
+    /**
+     * 공개 로비 현재 인원 많은 순 ZSET 인덱스에서 로비 코드를 조회한다.
+     *
+     * score가 높은 로비가 먼저 와야 하므로 reverseRange를 사용한다.
+     *
+     * @param offset 0-based 조회 시작 offset
+     * @param limit 조회 개수
+     * @return 현재 인원 많은 순 로비 코드 목록
+     */
+    public List<String> getPublicLobbyCodesByMostPlayersIndex(long offset, int limit) {
+        return getPublicLobbyCodesFromZSet(
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                offset,
+                limit,
+                true
+        );
+    }
+
+    /**
+     * 공개 로비 빈자리 많은 순 ZSET 인덱스에서 로비 코드를 조회한다.
+     *
+     * score가 높은 로비가 먼저 와야 하므로 reverseRange를 사용한다.
+     *
+     * @param offset 0-based 조회 시작 offset
+     * @param limit 조회 개수
+     * @return 빈자리 많은 순 로비 코드 목록
+     */
+    public List<String> getPublicLobbyCodesByMostAvailableIndex(long offset, int limit) {
+        return getPublicLobbyCodesFromZSet(
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
+                offset,
+                limit,
+                true
+        );
+    }
+
+    /**
+     * Redis ZSET에서 로비 코드를 조회한다.
+     *
+     * @param zsetKey ZSET key
+     * @param offset 0-based 조회 시작 offset
+     * @param limit 조회 개수
+     * @param reverse true면 score 내림차순, false면 score 오름차순
+     * @return 조회된 로비 코드 목록
+     */
+    private List<String> getPublicLobbyCodesFromZSet(
+            String zsetKey,
+            long offset,
+            int limit,
+            boolean reverse
+    ) {
+        if (limit <= 0) {
+            return List.of();
+        }
+
+        Set<String> codes = reverse
+                ? redisTemplate.opsForZSet().reverseRange(zsetKey, offset, offset + limit - 1L)
+                : redisTemplate.opsForZSet().range(zsetKey, offset, offset + limit - 1L);
+
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+
+        return new ArrayList<>(codes);
+    }
+
+    /**
+     * 주어진 로비 코드 목록에 대해서만 Redis Hash와 현재 참여자 수를 조회한다.
+     *
+     * [사용 목적]
+     * - 기존 lobby:public Set 전체 조회
+     * - 신규 lobby:public:latest ZSET 범위 조회
+     * - 신규 lobby:public:most_players ZSET 범위 조회
+     * - 신규 lobby:public:most_available ZSET 범위 조회
+     *
+     * 두 경로 모두 code 목록만 다르고 DTO 조립 방식은 동일하므로,
+     * 이 메서드로 HGETALL + SCARD pipeline 로직을 공통화한다.
+     *
+     * [정합성 방어]
+     * - code는 인덱스에 있지만 lobby:{code} Hash가 없으면 제외하고 공개 인덱스에서 제거한다.
+     * - mapCategory 필드가 손상된 로비는 제외한다.
+     *
+     * @param lobbyCodes 조회할 로비 코드 목록
+     * @return 조회 가능한 로비 DTO 목록
+     */
+    public List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes) {
+        if (lobbyCodes == null || lobbyCodes.isEmpty()) {
+            return new ArrayList<>();
+        }
 
         List<Object> pipelineResults = redisTemplate.executePipelined((RedisConnection connection) -> {
             for (String code : lobbyCodes) {
@@ -201,10 +501,25 @@ public class LobbyRedisQueryRepository {
             );
 
             if (data.isEmpty()) {
+                /*
+                 * 인덱스에는 남아 있지만 lobby:{code} Hash가 없는 상태다.
+                 *
+                 * 조회 경로에서는 stale code를 응답에서 제외만 한다.
+                 * 인덱스 삭제는 별도 스케줄러가 수행한다.
+                 *
+                 * 이유:
+                 * - 목록 조회 요청이 Redis 인덱스를 직접 변경하면 읽기 경로와 정리 책임이 섞인다.
+                 * - 동시 요청 중 같은 code를 참조하는 다른 요청과 타이밍이 겹치면 일시적인 목록 누락/순서 흔들림을 유발할 수 있다.
+                 */
+                log.warn(
+                        "공개 로비 stale index 감지 - 배치 스캐너에서 정리 예정. lobbyCode: {}",
+                        code
+                );
                 continue;
             }
 
-            Integer currentPlayers = extractCurrentPlayerCount(
+            Integer currentPlayers = resolveCurrentPlayers(
+                    data,
                     pipelineResults,
                     countResultIndex,
                     code
@@ -244,11 +559,45 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
+     * 공개 로비 인덱스에서 특정 로비 코드를 제거한다.
+     *
+     * [정리 대상]
+     * - lobby:public Set
+     * - lobby:public:latest ZSET
+     * - lobby:public:most_players ZSET
+     * - lobby:public:most_available ZSET
+     *
+     * [사용 상황]
+     * - stale index 배치 스캐너가 lobby:{code} Hash가 없는 code를 정리할 때
+     * - 운영성 보정 로직에서 명시적으로 공개 인덱스를 제거할 때
+     *
+     * [주의]
+     * 정상 로비 삭제/폭파 경로에서는 Lua 스크립트가 원자적으로 SREM/ZREM을 수행해야 한다.
+     * 이 메서드는 정상 상태 전이 경로가 아니라 보정/정리 경로에서만 사용한다.
+     */
+    public void removePublicLobbyIndexes(String lobbyCode) {
+        if (lobbyCode == null || lobbyCode.isBlank()) {
+            return;
+        }
+
+        redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, lobbyCode);
+        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_LATEST, lobbyCode);
+        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, lobbyCode);
+        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, lobbyCode);
+
+        log.warn(
+                "공개 로비 stale index 정리 - lobbyCode: {}",
+                lobbyCode
+        );
+    }
+
+    /**
      * 초대 코드로 로비 입장에 필요한 정보를 조회한다.
      *
      * [조회 전략]
      * HGETALL로 lobby:{code} Hash를 한 번에 읽어 응답 객체를 구성한다.
-     * currentPlayers는 participants Set의 SCARD로 별도 조회한다.
+     * currentPlayers는 lobby:{code}.current_players를 우선 사용하고,
+     * 기존 Redis 데이터 호환을 위해 없으면 participants Set의 SCARD로 fallback한다.
      *
      * [반환 정책]
      * 로비가 존재하지 않으면 Optional.empty()를 반환한다.
@@ -296,18 +645,72 @@ public class LobbyRedisQueryRepository {
     /**
      * 해당 로비의 현재 참여 인원 수를 반환한다.
      *
-     * [구현 방식]
-     * lobby:{code}:participants Set의 SCARD 명령으로 조회한다.
-     * null 반환 시 Redis 연결 이상일 수 있으므로 0으로 폴백하여 NPE를 방지한다.
+     * [조회 우선순위]
+     * 1. lobby:{code}.current_players
+     * 2. 기존 Redis 데이터 호환을 위한 lobby:{code}:participants SCARD
+     *
+     * [주의]
+     * current_players는 Lua에서 관리하는 캐시 값이다.
+     * Java 조회 경로에서는 누락 시 fallback만 수행하고 직접 복구 쓰기는 하지 않는다.
      *
      * @param inviteCode 로비 초대 코드
      * @return 현재 참여 인원 수
      */
     public int getCurrentPlayerCount(String inviteCode) {
+        Object cachedCurrentPlayers = redisTemplate.opsForHash()
+                .get(RedisKeys.lobbyKey(inviteCode), RedisKeys.FIELD_CURRENT_PLAYERS);
+
+        Integer parsedCurrentPlayers = parseNullableInt(cachedCurrentPlayers);
+
+        if (parsedCurrentPlayers != null) {
+            return parsedCurrentPlayers;
+        }
+
         Long count = redisTemplate.opsForSet()
                 .size(RedisKeys.lobbyParticipantsKey(inviteCode));
 
         return count != null ? count.intValue() : 0;
+    }
+
+    /**
+     * 공개 로비 목록 응답에 사용할 현재 참여 인원 수를 결정한다.
+     *
+     * [우선순위]
+     * 1. lobby:{code} Hash의 current_players 필드
+     * 2. 기존 Redis 데이터 호환을 위한 participants Set SCARD pipeline 결과
+     *
+     * [설계 이유]
+     * current_players는 4단계부터 Lua에서 관리하는 캐시 필드다.
+     * 다만 배포 전에 생성된 기존 로비에는 해당 필드가 없을 수 있으므로,
+     * 조회 안정성을 위해 SCARD 결과를 fallback으로 사용한다.
+     *
+     * [주의]
+     * fallback은 읽기 호환성만 제공한다.
+     * Java에서 current_players를 직접 HSET하지 않는다.
+     * current_players의 갱신 책임은 participants 변경 Lua 스크립트에 있다.
+     */
+    private Integer resolveCurrentPlayers(
+            Map<Object, Object> data,
+            List<Object> pipelineResults,
+            int countResultIndex,
+            String lobbyCode
+    ) {
+        Integer cachedCurrentPlayers = parseNullableInt(data.get(RedisKeys.FIELD_CURRENT_PLAYERS));
+
+        if (cachedCurrentPlayers != null) {
+            return cachedCurrentPlayers;
+        }
+
+        log.debug(
+                "current_players 필드 없음 - SCARD fallback 사용. lobbyCode: {}",
+                lobbyCode
+        );
+
+        return extractCurrentPlayerCount(
+                pipelineResults,
+                countResultIndex,
+                lobbyCode
+        );
     }
 
     /**

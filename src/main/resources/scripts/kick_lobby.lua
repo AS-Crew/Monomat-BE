@@ -25,9 +25,16 @@ local orderKey                  = KEYS[3] -- lobby:{code}:order
 local kickedKey                 = KEYS[4] -- lobby:{code}:kicked
 local targetLobbyUserSessionKey = KEYS[5] -- lobby:{code}:user_session:{targetUserIdentifier}
 local targetLobbyUserSeqKey     = KEYS[6] -- lobby:{code}:user_session_seq:{targetUserIdentifier}
+local publicMostPlayersIndexKey    = KEYS[7] -- lobby:public:most_players
+local publicMostAvailableIndexKey  = KEYS[8] -- lobby:public:most_available
 
 local requesterIdentifier       = ARGV[1] -- 강퇴 요청자 식별자
 local targetUserIdentifier      = ARGV[2] -- 강퇴 대상 식별자
+local lobbyCode                 = ARGV[3] -- 로비 초대 코드
+
+local FIELD_CURRENT_PLAYERS       = 'current_players'
+local FIELD_MAX_PLAYERS = 'max_players'
+local FIELD_IS_PRIVATE = 'is_private'
 
 -- 1. 로비 존재 여부 검증
 if redis.call('EXISTS', lobbyKey) == 0 then
@@ -67,6 +74,31 @@ end
 -- 6. participants / order에서 강퇴 대상 제거
 redis.call('SREM', participantsKey, targetUserIdentifier)
 redis.call('LREM', orderKey, 0, targetUserIdentifier)
+
+-- participants Set을 기준으로 현재 인원 캐시를 재계산한다.
+-- 강퇴는 participants 변경과 같은 원자 단위에서 처리되므로,
+-- current_players 캐시도 같은 Lua 스크립트 내부에서만 갱신한다.
+local currentPlayers = redis.call('SCARD', participantsKey)
+redis.call('HSET', lobbyKey, FIELD_CURRENT_PLAYERS, tostring(currentPlayers))
+
+local isPrivate = redis.call('HGET', lobbyKey, FIELD_IS_PRIVATE)
+
+if isPrivate == 'false' then
+    local maxPlayersForIndex = tonumber(redis.call('HGET', lobbyKey, FIELD_MAX_PLAYERS))
+
+    if maxPlayersForIndex == nil or maxPlayersForIndex <= 0 then
+        return "INVALID_LOBBY_CAPACITY"
+    end
+
+    local availableSeats = maxPlayersForIndex - currentPlayers
+
+    if availableSeats < 0 then
+        availableSeats = 0
+    end
+
+    redis.call('ZADD', publicMostPlayersIndexKey, currentPlayers, lobbyCode)
+    redis.call('ZADD', publicMostAvailableIndexKey, availableSeats, lobbyCode)
+end
 
 -- 7. 강퇴 대상 재입장 차단 등록
 redis.call('SADD', kickedKey, targetUserIdentifier)

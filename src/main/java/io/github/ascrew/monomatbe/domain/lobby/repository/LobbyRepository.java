@@ -4,10 +4,13 @@
  */
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
+import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
-import io.github.ascrew.monomatbe.domain.lobby.dto.*;
-import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
+import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +26,7 @@ public interface LobbyRepository {
 
   /**
    * 로비 참여자의 준비 상태를 변경한다.
+   *
    * @param code 로비 초대 코드
    * @param userIdentifier 준비 상태를 변경할 사용자 식별자
    * @param ready true면 준비 완료, false면 준비 해제
@@ -31,6 +35,7 @@ public interface LobbyRepository {
 
   /**
    * 로비 참여자 목록을 입장 순서를 기준으로 조회한다.
+   *
    * @param code 로비 초대 코드
    * @return 입장 순서가 반영된 userIdentifier 목록
    */
@@ -38,6 +43,7 @@ public interface LobbyRepository {
 
   /**
    * 로비에서 ready 상태인 참여자 식별자 목록을 조회한다.
+   *
    * @param code 로비 초대 코드
    * @return ready Set에 저장된 userIdentifier 목록
    */
@@ -58,6 +64,7 @@ public interface LobbyRepository {
 
   /**
    * DB Insert 실패 시 Redis에 저장된 로비 데이터를 보상 삭제한다.
+   *
    * @param inviteCode 삭제할 로비 초대 코드
    * @return 보상 삭제 성공 여부 (true: 성공, false: 실패)
    */
@@ -65,6 +72,7 @@ public interface LobbyRepository {
 
   /**
    * Lua 스크립트를 실행하여 퇴장 처리를 원자적으로 수행한다.
+   *
    * @return LeaveLobbyResult (Destroyed | Delegated | Left | Error)
    */
   LeaveLobbyResult executeLeaveLobbyProcess(String code, String userId);
@@ -97,7 +105,8 @@ public interface LobbyRepository {
   );
 
   /**
-   * 게임 시작 처리  DB 상태 변경 실패가 발생했을 때, Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   * 게임 시작 처리 DB 상태 변경 실패가 발생했을 때, Redis 로비 상태를 WAITING으로 보상 롤백한다.
+   *
    * @param code 로비 초대 코드
    * @return Redis 보상 롤백 성공 여부
    */
@@ -136,11 +145,92 @@ public interface LobbyRepository {
   List<LobbyRedisDto> getPublicLobbies();
 
   /**
+   * 공개 로비 stale index 정리용으로 lobby:public Set의 일부 로비 코드를 조회한다.
+   *
+   * [사용 목적]
+   * 조회 API 경로에서 stale index를 즉시 삭제하지 않고,
+   * 스케줄러가 제한된 개수만 점진적으로 정리하기 위해 사용한다.
+   *
+   * @param limit 조회할 최대 code 수
+   * @return 정리 후보 로비 코드 목록
+   */
+  List<String> getPublicLobbyCodesForCleanup(int limit);
+
+  /**
+   * 공개 로비 최신순 ZSET 인덱스 존재 여부를 확인한다.
+   *
+   * @return lobby:public:latest 존재 여부
+   */
+  boolean existsPublicLatestIndex();
+
+  /**
+   * 공개 로비 현재 인원 많은 순 ZSET 인덱스 존재 여부를 확인한다.
+   *
+   * @return lobby:public:most_players 존재 여부
+   */
+  boolean existsPublicMostPlayersIndex();
+
+  /**
+   * 공개 로비 빈자리 많은 순 ZSET 인덱스 존재 여부를 확인한다.
+   *
+   * @return lobby:public:most_available 존재 여부
+   */
+  boolean existsPublicMostAvailableIndex();
+
+  /**
+   * 공개 로비 최신순 ZSET 인덱스에서 필요한 범위의 로비 코드만 조회한다.
+   *
+   * @param offset 0-based 조회 시작 offset
+   * @param limit 조회 개수
+   * @return 최신순 로비 코드 목록
+   */
+  List<String> getPublicLobbyCodesByLatestIndex(long offset, int limit);
+
+  /**
+   * 공개 로비 현재 인원 많은 순 ZSET 인덱스에서 필요한 범위의 로비 코드만 조회한다.
+   *
+   * @param offset 0-based 조회 시작 offset
+   * @param limit 조회 개수
+   * @return 현재 인원 많은 순 로비 코드 목록
+   */
+  List<String> getPublicLobbyCodesByMostPlayersIndex(long offset, int limit);
+
+  /**
+   * 공개 로비 빈자리 많은 순 ZSET 인덱스에서 필요한 범위의 로비 코드만 조회한다.
+   *
+   * @param offset 0-based 조회 시작 offset
+   * @param limit 조회 개수
+   * @return 빈자리 많은 순 로비 코드 목록
+   */
+  List<String> getPublicLobbyCodesByMostAvailableIndex(long offset, int limit);
+
+  /**
+   * 주어진 로비 코드 목록에 대해서만 공개 로비 DTO를 조회한다.
+   *
+   * @param lobbyCodes 조회할 로비 코드 목록
+   * @return 조회 가능한 공개 로비 DTO 목록
+   */
+  List<LobbyRedisDto> getPublicLobbiesByCodes(List<String> lobbyCodes);
+
+  /**
+   * 공개 로비 인덱스에서 특정 로비 코드를 제거한다.
+   *
+   * [정리 대상]
+   * - lobby:public
+   * - lobby:public:latest
+   * - lobby:public:most_players
+   * - lobby:public:most_available
+   *
+   * @param lobbyCode 제거할 로비 코드
+   */
+  void removePublicLobbyIndexes(String lobbyCode);
+
+  /**
    * 초대 코드로 로비 입장에 필요한 정보를 조회한다.
    *
    * [반환 전략]
    * 로비가 존재하지 않으면 Optional.empty()를 반환한다.
-   * 서비스 레이어에서 empty 여부로 404를 처리 하므로, Repository는 존재 여부 판단을 서비스에 위임한다.
+   * 서비스 레이어에서 empty 여부로 404를 처리하므로, Repository는 존재 여부 판단을 서비스에 위임한다.
    *
    * @param inviteCode 로비 초대 코드
    * @return 로비 정보 Optional (로비 미존재 시 empty)
@@ -149,6 +239,7 @@ public interface LobbyRepository {
 
   /**
    * 해당 로비의 현재 참여 인원 수를 반환한다.
+   *
    * @param inviteCode 로비 초대 코드
    * @return 현재 참여 인원 수
    */

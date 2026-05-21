@@ -3,19 +3,22 @@
 -- ============================================================================
 -- 로비 생성 원자적 처리 스크립트
 --
--- SETNX 선점 + Hash 저장을 단일 트랜잭션으로 처리하여
+-- SETNX 선점 + Hash 저장 + 공개 로비 인덱스 등록을 단일 트랜잭션으로 처리하여
 -- 중간 실패 시 부분 데이터가 남는 문제를 방지한다.
 -- Redis는 Lua 스크립트를 싱글 스레드로 실행하므로
 -- 스크립트 실행 중에는 다른 명령이 끼어들 수 없다.
 --
 -- [책임 분리 원칙]
--- create_lobby.lua : 로비 메타 정보(Hash) 저장 + 공개 목록 등록만 담당
+-- create_lobby.lua : 로비 메타 정보(Hash) 저장 + 공개 목록/정렬 인덱스 등록만 담당
 -- processLobbyEnter(): 입장 처리(participants, order, 세션 매핑, ENTER 브로드캐스트) 담당
 -- ============================================================================
 
-local lockKey         = KEYS[1]   -- lobby:code:lock:{code}
-local lobbyKey        = KEYS[2]   -- lobby:{code}
-local publicListKey   = KEYS[3]   -- lobby:public
+local lockKey               = KEYS[1]   -- lobby:code:lock:{code}
+local lobbyKey              = KEYS[2]   -- lobby:{code}
+local publicListKey         = KEYS[3]   -- lobby:public
+local publicLatestIndexKey  = KEYS[4]   -- lobby:public:latest
+local publicMostPlayersIndexKey   = KEYS[5]   -- lobby:public:most_players
+local publicMostAvailableIndexKey   = KEYS[6] -- lobby:public:most_available
 
 local userIdentifier  = ARGV[1]   -- 방장 식별자 (SETNX 선점자)
 local lockTtlMs       = ARGV[2]   -- 락 TTL (밀리초)
@@ -34,6 +37,7 @@ local FIELD_CODE                    = 'code'
 local FIELD_HOST_USER_ID            = 'host_user_id'
 local FIELD_TITLE                   = 'title'
 local FIELD_MAX_PLAYERS             = 'max_players'
+local FIELD_CURRENT_PLAYERS         = 'current_players'
 local FIELD_IS_PRIVATE              = 'is_private'
 local FIELD_STATUS                  = 'status'
 local FIELD_MAP_ID                  = 'map_id'
@@ -71,6 +75,7 @@ redis.call('HSET', lobbyKey,
     FIELD_HOST_USER_ID,            userIdentifier,
     FIELD_TITLE,                   title,
     FIELD_MAX_PLAYERS,             maxPlayers,
+    FIELD_CURRENT_PLAYERS,         '0',
     FIELD_IS_PRIVATE,              isPrivate,
     FIELD_STATUS,                  status,
     FIELD_CREATED_AT_EPOCH_MILLIS, tostring(createdAtEpochMillis)
@@ -85,12 +90,26 @@ if mapId ~= "" then
     )
 end
 
--- 4. 공개 로비인 경우 전역 공개 목록 Set에 코드 추가 (lobby:public)
+-- 4. 공개 로비인 경우 전역 공개 목록 Set과 최신순 ZSET 인덱스에 코드 추가
+--
 -- [isPrivate 값 보장]
--- Java LobbyRepositoryImpl.normalizeIsPrivate()에서 반드시 소문자 "true"/"false"로
+-- Java LobbyLuaScriptExecutor.normalizeIsPrivate()에서 반드시 소문자 "true"/"false"로
 -- 정규화하여 전달하므로, 이 비교는 항상 일관되게 동작한다.
+--
+-- [ZSET 인덱스]
+-- lobby:public:latest는 최신순 페이징 조회를 위한 정렬 인덱스다.
+-- score는 Redis TIME 기준 createdAtEpochMillis를 사용한다.
+-- 이 값은 lobby:{code}.created_at_epoch_millis와 동일해야 한다.
 if isPrivate == "false" then
     redis.call('SADD', publicListKey, inviteCode)
+    redis.call('ZADD', publicLatestIndexKey, createdAtEpochMillis, inviteCode)
+
+    -- 생성 직후 실제 participants 등록은 WebSocket 구독 시점에 수행된다.
+    -- 따라서 생성 직후 current_players는 0이다.
+    redis.call('ZADD', publicMostPlayersIndexKey, 0, inviteCode)
+
+    -- 빈자리 수는 max_players - current_players 이므로 생성 직후에는 maxPlayers와 같다.
+    redis.call('ZADD', publicMostAvailableIndexKey, tonumber(maxPlayers), inviteCode)
 end
 
 return "OK"

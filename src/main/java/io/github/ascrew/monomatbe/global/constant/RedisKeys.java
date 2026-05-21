@@ -104,6 +104,55 @@ public final class RedisKeys {
     public static final String LOBBY_PUBLIC = "lobby:public";
 
     /**
+     * 공개 로비 최신순 정렬 인덱스 ZSET 키
+     *
+     * 저장 구조 :
+     * - Key    : lobby:public:latest
+     * - Type   : Sorted Set
+     * - Member : lobby inviteCode
+     * - Score  : lobby:{code}.created_at_epoch_millis
+     *
+     * [사용 목적]
+     * 기존 lobby:public Set은 순서를 보장하지 않기 때문에
+     * 최신순 페이징 조회 시 전체 로비를 모두 조회한 뒤 Java에서 정렬해야 했다.
+     *
+     * 이 ZSET은 Redis score 기준으로 최신 로비 코드 범위만 조회하기 위한 인덱스다.
+     */
+    public static final String LOBBY_PUBLIC_LATEST = "lobby:public:latest";
+
+    /**
+     * 공개 로비 현재 인원 많은 순 정렬 인덱스 ZSET 키.
+     *
+     * 저장 구조:
+     * - Key    : lobby:public:most_players
+     * - Type   : Sorted Set
+     * - Member : lobby inviteCode
+     * - Score  : lobby:{code}.current_players
+     *
+     * [주의]
+     * score가 같을 때 Redis ZSET은 member 문자열 기준으로 정렬될 수 있다.
+     * 따라서 "동률이면 최신순" 정책은 ZSET 단독으로 완전히 보장되지 않는다.
+     * 이번 단계에서는 score 기반 1차 정렬을 Redis에 위임하고,
+     * 동률 최신순 보정은 Service 계층에서 DTO 조회 후 적용한다.
+     */
+    public static final String LOBBY_PUBLIC_MOST_PLAYERS = "lobby:public:most_players";
+
+    /**
+     * 공개 로비 빈자리 많은 순 정렬 인덱스 ZSET 키.
+     *
+     * 저장 구조:
+     * - Key    : lobby:public:most_available
+     * - Type   : Sorted Set
+     * - Member : lobby inviteCode
+     * - Score  : max_players - current_players
+     *
+     * [주의]
+     * 이 값은 participants Set 변경과 함께 Lua 내부에서만 갱신한다.
+     * Java Service에서 임의로 score를 수정하지 않는다.
+     */
+    public static final String LOBBY_PUBLIC_MOST_AVAILABLE = "lobby:public:most_available";
+
+    /**
      * WebSocket 세션 sequence 발급용 전역 키.
      *
      * 동일 userIdentifier의 재접속이 거의 동시에 발생할 때,
@@ -150,6 +199,22 @@ public final class RedisKeys {
 
     /** 로비 Hash의 최대 참여 인원 필드 */
     public static final String FIELD_MAX_PLAYERS = "max_players";
+
+    /**
+     * 로비 Hash의 현재 참여 인원 필드.
+     *
+     * 저장 값:
+     * - lobby:{code}:participants Set의 SCARD 결과
+     *
+     * [중요]
+     * 이 값은 participants Set과 중복 상태다.
+     * 따라서 Java 서비스에서 직접 증가/감소시키지 않고,
+     * participants 변경을 수행하는 Redis Lua 스크립트에서만 함께 갱신한다.
+     *
+     * [사용 목적]
+     * 공개 로비 목록 조회와 향후 most_players / most_available ZSET score 갱신의 기준으로 사용한다.
+     */
+    public static final String FIELD_CURRENT_PLAYERS = "current_players";
 
     /**
      * 로비 Hash의 공개/비공개 여부 필드.

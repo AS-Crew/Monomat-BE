@@ -192,46 +192,61 @@ LobbyRepositoryImpl
 공개 로비 목록 조회는 `GET /api/lobbies`에서 처리합니다.  
 이 API는 FE 로비 목록 화면에서 사용자가 입장 가능한 공개 로비를 빠르게 찾기 위한 조회 API입니다.
 
+이슈 #88 이후 공개 로비 목록 조회는 페이징 응답을 반환하며, 필터가 없는 경우 Redis Sorted Set 정렬 인덱스를 사용해 필요한 범위의 로비 코드만 조회합니다.
+
 ```text
 Client
-    │ GET /api/lobbies?keyword=&mapCategory=&sort=
+    │ GET /api/lobbies?keyword=&mapCategory=&sort=&page=&size=
     ▼
 LobbyQueryController
     │ 요청 파라미터 수집
     │ - keyword
     │ - mapCategory
     │ - sort
+    │ - page
+    │ - size
     ▼
 LobbySearchCondition
     │ 요청 조건 정규화
     │ - keyword trim + lower-case
     │ - mapCategory MapCategory.from()으로 검증
     │ - sort LobbySortType으로 검증
+    │ - page 기본값/범위 검증
+    │ - size 기본값/최대값 검증
     ▼
 LobbyQueryService
     │ 로비 목록 노출 정책 적용
-    │ - WAITING 상태만 노출
+    │ - WAITING / PLAYING 상태 노출
+    │ - FINISHED 상태 제외
     │ - keyword 제목 검색
     │ - mapCategory 필터링
     │ - latest / most_players / most_available 정렬
+    │ - page / size 기준 페이징
     │ - Redis 손상 mapCategory 로비 제외
+    │
+    ├─ [필터 없음 + 정렬 인덱스 존재]
+    │      Redis ZSET 인덱스에서 필요한 범위의 lobbyCode만 조회
+    │
+    └─ [필터 있음 또는 정렬 인덱스 없음]
+           lobby:public 전체 조회 후 Java 필터/정렬/페이징
     ▼
 LobbyRepository
     ▼
 LobbyRedisQueryRepository
-    │ Redis lobby:public Set 기준 원본 공개 로비 조회
+    │ Redis Hash / Set / ZSET 조회
     ▼
 Redis
 ```
 
 ### 책임 분리
 
-| 계층 | 책임 |
-| --- | --- |
-| `LobbyQueryController` | HTTP 요청 파라미터 수집 |
-| `LobbySearchCondition` | 요청값 정규화 및 검증 |
-| `LobbyQueryService` | 로비 목록 노출 정책, 검색, 필터링, 정렬 |
-| `LobbyRedisQueryRepository` | Redis 원본 공개 로비 데이터 조회 |
+| 계층                          | 책임                                                 |
+| --------------------------- | -------------------------------------------------- |
+| `LobbyQueryController`      | HTTP 요청 파라미터 수집                                    |
+| `LobbySearchCondition`      | 요청값 정규화 및 검증                                       |
+| `LobbyPageRequest`          | `page`, `size` 기본값/범위 검증                           |
+| `LobbyQueryService`         | 로비 목록 노출 정책, 검색, 필터링, 정렬, 페이징, 인덱스 사용 여부 결정        |
+| `LobbyRedisQueryRepository` | Redis 원본 공개 로비 데이터 조회, ZSET 인덱스 조회, stale index 정리 |
 
 ### 노출 정책
 
@@ -241,16 +256,47 @@ Redis
 * `PLAYING` 로비는 진행 중 상태로 목록에는 노출되지만, 현재 입장은 허용하지 않습니다.
 * 클라이언트는 `status=PLAYING` 로비를 “진행 중” 상태로 표시하고 입장 버튼을 비활성화해야 합니다.
 
+### 페이징 정책
+
+| 항목         | 정책                                 |
+| ---------- | ---------------------------------- |
+| `page`     | 0-based 페이지 번호                     |
+| `page` 기본값 | `0`                                |
+| `size` 기본값 | `20`                               |
+| `size` 최소값 | `1`                                |
+| `size` 최대값 | `100`                              |
+| 응답 구조      | `items`, `page`, `size`, `hasNext` |
+
 ### 정렬 정책
 
-| 정렬 기준 | 설명 |
-| --- | --- |
-| `latest` | `createdAtEpochMillis` 내림차순 |
-| `most_players` | `currentPlayers` 내림차순, 동률이면 최신순 |
-| `most_available` | `maxPlayers - currentPlayers` 내림차순, 동률이면 최신순 |
+| 정렬 기준            | 설명                                           | Redis 인덱스                     |
+| ---------------- | -------------------------------------------- | ----------------------------- |
+| `latest`         | `createdAtEpochMillis` 내림차순                  | `lobby:public:latest`         |
+| `most_players`   | `currentPlayers` 내림차순, 동률이면 최신순              | `lobby:public:most_players`   |
+| `most_available` | `maxPlayers - currentPlayers` 내림차순, 동률이면 최신순 | `lobby:public:most_available` |
 
-`latest` 정렬은 Redis `Set`의 순서에 의존하지 않습니다.  
 `lobby:public`은 Redis Set이므로 삽입 순서가 보장되지 않습니다. 따라서 로비 생성 시 Redis Hash에 `created_at_epoch_millis`를 저장하고, 이 값을 기준으로 최신순 정렬을 수행합니다.
+
+**Redis 정렬 인덱스**
+
+| Redis Key                     | Type | Member     | Score                           | 갱신 시점                                |
+| ----------------------------- | ---- | ---------- | ------------------------------- | ------------------------------------ |
+| `lobby:public:latest`         | ZSET | lobby code | `created_at_epoch_millis`       | 공개 로비 생성 시 `ZADD`, 로비 폭파/삭제 시 `ZREM` |
+| `lobby:public:most_players`   | ZSET | lobby code | `current_players`               | 공개 로비 생성/입장/퇴장/강퇴 시 갱신               |
+| `lobby:public:most_available` | ZSET | lobby code | `max_players - current_players` | 공개 로비 생성/입장/퇴장/강퇴 시 갱신               |
+
+**정렬 인덱스 사용 조건**
+
+| 조건                                          | 조회 방식                                 |
+| ------------------------------------------- | ------------------------------------- |
+| `keyword` 없음 + `mapCategory` 없음 + 정렬 인덱스 존재 | Redis ZSET에서 page 범위의 lobbyCode만 조회   |
+| `keyword` 있음                                | `lobby:public` 전체 조회 후 Java 필터/정렬/페이징 |
+| `mapCategory` 있음                            | `lobby:public` 전체 조회 후 Java 필터/정렬/페이징 |
+| 정렬 인덱스 없음                                   | `lobby:public` 전체 조회 후 Java 필터/정렬/페이징 |
+
+필터가 있는 경우 ZSET page 범위를 먼저 자르면 전체 필터링 결과 기준의 page가 깨질 수 있습니다.
+예를 들어 ZSET 상위 20개에는 `K-POP` 로비가 없지만 21번째 이후에 `K-POP` 로비가 있을 수 있습니다.
+따라서 `keyword`, `mapCategory` 필터가 있는 경우는 안전하게 기존 전체 조회 경로로 폴백합니다.
 
 ### 생성 시각 기준
 
@@ -264,17 +310,73 @@ local createdAtEpochMillis = redisTime[1] * 1000 + math.floor(redisTime[2] / 100
 멀티 인스턴스 운영 환경에서는 애플리케이션 서버 간 시간 편차가 발생할 수 있습니다.  
 따라서 Redis 서버 기준 단일 시간원을 사용해 최신순 정렬 기준을 일관되게 유지합니다.
 
+### 현재 인원 캐싱 정책
+
+`current_players`는 `lobby:{code}:participants` Set과 중복 상태입니다.
+따라서 Java 서비스에서 직접 증가/감소시키지 않고, participants 변경을 수행하는 Lua 스크립트 내부에서만 갱신합니다.
+
+| 이벤트       | 처리                                                          |
+| --------- | ----------------------------------------------------------- |
+| 로비 생성     | `current_players = 0`                                       |
+| 입장        | `SCARD lobby:{code}:participants` 결과를 `current_players`에 저장 |
+| 퇴장        | 남은 participants 수를 `current_players`에 저장                    |
+| 강퇴        | 남은 participants 수를 `current_players`에 저장                    |
+| 마지막 인원 퇴장 | 로비 Hash 삭제. 별도 `current_players = 0` 저장 불필요                 |
+
+조회 시에는 `lobby:{code}.current_players`를 우선 사용합니다.
+다만 배포 전 생성된 기존 Redis 데이터에는 해당 필드가 없을 수 있으므로, 누락 시 `SCARD lobby:{code}:participants` 결과로 fallback합니다.
+
 ### Redis Hash 필드
 
 `lobby:{code}` Hash에는 공개 로비 목록 조회 및 정렬을 위해 다음 필드가 포함됩니다.
 
-| 필드 | 설명 |
-| --- | --- |
+| 필드                        | 설명                                           |
+| ------------------------- | -------------------------------------------- |
 | `created_at_epoch_millis` | Redis `TIME` 기준 로비 생성 시각. epoch milliseconds |
-| `map_category` | 선택된 맵 카테고리. `K-POP`, `J-POP`, `POP` |
-| `status` | 로비 상태. 목록에서는 `WAITING`만 노출 |
-| `is_private` | 비공개 여부. 공개 로비 목록은 `false`만 노출 |
-| `max_players` | 최대 참여 인원 |
+| `current_players`         | 현재 참여 인원 캐시. participants Set 변경 Lua에서만 갱신   |
+| `map_category`            | 선택된 맵 카테고리. `K-POP`, `J-POP`, `POP`          |
+| `status`                  | 로비 상태. 목록에서는 `WAITING`, `PLAYING`만 노출        |
+| `is_private`              | 비공개 여부. 공개 로비 목록은 `false`만 노출                |
+| `max_players`             | 최대 참여 인원                                     |
+
+### Redis 정합성 방어
+
+공개 로비 인덱스에는 남아 있지만 `lobby:{code}` Hash가 TTL 만료, 수동 삭제, 과거 버전 로직 등으로 사라질 수 있습니다.
+
+이 경우 공개 로비 목록 조회 경로에서는 해당 code를 응답에서 제외만 합니다.  
+조회 요청 중 즉시 인덱스를 삭제하지 않습니다.
+
+인덱스 정리는 `LobbyPublicIndexCleanupScheduler`가 주기적으로 수행합니다.
+
+```text
+LobbyPublicIndexCleanupScheduler
+    │ fixedDelay 기반 주기 실행
+    ▼
+lobby:public Set에서 일부 code 샘플 조회
+    ▼
+각 code에 대해 lobby:{code} Hash 존재 여부 확인
+    ▼
+Hash가 없으면 아래 공개 인덱스에서 제거
+```
+정리 대상은 다음과 같습니다.
+
+```
+lobby:public
+lobby:public:latest
+lobby:public:most_players
+lobby:public:most_available
+```
+
+이 구조는 조회 경로와 정리 경로를 분리하기 위한 설계입니다.
+
+| 구분                                                    | 책임                                      |
+| ----------------------------------------------------- | --------------------------------------- |
+| `LobbyRedisQueryRepository#getPublicLobbiesByCodes()` | stale code를 응답에서 제외                     |
+| `LobbyPublicIndexCleanupScheduler`                    | stale code를 public Set/ZSET 인덱스에서 배치 정리 |
+| `removePublicLobbyIndexes()`                          | 보정/정리 경로에서 특정 lobbyCode를 공개 인덱스에서 제거    |
+
+정렬 인덱스 기반 조회 중 stale code가 섞이면 `LobbyQueryService`는 요청한 page size를 최대한 채우기 위해 추가 범위를 스캔합니다.
+스캔 상한은 `targetItemCount * 5` 기준으로 제한하여 stale index가 누적된 상황에서도 무한 조회를 방지합니다.
 
 ---
 

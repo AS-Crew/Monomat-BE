@@ -30,7 +30,9 @@ dependencies {
     runtimeOnly 'com.mysql:mysql-connector-j'
 
     // 2-1. Flyway (스키마 마이그레이션)
-    implementation 'org.flywaydb:flyway-core'
+    // Spring Boot 4부터 autoconfig가 모듈로 분리되어, Flyway 자동설정을 위해서는
+    // spring-boot-flyway 모듈을 명시적으로 추가해야 한다. (flyway-core 만으로는 부팅 시 동작하지 않음)
+    implementation 'org.springframework.boot:spring-boot-flyway'
     implementation 'org.flywaydb:flyway-mysql'
 
     // 3. Security

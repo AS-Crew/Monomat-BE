@@ -57,6 +57,9 @@ public class QuizMap {
     @Column(name = "is_public", nullable = false)
     private Boolean isPublic;
 
+    @Column(name = "pending_public", nullable = false)
+    private Boolean pendingPublic;
+
     @Column(name = "is_deleted", nullable = false)
     private Boolean isDeleted;
 
@@ -82,6 +85,9 @@ public class QuizMap {
         if (this.isPublic == null) {
             this.isPublic = false;
         }
+        if (this.pendingPublic == null) {
+            this.pendingPublic = false;
+        }
         if (this.isDeleted == null) {
             this.isDeleted = false;
         }
@@ -92,11 +98,10 @@ public class QuizMap {
         this.updatedAt = LocalDateTime.now();
     }
 
-    public void update(String title, String description, MapCategory category, boolean isPublic) {
+    public void update(String title, String description, MapCategory category) {
         this.title = title;
         this.description = description;
         this.category = category;
-        this.isPublic = isPublic;
     }
 
     public void softDelete() {
@@ -106,5 +111,19 @@ public class QuizMap {
     public void updateMetadata(int numOfSong, int totalPlayTime) {
         this.numOfSong = numOfSong;
         this.totalPlayTime = totalPlayTime;
+    }
+
+    public void markAsPublished() {
+        this.isPublic = true;
+        this.pendingPublic = false;
+    }
+
+    public void markAsUnpublished(boolean keepIntent) {
+        this.isPublic = false;
+        this.pendingPublic = keepIntent;
+    }
+
+    public void setPendingPublicIntent(boolean pending) {
+        this.pendingPublic = pending;
     }
 }

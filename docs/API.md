@@ -720,6 +720,60 @@ JWT Access Token이 필요합니다.
 
 ---
 
+#### 로비 맵 변경
+
+```http
+PATCH /api/lobbies/{code}/map
+```
+
+방장이 로비 대기실에서 게임에 사용할 맵을 변경합니다.
+JWT Access Token이 필요합니다.
+
+**정책**
+
+* 로비 상태가 `WAITING`일 때만 변경할 수 있습니다.
+* 방장만 맵을 변경할 수 있습니다.
+* 공개 맵은 누구나 연결할 수 있습니다.
+* 비공개 맵은 소유자만 연결할 수 있습니다.
+* 맵 변경 성공 시 Redis `lobby:{code}` hash의 `map_id`, `map_title`, `map_category`와 DB `GAME_LOBBY.map_id`를 동기화합니다.
+* Redis 선갱신 후 DB 갱신에 실패하면 Redis를 이전 값으로 보상 복구합니다.
+* 변경 성공 시 `/topic/lobby/{code}/refresh`로 `REFRESH_LOBBY_INFO`가 브로드캐스트됩니다.
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Request Body**
+
+```json
+{
+  "mapId": 2
+}
+```
+
+| 필드      | 타입   | 필수 | 설명                  |
+| ------- | ---- | -- | ------------------- |
+| `mapId` | Long | ✅  | 연결할 맵 ID (양의 정수) |
+
+**Response `204 No Content`**
+
+응답 Body 없음.
+
+**Error**
+
+| 상태 코드                       | 설명                         |
+| --------------------------- | -------------------------- |
+| `400 Bad Request`           | `mapId`가 누락되었거나 양수가 아닌 경우  |
+| `401 Unauthorized`          | JWT 토큰 없음 또는 만료            |
+| `403 Forbidden`             | 방장이 아닌 사용자가 맵 변경 시도 또는 비공개 맵에 접근 권한 없음 |
+| `404 Not Found`             | 존재하지 않는 로비 또는 맵            |
+| `409 Conflict`              | `WAITING` 상태가 아닌 로비 또는 삭제된 맵 |
+| `500 Internal Server Error` | Redis-DB 동기화 실패             |
+
+---
+
 #### 로비 게임 시작
 
 ```http

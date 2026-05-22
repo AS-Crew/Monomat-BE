@@ -161,6 +161,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
     return lobbyRedisCommandRepository.rollbackStartedLobbyStatus(code);
   }
 
+  @Override
+  public void updateMapMetadata(String code, LobbyMapMetadata metadata) {
+    lobbyRedisCommandRepository.updateMapMetadata(code, metadata);
+  }
+
   // =========================================================
   // Lua-backed State Transition
   // =========================================================

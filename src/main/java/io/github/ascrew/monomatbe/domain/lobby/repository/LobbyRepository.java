@@ -244,4 +244,12 @@ public interface LobbyRepository {
    * @return 현재 참여 인원 수
    */
   int getCurrentPlayerCount(String inviteCode);
+
+  /**
+   * Redis 로비 Hash의 맵 메타데이터 3개 필드(map_id, map_title, map_category)를 갱신한다.
+   *
+   * @param code     로비 초대 코드
+   * @param metadata 새 맵 메타데이터 (null이면 맵 필드를 제거한다)
+   */
+  void updateMapMetadata(String code, LobbyMapMetadata metadata);
 }

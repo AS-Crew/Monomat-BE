@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository.redis;
 
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
@@ -373,6 +374,33 @@ public class LobbyRedisCommandRepository {
                     participantsKey,
                     readyKey,
                     e
+            );
+        }
+    }
+
+    /**
+     * Redis 로비 Hash의 맵 메타데이터 3개 필드를 갱신한다.
+     *
+     * [정책]
+     * - metadata != null → map_id, map_title, map_category를 새 값으로 HSET
+     * - metadata == null → 3개 필드를 HDEL (맵 미선택 상태로 복원)
+     *
+     * @param code     로비 초대 코드
+     * @param metadata 새 맵 메타데이터 (null이면 맵 필드를 제거한다)
+     */
+    public void updateMapMetadata(String code, LobbyMapMetadata metadata) {
+        String lobbyKey = RedisKeys.lobbyKey(code);
+
+        if (metadata != null) {
+            redisTemplate.opsForHash().put(lobbyKey, RedisKeys.FIELD_MAP_ID, String.valueOf(metadata.mapId()));
+            redisTemplate.opsForHash().put(lobbyKey, RedisKeys.FIELD_MAP_TITLE, metadata.mapTitle());
+            redisTemplate.opsForHash().put(lobbyKey, RedisKeys.FIELD_MAP_CATEGORY, metadata.mapCategory());
+        } else {
+            redisTemplate.opsForHash().delete(
+                    lobbyKey,
+                    RedisKeys.FIELD_MAP_ID,
+                    RedisKeys.FIELD_MAP_TITLE,
+                    RedisKeys.FIELD_MAP_CATEGORY
             );
         }
     }

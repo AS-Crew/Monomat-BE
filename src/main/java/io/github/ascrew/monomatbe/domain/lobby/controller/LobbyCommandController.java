@@ -13,9 +13,11 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyMapRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyCreateService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyJoinService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyMapUpdateService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyReadyService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyStartService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -62,11 +64,16 @@ public class LobbyCommandController {
             "요청 수신: 게임 시작 [POST /api/lobbies/{code}/start] - 코드: {}, 식별자: {}";
     private static final String LOG_START_LOBBY_RESPONSE =
             "게임 시작 처리 완료 - 코드: {}";
+    private static final String LOG_UPDATE_MAP_REQUEST =
+            "요청 수신: 로비 맵 변경 [PATCH /api/lobbies/{code}/map] - 코드: {}, 식별자: {}, mapId: {}";
+    private static final String LOG_UPDATE_MAP_RESPONSE =
+            "로비 맵 변경 완료 - 코드: {}";
 
     private final LobbyCreateService lobbyCreateService;
     private final LobbyJoinService lobbyJoinService;
     private final LobbyReadyService lobbyReadyService;
     private final LobbyStartService lobbyStartService;
+    private final LobbyMapUpdateService lobbyMapUpdateService;
 
     /**
      * 로비 생성 API
@@ -233,6 +240,45 @@ public class LobbyCommandController {
         lobbyStartService.startLobbyGame(code, principal);
 
         log.info(LOG_START_LOBBY_RESPONSE, code);
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 로비 대기실 맵 변경 API
+     *
+     * [정책]
+     * - JWT 인증이 필요하다.
+     * - 방장만 맵을 변경할 수 있다.
+     * - 로비 상태가 WAITING일 때만 변경할 수 있다.
+     * - 맵 유효성(존재, 삭제, 접근 권한)은 서비스에서 검증한다.
+     *
+     * @param code      로비 초대 코드
+     * @param request   맵 변경 요청 DTO
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "로비 맵 변경",
+            description = "방장이 대기실에서 게임에 사용할 맵을 변경합니다. JWT 인증이 필요합니다."
+    )
+    @PatchMapping("/{code}/map")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> updateLobbyMap(
+            @PathVariable String code,
+            @Valid @RequestBody UpdateLobbyMapRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_UPDATE_MAP_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null",
+                request.mapId()
+        );
+
+        lobbyMapUpdateService.updateMap(code, request, principal);
+
+        log.info(LOG_UPDATE_MAP_RESPONSE, code);
 
         return ResponseEntity.noContent().build();
     }

@@ -8,9 +8,9 @@
  * - 방장 여부 검증
  * - 선택된 맵 접근 가능 여부 검증 위임 (LobbyMapPolicy 재사용)
  * - Redis 맵 메타데이터 갱신
- * - DB GAME_LOBBY.map_id 갱신
+ * - DB GAME_LOBBY.map_id 조건부 갱신 (status=WAITING 원자 검증으로 레이스 방지)
  * - DB 갱신 실패 시 Redis 보상 복구
- * - 참여자 refresh 이벤트 발행
+ * - 참여자 refresh 이벤트 발행 (트랜잭션 커밋 후)
  *
  * [정합성 정책]
  * Redis 선갱신 후 DB를 갱신한다. DB 갱신 실패 시 Redis를 이전 값으로 보상 복구한다.
@@ -21,7 +21,6 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyMapRequest;
-import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
@@ -31,6 +30,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 @Slf4j
@@ -50,8 +51,6 @@ public class LobbyMapUpdateService {
             "게임이 이미 시작된 로비에서는 맵을 변경할 수 없습니다.";
     private static final String ERROR_NOT_HOST =
             "방장만 맵을 변경할 수 있습니다.";
-    private static final String ERROR_LOBBY_DB_NOT_FOUND =
-            "DB에서 로비를 찾을 수 없습니다.";
     private static final String ERROR_UPDATE_MAP_FAILED =
             "맵 변경에 실패했습니다. 잠시 후 다시 시도해주세요.";
 
@@ -65,7 +64,7 @@ public class LobbyMapUpdateService {
     private static final String LOG_COMPENSATION_SUCCESS =
             "Redis 맵 보상 복구 완료 - code: {}";
     private static final String LOG_COMPENSATION_FAILED =
-            "Redis 맵 보상 복구 실패 - code: {}. Redis-DB 불일치 상태. 수동 정리 필요. [모니터링 필요]";
+            "Redis 맵 보상 복구 실패 - code: {}. Redis-DB 불일치 상태. 수동 정리 필요.";
 
     private static final String LOBBY_STATUS_WAITING = LobbyStatus.WAITING.name();
 
@@ -83,9 +82,11 @@ public class LobbyMapUpdateService {
      * 3. WAITING 상태 검증
      * 4. 방장 여부 검증
      * 5. LobbyMapPolicy로 맵 존재/삭제/권한 검증
-     * 6. Redis 맵 메타데이터 갱신 (선반영)
-     * 7. DB GAME_LOBBY.map_id 갱신 (실패 시 Redis 보상 복구)
-     * 8. 참여자 refresh 이벤트 발행
+     * 6. Redis 맵 메타데이터 선갱신
+     * 7. DB GAME_LOBBY.map_id 조건부 갱신 (status=WAITING 원자 검증)
+     *    - 갱신 행 0 → 동시 게임 시작 레이스: Redis 보상 복구 후 409
+     *    - DB 예외 → Redis 보상 복구 후 500
+     * 8. 트랜잭션 커밋 후 참여자 refresh 이벤트 발행
      *
      * @param code      로비 초대 코드
      * @param request   맵 변경 요청 DTO
@@ -121,51 +122,61 @@ public class LobbyMapUpdateService {
                 principal.userId()
         );
 
-        LobbyMapMetadata oldMetadata = new LobbyMapMetadata(
-                lobbyInfo.mapId(),
-                lobbyInfo.mapTitle(),
-                lobbyInfo.mapCategory()
-        );
+        LobbyMapMetadata oldMetadata = lobbyInfo.mapId() == null
+                ? null
+                : new LobbyMapMetadata(lobbyInfo.mapId(), lobbyInfo.mapTitle(), lobbyInfo.mapCategory());
 
         lobbyRepository.updateMapMetadata(code, newMetadata);
 
+        Long newMapId = newMetadata != null ? newMetadata.mapId() : null;
+        int updated;
         try {
-            GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
-                    .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.NOT_FOUND,
-                            ERROR_LOBBY_DB_NOT_FOUND
-                    ));
-
-            gameLobby.updateMap(newMetadata != null ? newMetadata.mapId() : null);
-            gameLobbyJpaRepository.saveAndFlush(gameLobby);
-
-            log.info(
-                    "로비 맵 변경 완료 - code: {}, host: {}, oldMapId: {}, newMapId: {}",
-                    code,
-                    principal.userIdentifier(),
-                    oldMetadata.mapId(),
-                    newMetadata != null ? newMetadata.mapId() : null
-            );
-
+            updated = gameLobbyJpaRepository.updateMapIdIfWaiting(code, newMapId, LobbyStatus.WAITING);
         } catch (Exception e) {
             log.error(LOG_DB_UPDATE_FAILED, code, e);
-
-            try {
-                lobbyRepository.updateMapMetadata(code, oldMetadata);
-                log.info(LOG_COMPENSATION_SUCCESS, code);
-            } catch (Exception compensationException) {
-                log.error(
-                        "{} {} code: {}",
-                        LOG_MONITORING_REQUIRED,
-                        LOG_COMPENSATION_FAILED,
-                        code,
-                        compensationException
-                );
-            }
-
+            compensateRedis(code, oldMetadata);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, ERROR_UPDATE_MAP_FAILED);
         }
 
-        lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code);
+        if (updated == 0) {
+            compensateRedis(code, oldMetadata);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
+        }
+
+        log.info(
+                "로비 맵 변경 완료 - code: {}, host: {}, oldMapId: {}, newMapId: {}",
+                code,
+                principal.userIdentifier(),
+                oldMetadata != null ? oldMetadata.mapId() : null,
+                newMapId
+        );
+
+        registerMapChangedEventAfterCommit(code);
+    }
+
+    private void compensateRedis(String code, LobbyMapMetadata oldMetadata) {
+        try {
+            lobbyRepository.updateMapMetadata(code, oldMetadata);
+            log.info(LOG_COMPENSATION_SUCCESS, code);
+        } catch (Exception e) {
+            log.error(LOG_MONITORING_REQUIRED + " " + LOG_COMPENSATION_FAILED, code, e);
+        }
+    }
+
+    private void registerMapChangedEventAfterCommit(String code) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            log.error(
+                    "{} 맵 변경 이벤트 afterCommit 등록 실패 - 트랜잭션 동기화 비활성. code: {}",
+                    LOG_MONITORING_REQUIRED,
+                    code
+            );
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, ERROR_UPDATE_MAP_FAILED);
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code);
+            }
+        });
     }
 }

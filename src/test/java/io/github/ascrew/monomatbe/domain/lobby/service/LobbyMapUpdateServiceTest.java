@@ -4,13 +4,15 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyMapRequest;
-import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
@@ -29,8 +31,10 @@ import static org.mockito.Mockito.*;
  * - 로비 미존재 처리
  * - WAITING 상태 제한
  * - 방장 권한 제한
- * - 정상 변경 시 Redis/DB 갱신 및 realtime 이벤트 발행
+ * - 정상 변경 시 Redis/DB 갱신 및 realtime 이벤트 등록
  * - DB 갱신 실패 시 Redis 보상 복구
+ * - DB 조건부 갱신 0행(레이스) 시 Redis 보상 복구 + 409
+ * - 기존 맵 미선택 로비에서 DB 실패 시 보상 복구가 null로 호출됨
  */
 class LobbyMapUpdateServiceTest {
 
@@ -65,6 +69,20 @@ class LobbyMapUpdateServiceTest {
                 .mapId(10L)
                 .mapTitle("K-POP 구곡")
                 .mapCategory("K-POP")
+                .build();
+    }
+
+    private JoinLobbyResponse waitingLobbyWithNoMap() {
+        return JoinLobbyResponse.builder()
+                .inviteCode(CODE)
+                .title("테스트 로비")
+                .hostId(HOST_ID)
+                .maxPlayers(6)
+                .currentPlayers(2)
+                .status("WAITING")
+                .mapId(null)
+                .mapTitle(null)
+                .mapCategory(null)
                 .build();
     }
 
@@ -147,23 +165,27 @@ class LobbyMapUpdateServiceTest {
     // ─── 정상 변경 ───────────────────────────────────────
 
     @Test
-    @DisplayName("정상 요청 시 Redis/DB를 갱신하고 참여자에게 refresh 이벤트를 발행한다")
-    void updateMap_updatesRedisAndDb_andPublishesRefreshEvent() {
-        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+    @DisplayName("정상 요청 시 Redis/DB를 갱신하고 afterCommit 이벤트를 등록한다")
+    void updateMap_updatesRedisAndDb_andRegistersAfterCommitEvent() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
 
-        LobbyMapMetadata newMetadata = new LobbyMapMetadata(2L, "POP 히트곡", "POP");
-        when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
+            LobbyMapMetadata newMetadata = new LobbyMapMetadata(2L, "POP 히트곡", "POP");
+            when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
+            when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING)).thenReturn(1);
 
-        GameLobby gameLobby = mock(GameLobby.class);
-        when(gameLobbyJpaRepository.findByInviteCode(CODE)).thenReturn(Optional.of(gameLobby));
-        when(gameLobbyJpaRepository.saveAndFlush(gameLobby)).thenReturn(gameLobby);
+            sut.updateMap(CODE, request(2L), hostPrincipal());
 
-        sut.updateMap(CODE, request(2L), hostPrincipal());
-
-        verify(lobbyRepository).updateMapMetadata(CODE, newMetadata);
-        verify(gameLobby).updateMap(2L);
-        verify(gameLobbyJpaRepository).saveAndFlush(gameLobby);
-        verify(lobbyRealtimeNotifier).notifyLobbyInfoRefresh(CODE);
+            verify(lobbyRepository).updateMapMetadata(CODE, newMetadata);
+            verify(gameLobbyJpaRepository).updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING);
+            // afterCommit 등록 후 커밋 시뮬레이션
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(TransactionSynchronization::afterCommit);
+            verify(lobbyRealtimeNotifier).notifyLobbyInfoRefresh(CODE);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     // ─── DB 실패 시 보상 복구 ──────────────────────────────
@@ -171,28 +193,67 @@ class LobbyMapUpdateServiceTest {
     @Test
     @DisplayName("DB 갱신 실패 시 Redis를 이전 맵 메타데이터로 보상 복구하고 500을 던진다")
     void updateMap_rollbacksRedis_whenDbSaveFails() {
-        JoinLobbyResponse lobby = waitingLobby(); // 이전 맵: id=10, title="K-POP 구곡", category="K-POP"
-        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
 
         LobbyMapMetadata newMetadata = new LobbyMapMetadata(2L, "POP 히트곡", "POP");
         when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
-
-        GameLobby gameLobby = mock(GameLobby.class);
-        when(gameLobbyJpaRepository.findByInviteCode(CODE)).thenReturn(Optional.of(gameLobby));
-        doThrow(new RuntimeException("DB 장애")).when(gameLobbyJpaRepository).saveAndFlush(any());
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(eq(CODE), eq(2L), eq(LobbyStatus.WAITING)))
+                .thenThrow(new RuntimeException("DB 장애"));
 
         assertThatThrownBy(() -> sut.updateMap(CODE, request(2L), hostPrincipal()))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        // Redis 선갱신(newMetadata) 후 보상 복구(oldMetadata) 순서로 호출되어야 한다
         LobbyMapMetadata oldMetadata = new LobbyMapMetadata(10L, "K-POP 구곡", "K-POP");
         var inOrder = inOrder(lobbyRepository);
         inOrder.verify(lobbyRepository).updateMapMetadata(eq(CODE), eq(newMetadata));
         inOrder.verify(lobbyRepository).updateMapMetadata(eq(CODE), eq(oldMetadata));
 
-        // refresh 이벤트는 발행되면 안 된다
+        verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(any());
+    }
+
+    @Test
+    @DisplayName("기존 맵 미선택 로비에서 DB 갱신 실패 시 보상 복구가 updateMapMetadata(code, null)로 호출된다")
+    void updateMap_rollbacksRedisWithNull_whenNoMapLobbyAndDbFails() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobbyWithNoMap()));
+
+        LobbyMapMetadata newMetadata = new LobbyMapMetadata(1L, "K-POP 히트곡", "K-POP");
+        when(lobbyMapPolicy.resolveLobbyMapMetadata(1L, USER_ID)).thenReturn(newMetadata);
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(eq(CODE), eq(1L), eq(LobbyStatus.WAITING)))
+                .thenThrow(new RuntimeException("DB 장애"));
+
+        assertThatThrownBy(() -> sut.updateMap(CODE, request(1L), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        var inOrder = inOrder(lobbyRepository);
+        inOrder.verify(lobbyRepository).updateMapMetadata(eq(CODE), eq(newMetadata));
+        inOrder.verify(lobbyRepository).updateMapMetadata(eq(CODE), (LobbyMapMetadata) isNull());
+
+        verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(any());
+    }
+
+    @Test
+    @DisplayName("DB 조건부 갱신이 0행 반환(레이스 컨디션)이면 Redis를 보상 복구하고 409를 던진다")
+    void updateMap_rollbacksRedisAndThrowsConflict_whenDbUpdatedZeroRows() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+
+        LobbyMapMetadata newMetadata = new LobbyMapMetadata(2L, "POP 히트곡", "POP");
+        when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING)).thenReturn(0);
+
+        assertThatThrownBy(() -> sut.updateMap(CODE, request(2L), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+
+        LobbyMapMetadata oldMetadata = new LobbyMapMetadata(10L, "K-POP 구곡", "K-POP");
+        var inOrder = inOrder(lobbyRepository);
+        inOrder.verify(lobbyRepository).updateMapMetadata(eq(CODE), eq(newMetadata));
+        inOrder.verify(lobbyRepository).updateMapMetadata(eq(CODE), eq(oldMetadata));
+
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(any());
     }
 }

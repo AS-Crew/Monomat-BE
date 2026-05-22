@@ -1,7 +1,11 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 
@@ -30,4 +34,22 @@ public interface GameLobbyJpaRepository extends JpaRepository<GameLobby, Long> {
      * Redis SETNX와 이중 방어선으로 동작한다.
      */
     boolean existsByInviteCode(String inviteCode);
+
+    /**
+     * status 조건부 map_id 갱신.
+     *
+     * 맵 변경 시 status == WAITING인 경우에만 갱신하여 동시 게임 시작 레이스를 방지한다.
+     * 반환값이 0이면 이미 PLAYING이거나 초대 코드가 없는 경우다.
+     *
+     * @param code   로비 초대 코드
+     * @param mapId  새 맵 ID (null이면 맵 미선택 상태로 복원)
+     * @param status 갱신을 허용할 현재 상태 (호출 측에서 LobbyStatus.WAITING 전달)
+     * @return 갱신된 행 수 (0 또는 1)
+     */
+    @Modifying
+    @Query("UPDATE GameLobby g SET g.mapId = :mapId WHERE g.inviteCode = :code AND g.status = :status")
+    int updateMapIdIfWaiting(
+            @Param("code") String code,
+            @Param("mapId") Long mapId,
+            @Param("status") LobbyStatus status);
 }

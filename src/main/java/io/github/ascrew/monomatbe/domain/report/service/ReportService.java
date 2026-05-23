@@ -4,10 +4,12 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
+import io.github.ascrew.monomatbe.domain.report.config.ReportPolicyProperties;
 import io.github.ascrew.monomatbe.domain.report.dto.LobbyReportRequest;
 import io.github.ascrew.monomatbe.domain.report.dto.LobbyUserReportRequest;
 import io.github.ascrew.monomatbe.domain.report.dto.ReportCountResponse;
 import io.github.ascrew.monomatbe.domain.report.dto.ReportResponse;
+import io.github.ascrew.monomatbe.domain.report.dto.ReportModerationPolicyResponse;
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
@@ -76,6 +78,7 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final UserRepository userRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
+    private final ReportPolicyProperties reportPolicyProperties;
 
     /**
      * 로비 자체 신고를 생성한다.
@@ -248,6 +251,38 @@ public class ReportService {
                 .lobbyId(lobbyId)
                 .status(ReportStatus.PENDING.name())
                 .count(count)
+                .build();
+    }
+
+    /**
+     * 특정 로비의 신고 누적 상태가 관리자 검토 임계값을 넘었는지 판단한다.
+     *
+     * [중요]
+     * 이 메서드는 실제 로비 상태를 변경하지 않는다.
+     * 자동 비공개 전환은 Redis public index, DB game_lobby.is_private,
+     * WebSocket refresh 이벤트까지 함께 처리해야 하므로 후속 이슈에서 분리한다.
+     *
+     * @param lobbyId game_lobby.id
+     * @return 신고 정책 판단 결과
+     */
+    @Transactional(readOnly = true)
+    public ReportModerationPolicyResponse evaluateLobbyModerationPolicy(Long lobbyId) {
+        long pendingReportCount = reportRepository.countByLobbyIdAndStatus(
+                lobbyId,
+                ReportStatus.PENDING
+        );
+
+        int reviewThreshold = reportPolicyProperties.getLobbyReviewThreshold();
+        boolean reviewRequired = pendingReportCount >= reviewThreshold;
+        boolean autoPrivateEnabled = reportPolicyProperties.isAutoPrivateEnabled();
+
+        return ReportModerationPolicyResponse.builder()
+                .lobbyId(lobbyId)
+                .pendingReportCount(pendingReportCount)
+                .reviewThreshold(reviewThreshold)
+                .reviewRequired(reviewRequired)
+                .autoPrivateEnabled(autoPrivateEnabled)
+                .autoPrivateCandidate(autoPrivateEnabled && reviewRequired)
                 .build();
     }
 

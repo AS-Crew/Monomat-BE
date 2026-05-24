@@ -71,17 +71,15 @@ public class GameSessionCreateService {
 
         // 3. DB 플레이어 스냅샷 생성
         List<String> participantIdentifiers = lobbyRepository.getParticipantIdentifiers(code);
-        for (String userIdentifier : participantIdentifiers) {
-            userSessionRepository.findBySessionId(userIdentifier).ifPresent(userSession -> {
-                User user = userSession.getUser();
-                GameSessionPlayer player = GameSessionPlayer.builder()
+        List<GameSessionPlayer> players = userSessionRepository.findBySessionIdIn(participantIdentifiers)
+                .stream()
+                .map(userSession -> GameSessionPlayer.builder()
                         .gameSession(gameSession)
-                        .user(user)
+                        .user(userSession.getUser())
                         .score(0)
-                        .build();
-                gameSessionPlayerJpaRepository.save(player);
-            });
-        }
+                        .build())
+                .toList();
+        gameSessionPlayerJpaRepository.saveAll(players);
 
         // 4. Redis 초기화 (Lua)
         String sessionKey = RedisKeys.gameSessionKey(code);

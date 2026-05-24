@@ -21,16 +21,19 @@ redis.call('HSET', sessionKey,
     'total_round_count', totalRounds,
     'status', 'PLAYING'
 )
+redis.call('EXPIRE', sessionKey, 7200)
 
 -- 2. 라운드별 MapItem ID 저장
 -- mapItemIds를 분리하여 RPUSH
 for id in string.gmatch(mapItemIds, '([^,]+)') do
     redis.call('RPUSH', roundsKey, id)
 end
+redis.call('EXPIRE', roundsKey, 7200)
 
 -- 3. 참가자 초기 점수 저장
 for uuid in string.gmatch(participants, '([^,]+)') do
     redis.call('HSET', playersKey, uuid, '0')
 end
+redis.call('EXPIRE', playersKey, 7200)
 
 return "OK"

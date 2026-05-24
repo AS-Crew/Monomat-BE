@@ -517,4 +517,40 @@ public final class RedisKeys {
     public static String youtubeOembedFailureKey(String videoId) {
         return YOUTUBE_OEMBED_FAILURE_PREFIX + videoId;
     }
+
+    // =========================================================
+    // 게임 세션 관련 상수
+    // =========================================================
+
+    private static final String GAME_SESSION_PREFIX = "game:session:";
+
+    /**
+     * 게임 세션 메타데이터 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @return "game:session:{lobbyCode}"
+     */
+    public static String gameSessionKey(String lobbyCode) {
+        return GAME_SESSION_PREFIX + lobbyCode;
+    }
+
+    /**
+     * 출제된 라운드 목록 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @return "game:session:{lobbyCode}:rounds"
+     */
+    public static String gameSessionRoundsKey(String lobbyCode) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":rounds";
+    }
+
+    /**
+     * 인게임 플레이어 점수 해시 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @return "game:session:{lobbyCode}:players"
+     */
+    public static String gameSessionPlayersKey(String lobbyCode) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":players";
+    }
 }

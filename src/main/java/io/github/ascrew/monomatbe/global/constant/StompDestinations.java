@@ -83,6 +83,16 @@ public final class StompDestinations {
         return LOBBY_CHANNEL_PREFIX + code + "/game";
     }
 
+    /** @return "/topic/game/{code}/round" */
+    public static String subscribeGameRound(String code) {
+        return SUBSCRIBE_PREFIX + "/game/" + code + "/round";
+    }
+
+    /** @return "/topic/game/{code}/round-end" */
+    public static String subscribeGameRoundEnd(String code) {
+        return SUBSCRIBE_PREFIX + "/game/" + code + "/round-end";
+    }
+
     /** @return "/app/chat/lobby/{code}" */
     public static String publishLobbyChat(String code) {
         return PUBLISH_PREFIX + "/chat/lobby/" + code;

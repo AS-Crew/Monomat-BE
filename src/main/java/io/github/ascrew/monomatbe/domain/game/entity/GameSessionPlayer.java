@@ -8,7 +8,7 @@ import lombok.*;
 @Entity
 @Builder
 @Table(
-    name = "GAME_SESSION_PLAYER",
+    name = "game_session_player",
     uniqueConstraints = @UniqueConstraint(
         name = "uq_gsp_session_user",
         columnNames = {"game_session_id", "user_id"}

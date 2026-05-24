@@ -244,9 +244,23 @@ public class LobbyStartService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                lobbyRealtimeNotifier.notifyGameStarted(code);
-                lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, requesterIdentifier);
-                gameRealtimeNotifier.notifyRoundStart(code, firstRound);
+                try {
+                    lobbyRealtimeNotifier.notifyGameStarted(code);
+                } catch (Exception e) {
+                    log.error("[ALERT_REQUIRED] GAME_STARTED 발행 실패 - code: {}, requester: {}", code, requesterIdentifier, e);
+                }
+
+                try {
+                    lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, requesterIdentifier);
+                } catch (Exception e) {
+                    log.error("[ALERT_REQUIRED] REFRESH_LOBBY_INFO 발행 실패 - code: {}, requester: {}", code, requesterIdentifier, e);
+                }
+
+                try {
+                    gameRealtimeNotifier.notifyRoundStart(code, firstRound);
+                } catch (Exception e) {
+                    log.error("[ALERT_REQUIRED] ROUND_START 발행 실패 - code: {}, requester: {}, roundNo: {}", code, requesterIdentifier, firstRound.roundNo(), e);
+                }
             }
         });
     }

@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository.redis;
 
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyLuaResultCode;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
@@ -40,6 +41,13 @@ public class LobbyLuaResultMapper {
     private static final String RESULT_FORBIDDEN = "FORBIDDEN";
     private static final String RESULT_CANNOT_KICK_SELF = "CANNOT_KICK_SELF";
     private static final String RESULT_TARGET_NOT_PARTICIPANT = "TARGET_NOT_PARTICIPANT";
+
+    // =========================================================
+    // compensate_lobby_map.lua 반환값 상수
+    // =========================================================
+
+    private static final String RESULT_COMPENSATED = "COMPENSATED";
+    private static final String RESULT_SKIPPED_NOT_WAITING = "SKIPPED_NOT_WAITING";
 
     /**
      * 운영 확인이 필요한 Redis 정합성 문제 로그 식별자
@@ -339,6 +347,44 @@ public class LobbyLuaResultMapper {
                     e
             );
         }
+    }
+
+    /**
+     * compensate_lobby_map.lua 반환 문자열을 LobbyMapCompensationResult로 변환한다.
+     *
+     * @param result Lua 반환 문자열
+     * @param code 로비 초대 코드
+     * @return 도메인 보상 결과
+     */
+    public LobbyMapCompensationResult toLobbyMapCompensationResult(String result, String code) {
+        if (result == null) {
+            log.error(
+                    "{} compensate_lobby_map.lua null 반환값 - lobbyCode: {}",
+                    LOG_MONITORING_REQUIRED,
+                    code
+            );
+            return LobbyMapCompensationResult.LOBBY_NOT_FOUND;
+        }
+
+        if (RESULT_COMPENSATED.equals(result)) {
+            return LobbyMapCompensationResult.COMPENSATED;
+        }
+
+        if (RESULT_SKIPPED_NOT_WAITING.equals(result)) {
+            return LobbyMapCompensationResult.SKIPPED_NOT_WAITING;
+        }
+
+        if (RESULT_LOBBY_NOT_FOUND.equals(result)) {
+            return LobbyMapCompensationResult.LOBBY_NOT_FOUND;
+        }
+
+        log.error(
+                "{} compensate_lobby_map.lua 알 수 없는 반환값 - lobbyCode: {}, result: {}",
+                LOG_MONITORING_REQUIRED,
+                code,
+                result
+        );
+        return LobbyMapCompensationResult.LOBBY_NOT_FOUND;
     }
 
     /**

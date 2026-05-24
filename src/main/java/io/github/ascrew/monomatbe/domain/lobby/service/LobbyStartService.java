@@ -105,7 +105,7 @@ public class LobbyStartService {
             );
         }
 
-        GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCode(code)
+        GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCodeForUpdate(code)
                 .orElseGet(() -> handleMissingGameLobbySnapshot(code, requesterIdentifier));
 
         QuizMap quizMap = lobbyStartPolicy.validateStartableMap(gameLobby);

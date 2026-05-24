@@ -15,7 +15,10 @@ local totalRounds = ARGV[1]
 local mapItemIds  = ARGV[2] -- 쉼표로 구분된 문자열 (예: "1,4,5,2,3")
 local participants = ARGV[3] -- 쉼표로 구분된 문자열 (예: "uuid1,uuid2")
 
--- 1. 세션 메타데이터 저장
+-- 1. 기존 게임 세션 데이터 초기화 (재시도 대응)
+redis.call('DEL', sessionKey, roundsKey, playersKey)
+
+-- 2. 세션 메타데이터 저장
 redis.call('HSET', sessionKey, 
     'current_round_no', '1',
     'total_round_count', totalRounds,

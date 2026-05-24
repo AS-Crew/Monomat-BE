@@ -1,7 +1,7 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
+
 import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
@@ -39,7 +39,7 @@ public class GameSessionCreateService {
     private final GameSessionPlayerJpaRepository gameSessionPlayerJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
     private final LobbyRepository lobbyRepository;
-    private final UserSessionRepository userSessionRepository;
+    private final GameParticipantResolver gameParticipantResolver;
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<String> initGameSessionScript;
 
@@ -71,11 +71,16 @@ public class GameSessionCreateService {
 
         // 3. DB 플레이어 스냅샷 생성
         List<String> participantIdentifiers = lobbyRepository.getParticipantIdentifiers(code);
-        List<GameSessionPlayer> players = userSessionRepository.findBySessionIdIn(participantIdentifiers)
-                .stream()
-                .map(userSession -> GameSessionPlayer.builder()
+        List<User> participants = gameParticipantResolver.resolveUsers(participantIdentifiers);
+
+        if (participants.size() != participantIdentifiers.size()) {
+            throw new IllegalStateException("게임 참가자 스냅샷 수가 Redis 참가자 수와 일치하지 않습니다.");
+        }
+
+        List<GameSessionPlayer> players = participants.stream()
+                .map(user -> GameSessionPlayer.builder()
                         .gameSession(gameSession)
-                        .user(userSession.getUser())
+                        .user(user)
                         .score(0)
                         .build())
                 .toList();
@@ -91,13 +96,17 @@ public class GameSessionCreateService {
                 .collect(Collectors.joining(","));
         String participantsStr = String.join(",", participantIdentifiers);
 
-        redisTemplate.execute(
+        String result = redisTemplate.execute(
                 initGameSessionScript,
                 List.of(sessionKey, roundsKey, playersKey),
                 String.valueOf(lobby.getRoundCount()),
                 mapItemIdsStr,
                 participantsStr
         );
+
+        if (!"OK".equals(result)) {
+            throw new IllegalStateException("게임 세션 Redis 초기화 실패: " + result);
+        }
 
         log.info("게임 세션 생성 완료 - 로비 코드: {}, 라운드 수: {}, 참여자 수: {}", 
                  code, lobby.getRoundCount(), participantIdentifiers.size());

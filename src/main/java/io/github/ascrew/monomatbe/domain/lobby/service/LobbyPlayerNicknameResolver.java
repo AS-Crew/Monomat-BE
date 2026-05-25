@@ -1,8 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
-import io.github.ascrew.monomatbe.domain.auth.entity.GuestSession;
-import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
+import io.github.ascrew.monomatbe.domain.auth.repository.UserIdentifierNicknameProjection;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +15,8 @@ import java.util.Map;
  * 로비 참여자 userIdentifier를 사용자 닉네임으로 변환하는 컴포넌트
  *
  * [설계 이유]
- * LobbyQueryService가 게스트/회원 세션 저장 구조를 직접 알게 되면 로비 조회 책임과 인증 세션 조회 책임이 섞인다.
+ * LobbyQueryService가 게스트/회원 세션 저장 구조를 직접 알게 되면
+ * 로비 조회 책임과 인증 세션 조회 책임이 섞인다.
  * 따라서 userIdentifier -> nickname 변환 책임을 이 컴포넌트로 분리한다.
  *
  * [조회 정책]
@@ -40,7 +40,7 @@ public class LobbyPlayerNicknameResolver {
      *
      * [N+1 방지]
      * participants 수만큼 DB를 반복 조회하지 않고,
-     * guest_sessions / user_sessions를 각각 IN query로 조회한다.
+     * guest_sessions / user_sessions를 각각 Projection 기반 IN query로 조회한다.
      *
      * @param userIdentifiers 로비 참여자 userIdentifier 목록
      * @return userIdentifier -> nickname Map
@@ -84,15 +84,9 @@ public class LobbyPlayerNicknameResolver {
             Map<String, String> nicknameMap
     ) {
         try {
-            for (GuestSession guestSession : guestSessionRepository.findByGuestTokenIn(userIdentifiers)) {
-                if (guestSession.getUser() == null) {
-                    continue;
-                }
-
-                nicknameMap.put(
-                        guestSession.getGuestToken(),
-                        guestSession.getUser().getUsername()
-                );
+            for (UserIdentifierNicknameProjection projection :
+                    guestSessionRepository.findNicknamesByGuestTokenIn(userIdentifiers)) {
+                putIfValid(nicknameMap, projection);
             }
         } catch (RuntimeException e) {
             log.warn("로비 참여자 게스트 닉네임 조회 실패 - fallback nickname 사용", e);
@@ -104,18 +98,30 @@ public class LobbyPlayerNicknameResolver {
             Map<String, String> nicknameMap
     ) {
         try {
-            for (UserSession userSession : userSessionRepository.findBySessionIdIn(userIdentifiers)) {
-                if (userSession.getUser() == null) {
-                    continue;
-                }
-
-                nicknameMap.put(
-                        userSession.getSessionId(),
-                        userSession.getUser().getUsername()
-                );
+            for (UserIdentifierNicknameProjection projection :
+                    userSessionRepository.findNicknamesBySessionIdIn(userIdentifiers)) {
+                putIfValid(nicknameMap, projection);
             }
         } catch (RuntimeException e) {
             log.warn("로비 참여자 회원 닉네임 조회 실패 - fallback nickname 사용", e);
         }
+    }
+
+    private void putIfValid(
+            Map<String, String> nicknameMap,
+            UserIdentifierNicknameProjection projection
+    ) {
+        if (projection == null
+                || projection.getUserIdentifier() == null
+                || projection.getUserIdentifier().isBlank()
+                || projection.getNickname() == null
+                || projection.getNickname().isBlank()) {
+            return;
+        }
+
+        nicknameMap.put(
+                projection.getUserIdentifier(),
+                projection.getNickname()
+        );
     }
 }

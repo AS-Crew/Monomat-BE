@@ -768,7 +768,7 @@ public class LobbyQueryService {
                 ready
         );
     }
-    
+
     /**
      * 로비 상세 응답에서 방장 정보가 누락되지 않도록 보정한다.
      *

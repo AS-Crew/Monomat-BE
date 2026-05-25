@@ -2,19 +2,42 @@ package io.github.ascrew.monomatbe.domain.auth.repository;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.GuestSession;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
- * guest_sessions 접근 리포지토리.
+ * guest_sessions 접근 리포지토리
  */
 public interface GuestSessionRepository extends JpaRepository<GuestSession, Long> {
 
     /**
-     * 게스트 UUID 토큰으로 세션 조회.
+     * 게스트 UUID 토큰으로 세션 조회
      * 자동 로그인/세션 유효성 확인에 사용됩니다.
      */
     Optional<GuestSession> findByGuestToken(String guestToken);
 
-    java.util.List<GuestSession> findByGuestTokenIn(java.util.Collection<String> guestTokens);
+    List<GuestSession> findByGuestTokenIn(Collection<String> guestTokens);
+
+    /**
+     * 게스트 userIdentifier에 대응되는 닉네임을 Projection으로 조회한다.
+     *
+     * [N+1 방지]
+     * GuestSession.user는 LAZY 연관관계이므로 세션 엔티티 목록을 조회한 뒤
+     * getUser().getUsername()을 호출하면 참여자 수만큼 추가 쿼리가 발생할 수 있다.
+     * 따라서 join 쿼리로 userIdentifier와 nickname만 한 번에 조회한다.
+     */
+    @Query("""
+            select g.guestToken as userIdentifier,
+                   u.username as nickname
+            from GuestSession g
+            join g.user u
+            where g.guestToken in :guestTokens
+            """)
+    List<UserIdentifierNicknameProjection> findNicknamesByGuestTokenIn(
+            @Param("guestTokens") Collection<String> guestTokens
+    );
 }

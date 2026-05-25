@@ -614,6 +614,7 @@ JWT Access Token이 필요합니다.
   "players": [
     {
       "userIdentifier": "f8f6aa1b-3dd8-4b20-8ec8-9f7c7e0dd0fc",
+      "nickname": "방장닉네임",
       "host": true,
       "ready": false
     },
@@ -645,6 +646,7 @@ JWT Access Token이 필요합니다.
 | `players[].host`           | Boolean | 방장 여부                                |
 | `players[].ready`          | Boolean | ready 여부. 방장은 ready 대상이 아니므로 `false` |
 | `canStart`                 | Boolean | 조회 시점 기준 게임 시작 가능 여부                 |
+| `players[].nickname` | String | 참여자 닉네임 |
 
 **canStart 계산 조건**
 

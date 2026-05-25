@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -37,6 +38,7 @@ class LobbyQueryServiceCanStartTest {
     private LobbyRepository lobbyRepository;
     private GameLobbyJpaRepository gameLobbyJpaRepository;
     private QuizMapJpaRepository quizMapJpaRepository;
+    private LobbyPlayerNicknameResolver lobbyPlayerNicknameResolver;
     private LobbyQueryService lobbyQueryService;
 
     @BeforeEach
@@ -44,6 +46,7 @@ class LobbyQueryServiceCanStartTest {
         lobbyRepository = mock(LobbyRepository.class);
         gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
         quizMapJpaRepository = mock(QuizMapJpaRepository.class);
+        lobbyPlayerNicknameResolver = mock(LobbyPlayerNicknameResolver.class);
 
         LobbyCanStartPolicy lobbyCanStartPolicy = new LobbyCanStartPolicy(
                 quizMapJpaRepository
@@ -52,7 +55,8 @@ class LobbyQueryServiceCanStartTest {
         lobbyQueryService = new LobbyQueryService(
                 lobbyRepository,
                 gameLobbyJpaRepository,
-                lobbyCanStartPolicy
+                lobbyCanStartPolicy,
+                lobbyPlayerNicknameResolver
         );
     }
 
@@ -66,6 +70,10 @@ class LobbyQueryServiceCanStartTest {
         when(lobbyRepository.isParticipant(code, hostId)).thenReturn(true);
         when(lobbyRepository.getParticipantIdentifiers(code)).thenReturn(List.of(hostId, guestId));
         when(lobbyRepository.getReadyParticipantIdentifiers(code)).thenReturn(Set.of(guestId));
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostId, guestId))).thenReturn(Map.of(
+                hostId, "방장",
+                guestId, "참여자"
+        ));
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
         when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(5)));
 
@@ -87,6 +95,10 @@ class LobbyQueryServiceCanStartTest {
         when(lobbyRepository.isParticipant(code, hostId)).thenReturn(true);
         when(lobbyRepository.getParticipantIdentifiers(code)).thenReturn(List.of(hostId, guestId));
         when(lobbyRepository.getReadyParticipantIdentifiers(code)).thenReturn(Set.of());
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostId, guestId))).thenReturn(Map.of(
+                hostId, "방장",
+                guestId, "참여자"
+        ));
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
         when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(5)));
 
@@ -108,6 +120,10 @@ class LobbyQueryServiceCanStartTest {
         when(lobbyRepository.isParticipant(code, hostId)).thenReturn(true);
         when(lobbyRepository.getParticipantIdentifiers(code)).thenReturn(List.of(hostId, guestId));
         when(lobbyRepository.getReadyParticipantIdentifiers(code)).thenReturn(Set.of(guestId));
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostId, guestId))).thenReturn(Map.of(
+                hostId, "방장",
+                guestId, "참여자"
+        ));
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby()));
         when(quizMapJpaRepository.findById(2L)).thenReturn(Optional.of(quizMap(4)));
 

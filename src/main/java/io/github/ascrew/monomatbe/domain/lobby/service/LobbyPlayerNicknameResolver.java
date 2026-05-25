@@ -1,61 +1,40 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
-import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserIdentifierNicknameProjection;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
+import io.github.ascrew.monomatbe.domain.auth.service.UserNicknameLookupService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 
 /**
  * 로비 참여자 userIdentifier를 사용자 닉네임으로 변환하는 컴포넌트
  *
  * [설계 이유]
- * LobbyQueryService가 게스트/회원 세션 저장 구조를 직접 알게 되면
- * 로비 조회 책임과 인증 세션 조회 책임이 섞인다.
- * 따라서 userIdentifier -> nickname 변환 책임을 이 컴포넌트로 분리한다.
+ * LobbyQueryService는 로비 상세 응답 조립 책임만 가진다.
+ * userIdentifier가 실제로 guest_sessions / user_sessions 중 어디에 저장되는지는
+ * Auth 도메인의 내부 구현이므로 UserNicknameLookupService에 위임한다.
  *
- * [조회 정책]
- * - 게스트: guest_sessions.guest_token 기준 조회
- * - 회원: user_sessions.session_id 기준 조회
- * - 두 경로를 모두 조회한 뒤 userIdentifier 기준으로 nickname Map을 만든다.
- * - 알 수 없는 userIdentifier는 null로 두지 않고 fallback 표시값을 반환한다.
+ * [역할]
+ * - Auth 도메인 서비스에서 userIdentifier -> nickname Map을 조회한다.
+ * - 조회되지 않은 사용자를 위한 fallback nickname을 제공한다.
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class LobbyPlayerNicknameResolver {
 
     private static final String UNKNOWN_NICKNAME_PREFIX = "Unknown-";
 
-    private final GuestSessionRepository guestSessionRepository;
-    private final UserSessionRepository userSessionRepository;
+    private final UserNicknameLookupService userNicknameLookupService;
 
     /**
      * 여러 userIdentifier에 대응되는 닉네임을 한 번에 조회한다.
-     *
-     * [N+1 방지]
-     * participants 수만큼 DB를 반복 조회하지 않고,
-     * guest_sessions / user_sessions를 각각 Projection 기반 IN query로 조회한다.
      *
      * @param userIdentifiers 로비 참여자 userIdentifier 목록
      * @return userIdentifier -> nickname Map
      */
     public Map<String, String> resolveNicknameMap(Collection<String> userIdentifiers) {
-        if (userIdentifiers == null || userIdentifiers.isEmpty()) {
-            return Map.of();
-        }
-
-        Map<String, String> nicknameMap = new HashMap<>();
-
-        resolveGuestNicknames(userIdentifiers, nicknameMap);
-        resolveRegisteredUserNicknames(userIdentifiers, nicknameMap);
-
-        return nicknameMap;
+        return userNicknameLookupService.findNicknameMapByUserIdentifiers(userIdentifiers);
     }
 
     /**
@@ -77,51 +56,5 @@ public class LobbyPlayerNicknameResolver {
                 : compact.substring(0, 6);
 
         return UNKNOWN_NICKNAME_PREFIX + suffix;
-    }
-
-    private void resolveGuestNicknames(
-            Collection<String> userIdentifiers,
-            Map<String, String> nicknameMap
-    ) {
-        try {
-            for (UserIdentifierNicknameProjection projection :
-                    guestSessionRepository.findNicknamesByGuestTokenIn(userIdentifiers)) {
-                putIfValid(nicknameMap, projection);
-            }
-        } catch (RuntimeException e) {
-            log.warn("로비 참여자 게스트 닉네임 조회 실패 - fallback nickname 사용", e);
-        }
-    }
-
-    private void resolveRegisteredUserNicknames(
-            Collection<String> userIdentifiers,
-            Map<String, String> nicknameMap
-    ) {
-        try {
-            for (UserIdentifierNicknameProjection projection :
-                    userSessionRepository.findNicknamesBySessionIdIn(userIdentifiers)) {
-                putIfValid(nicknameMap, projection);
-            }
-        } catch (RuntimeException e) {
-            log.warn("로비 참여자 회원 닉네임 조회 실패 - fallback nickname 사용", e);
-        }
-    }
-
-    private void putIfValid(
-            Map<String, String> nicknameMap,
-            UserIdentifierNicknameProjection projection
-    ) {
-        if (projection == null
-                || projection.getUserIdentifier() == null
-                || projection.getUserIdentifier().isBlank()
-                || projection.getNickname() == null
-                || projection.getNickname().isBlank()) {
-            return;
-        }
-
-        nicknameMap.put(
-                projection.getUserIdentifier(),
-                projection.getNickname()
-        );
     }
 }

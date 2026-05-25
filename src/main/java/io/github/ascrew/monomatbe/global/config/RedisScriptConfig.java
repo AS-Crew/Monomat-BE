@@ -94,4 +94,20 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    /**
+     * 게임 세션 초기화 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 게임 세션 해시 초기화
+     * - 게임 라운드 목록 리스트 초기화
+     * - 게임 플레이어 해시(초기 점수) 초기화
+     */
+    @Bean
+    public RedisScript<String> initGameSessionScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/init_game_session.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

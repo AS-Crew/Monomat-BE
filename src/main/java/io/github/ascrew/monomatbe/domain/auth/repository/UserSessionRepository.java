@@ -28,6 +28,8 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
 
     Optional<UserSession> findBySessionId(String sessionId);
 
+    List<UserSession> findBySessionIdIn(Collection<String> sessionIds);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from UserSession s where s.sessionId = :sessionId")
     Optional<UserSession> findBySessionIdForUpdate(@Param("sessionId") String sessionId);

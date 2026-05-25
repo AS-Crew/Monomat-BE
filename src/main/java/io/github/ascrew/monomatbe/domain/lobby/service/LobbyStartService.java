@@ -75,6 +75,8 @@ public class LobbyStartService {
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyStartPolicy lobbyStartPolicy;
+    private final io.github.ascrew.monomatbe.domain.game.service.GameSessionCreateService gameSessionCreateService;
+    private final io.github.ascrew.monomatbe.domain.game.service.GameRealtimeNotifier gameRealtimeNotifier;
 
     /**
      * 로비 게임 시작 요청을 처리한다.
@@ -119,9 +121,11 @@ public class LobbyStartService {
 
         handleStartLobbyResult(result);
 
+        io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto firstRound;
         try {
             gameLobby.changeStatus(LobbyStatus.PLAYING);
             gameLobbyJpaRepository.saveAndFlush(gameLobby);
+            firstRound = gameSessionCreateService.createGameSession(gameLobby);
         } catch (Exception e) {
             log.error(
                     "게임 시작 DB 상태 변경 실패 - Redis 상태 보상 롤백 시도. code: {}, requester: {}",
@@ -145,7 +149,7 @@ public class LobbyStartService {
             );
         }
 
-        registerGameStartedEventAfterCommit(code, requesterIdentifier);
+        registerGameStartedEventAfterCommit(code, requesterIdentifier, firstRound);
 
         log.info(
                 "게임 시작 처리 완료 - code: {}, requester: {}, mapId: {}, roundCount: {}",
@@ -220,7 +224,8 @@ public class LobbyStartService {
      */
     private void registerGameStartedEventAfterCommit(
             String code,
-            String requesterIdentifier
+            String requesterIdentifier,
+            io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto firstRound
     ) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             log.error(
@@ -239,8 +244,23 @@ public class LobbyStartService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                lobbyRealtimeNotifier.notifyGameStarted(code);
-                lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, requesterIdentifier);
+                try {
+                    lobbyRealtimeNotifier.notifyGameStarted(code);
+                } catch (Exception e) {
+                    log.error("[ALERT_REQUIRED] GAME_STARTED 발행 실패 - code: {}, requester: {}", code, requesterIdentifier, e);
+                }
+
+                try {
+                    lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, requesterIdentifier);
+                } catch (Exception e) {
+                    log.error("[ALERT_REQUIRED] REFRESH_LOBBY_INFO 발행 실패 - code: {}, requester: {}", code, requesterIdentifier, e);
+                }
+
+                try {
+                    gameRealtimeNotifier.notifyRoundStart(code, firstRound);
+                } catch (Exception e) {
+                    log.error("[ALERT_REQUIRED] ROUND_START 발행 실패 - code: {}, requester: {}, roundNo: {}", code, requesterIdentifier, firstRound.roundNo(), e);
+                }
             }
         });
     }

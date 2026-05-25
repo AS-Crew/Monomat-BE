@@ -446,6 +446,42 @@ RedisSubscriber.onMessage()
     ▼
 클라이언트
     │ /topic/lobby/{code} 구독자로 ENTER 메시지 수신
+
+### 게임 세션 및 라운드 시작 흐름
+
+```text
+클라이언트 (방장)
+    │ POST /api/lobbies/{code}/start
+    ▼
+LobbyStartService
+    │ 1. start_lobby.lua 로 Redis 로비 상태 검증 및 PLAYING 변경
+    │ 2. DB 트랜잭션 시작 (@Transactional)
+    │ 3. DB 로비 상태 PLAYING 변경
+    │ 4. GameSessionCreateService 호출
+    ▼
+GameSessionCreateService
+    │ 1. MapItem 조회 및 셔플 (라운드 수만큼 선택)
+    │ 2. DB GameSession, GameSessionPlayer 스냅샷 생성 (Bulk Insert)
+    │ 3. init_game_session.lua 로 Redis 인게임 세션 데이터 초기화 (2시간 TTL 적용)
+    │ 4. 첫 라운드 정보(RoundStartDto) 반환
+    ▼
+LobbyStartService
+    │ TransactionSynchronizationManager.registerSynchronization (afterCommit)
+    │ DB 트랜잭션 정상 커밋 대기
+    ▼
+DB Commit 완료
+    │
+    ▼
+GameRealtimeNotifier / LobbyRealtimeNotifier
+    │ 1. /topic/lobby/{code}/game 으로 GAME_STARTED 브로드캐스트
+    │ 2. /topic/game/{code}/round 로 첫 번째 라운드 RoundStartDto 브로드캐스트
+    ▼
+클라이언트 (전체)
+    │ 게임 화면 전환 및 유튜브 플레이어 재생
+```
+
+* **트랜잭션-웹소켓 동기화**: DB 커밋 전에 웹소켓 이벤트가 발송되어 클라이언트가 아직 DB에 반영되지 않은 상태를 조회하는 Race Condition을 방지하기 위해 `afterCommit` 훅을 사용합니다.
+* **보상 트랜잭션(Rollback)**: 게임 세션 생성이나 Redis 스크립트 실행 중 예외가 발생하면 DB 트랜잭션이 롤백되며, 로비 상태도 `WAITING`으로 안전하게 복구됩니다.
 ```
 
 > 로비 입장 처리는 `/topic/lobby/{code}` 구독 시점에만 수행합니다.

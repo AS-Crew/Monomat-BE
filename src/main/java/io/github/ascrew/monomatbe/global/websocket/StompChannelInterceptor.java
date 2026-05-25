@@ -3,6 +3,8 @@ package io.github.ascrew.monomatbe.global.websocket;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
+import io.github.ascrew.monomatbe.global.websocket.error.StompErrorCode;
+import io.github.ascrew.monomatbe.global.websocket.error.StompErrorException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,7 +24,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * STOMP 채널 인터셉터.
+ * STOMP 채널 인터셉터
  *
  * [책임]
  * - CONNECT 시 userIdentifier 검증 및 세션 저장
@@ -169,24 +171,20 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (userIdentifier == null || userIdentifier.isBlank()) {
             log.warn("STOMP CONNECT 거부: 사용자 식별자 없음");
-            throw new IllegalArgumentException(
-                    "STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다."
-            );
+            throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_MISSING);
         }
 
         if (!UUID_PATTERN.matcher(userIdentifier).matches()) {
             log.warn("STOMP CONNECT 거부: 유효하지 않은 식별자 형식 = {}",
                     sanitizeForLog(userIdentifier));
-            throw new IllegalArgumentException(
-                    "STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다."
-            );
+            throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_INVALID);
         }
 
         Long sessionSequence = stringRedisTemplate.opsForValue()
                 .increment(RedisKeys.WS_SESSION_SEQUENCE);
 
         if (sessionSequence == null) {
-            throw new IllegalStateException("STOMP CONNECT: WebSocket 세션 sequence 발급에 실패했습니다.");
+            throw new StompErrorException(StompErrorCode.CONNECT_SESSION_SEQUENCE_FAILED);
         }
 
         if (sessionAttributes != null) {
@@ -198,7 +196,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (wsSessionId == null || wsSessionId.isBlank()) {
             log.warn("STOMP CONNECT 거부: WebSocket 세션 ID 없음 - userIdentifier: {}", userIdentifier);
-            throw new IllegalStateException("STOMP CONNECT: WebSocket 세션 ID가 없습니다.");
+            throw new StompErrorException(StompErrorCode.CONNECT_WS_SESSION_ID_MISSING);
         }
 
         log.debug("STOMP CONNECT 온라인 상태 저장 시작 - userIdentifier: {}, wsSessionId: {}, sessionSequence: {}",
@@ -225,7 +223,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (userIdentifier == null) {
             log.warn("[{}] 인증되지 않은 세션 접근 차단", accessor.getCommand());
-            throw new IllegalStateException("인증 정보가 존재하지 않습니다.");
+            throw new StompErrorException(StompErrorCode.SESSION_UNAUTHENTICATED);
         }
 
         switch (accessor.getCommand()) {
@@ -291,7 +289,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             Map<String, Object> sessionAttributes
     ) {
         if (wsSessionId == null || wsSessionId.isBlank()) {
-            throw new IllegalStateException("로비 입장 실패: WebSocket 세션 ID가 없습니다.");
+            throw new StompErrorException(StompErrorCode.LOBBY_ENTER_WS_SESSION_MISSING);
         }
 
         long sessionSequence = extractSessionSequence(sessionAttributes);
@@ -317,37 +315,37 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
                     case FULL -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 최대 인원에 도달했습니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_FULL);
                     }
 
                     case LOBBY_NOT_WAITING -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 게임이 이미 시작된 로비입니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_NOT_WAITING);
                     }
 
                     case INVALID_LOBBY_CAPACITY -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 로비 정원 정보가 유효하지 않습니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_INVALID_CAPACITY);
                     }
 
                     case STALE_SESSION -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 더 최신 WebSocket 세션이 이미 존재합니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_STALE_SESSION);
                     }
 
                     case KICKED_USER -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패 : 강퇴된 로비에는 재입장할 수 없습니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_KICKED_USER);
                     }
 
                     case LOBBY_NOT_FOUND -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalArgumentException("로비 입장 실패: 존재하지 않는 로비입니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_NOT_FOUND);
                     }
 
                     case INVALID_SEQUENCE -> {
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 세션 상태가 유효하지 않습니다. 새로고침 후 다시 시도해주세요.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_INVALID_SEQUENCE);
                     }
 
                     case UNKNOWN -> {
@@ -361,11 +359,11 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                                 result, lobbyCode, userIdentifier, wsSessionId);
 
                         cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 알 수 없는 서버 응답입니다.");
+                        throw new StompErrorException(StompErrorCode.LOBBY_ENTER_UNKNOWN_RESULT);
                     }
                 }
 
-            } catch (IllegalArgumentException | IllegalStateException e) {
+            } catch (StompErrorException e) {
                 throw e;
             } catch (RuntimeException e) {
                 lastException = e;
@@ -383,7 +381,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
 
         cleanupWsConnection(wsSessionId);
-        throw new IllegalStateException("일시적으로 로비 입장 상태를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요.");
+        throw new StompErrorException(StompErrorCode.LOBBY_ENTER_TEMPORARILY_UNAVAILABLE);
     }
 
     /**
@@ -391,7 +389,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
      */
     private long extractSessionSequence(Map<String, Object> sessionAttributes) {
         if (sessionAttributes == null) {
-            throw new IllegalStateException("로비 입장 실패: STOMP 세션 속성이 없습니다.");
+            throw new StompErrorException(StompErrorCode.LOBBY_ENTER_SESSION_ATTRIBUTES_MISSING);
         }
 
         Object value = sessionAttributes.get(WebSocketHeaders.SESSION_SEQUENCE);
@@ -400,7 +398,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             return number.longValue();
         }
 
-        throw new IllegalStateException("로비 입장 실패: WebSocket 세션 sequence가 없습니다.");
+        throw new StompErrorException(StompErrorCode.LOBBY_ENTER_SEQUENCE_MISSING);
     }
 
     /**
@@ -557,7 +555,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         } catch (RuntimeException e) {
             log.error("STOMP CONNECT 온라인 상태 저장 실패 - userIdentifier: {}, wsSessionId: {}, userStatusKey: {}, userStatusSessionsKey: {}",
                     userIdentifier, wsSessionId, userStatusKey, userStatusSessionsKey, e);
-            throw new IllegalStateException("STOMP CONNECT: 사용자 온라인 상태 저장에 실패했습니다.", e);
+            throw new StompErrorException(StompErrorCode.CONNECT_ONLINE_STATUS_FAILED, e);
         }
     }
 

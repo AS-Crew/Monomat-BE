@@ -44,6 +44,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -70,6 +71,7 @@ public class LobbyQueryService {
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyCanStartPolicy lobbyCanStartPolicy;
+    private final LobbyPlayerNicknameResolver lobbyPlayerNicknameResolver;
 
     /**
      * ZSET 기반 페이징 중 stale index를 감안해 추가 스캔할 배수.
@@ -671,12 +673,15 @@ public class LobbyQueryService {
         );
 
         Set<String> readyParticipantIdentifiers = lobbyRepository.getReadyParticipantIdentifiers(code);
+        Map<String, String> participantNicknameMap =
+                lobbyPlayerNicknameResolver.resolveNicknameMap(participantIdentifiers);
 
         List<LobbyPlayerResponse> players = participantIdentifiers.stream()
                 .map(participantIdentifier -> toLobbyPlayerResponse(
                         participantIdentifier,
                         lobbyInfo.hostId(),
-                        readyParticipantIdentifiers
+                        readyParticipantIdentifiers,
+                        participantNicknameMap
                 ))
                 .toList();
 
@@ -745,13 +750,19 @@ public class LobbyQueryService {
     private LobbyPlayerResponse toLobbyPlayerResponse(
             String participantIdentifier,
             String hostId,
-            Set<String> readyParticipantIdentifiers
+            Set<String> readyParticipantIdentifiers,
+            Map<String, String> participantNicknameMap
     ) {
         boolean host = hostId != null && hostId.equals(participantIdentifier);
         boolean ready = !host && readyParticipantIdentifiers.contains(participantIdentifier);
+        String nickname = participantNicknameMap.getOrDefault(
+                participantIdentifier,
+                lobbyPlayerNicknameResolver.fallbackNickname(participantIdentifier)
+        );
 
         return new LobbyPlayerResponse(
                 participantIdentifier,
+                nickname,
                 host,
                 ready
         );

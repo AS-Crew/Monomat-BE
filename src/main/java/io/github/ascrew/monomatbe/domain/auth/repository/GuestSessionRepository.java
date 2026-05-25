@@ -15,4 +15,6 @@ public interface GuestSessionRepository extends JpaRepository<GuestSession, Long
      * 자동 로그인/세션 유효성 확인에 사용됩니다.
      */
     Optional<GuestSession> findByGuestToken(String guestToken);
+
+    java.util.List<GuestSession> findByGuestTokenIn(java.util.Collection<String> guestTokens);
 }

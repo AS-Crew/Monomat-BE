@@ -1092,6 +1092,28 @@ SUBSCRIBE /topic/lobby/{code}/game
 * 이 메시지를 수신하면 로비 대기실에서 인게임 화면으로 전환합니다.
 * 전환 전 필요하다면 `GET /api/lobbies/{code}`를 재조회해 `status=PLAYING`을 확인할 수 있습니다.
 
+#### 인게임 라운드 시작 이벤트 구독
+
+```text
+SUBSCRIBE /topic/game/{code}/round
+```
+
+방장이 게임을 시작하거나 다음 라운드로 넘어갈 때, 서버가 이 채널로 라운드 시작 정보를 브로드캐스트합니다.
+
+**수신 메시지 (RoundStartDto)**
+
+```json
+{
+  "videoId": "dQw4w9WgXcQ",
+  "startTime": 10,
+  "endTime": 30,
+  "roundNo": 1,
+  "serverTime": 1716500000000
+}
+```
+
+> **참고**: 클라이언트 스포일러 방지를 위해 정답, 힌트, 제목, 아티스트 등의 메타데이터는 라운드 시작 시점에 전송되지 않으며, 정답 공개 시점에 별도의 채널과 DTO(`RoundMetadataDto`)를 통해 전송될 예정입니다.
+
 #### 로비 유저 강퇴 송신
 
 ```text

@@ -1,29 +1,38 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
+import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.anyLong;
-import static org.mockito.Mockito.anyInt;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * LobbyQueryService의 공개 로비 목록 조회 정책을 검증한다.
+ * LobbyQueryService의 공개 로비 목록 조회 정책과 로비 상세 조회 응답 조립을 검증한다.
  *
  * [테스트 범위]
  * - Redis 조회 자체는 LobbyRepository의 책임이므로 mock 처리한다.
- * - 이 테스트는 Service 계층의 목록 노출 정책만 검증한다.
+ * - 이 테스트는 Service 계층의 목록 노출 정책과 상세 응답 조립 정책만 검증한다.
  *
  * [검증 정책]
  * - 비공개 로비가 공개 목록 원본에 섞여 있으면 제외한다.
@@ -34,17 +43,20 @@ import static org.mockito.Mockito.when;
  * - 카테고리 필터는 Repository에서 정규화된 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
  * - 정원/현재 인원 값이 유효하지 않은 로비는 제외한다.
  * - 정렬은 최신순, 인원 많은 순, 빈자리 많은 순을 지원한다.
+ * - 로비 상세 조회 응답의 players에는 userIdentifier, nickname, host, ready가 포함된다.
  */
 class LobbyQueryServiceTest {
 
     private final LobbyRepository lobbyRepository = mock(LobbyRepository.class);
     private final GameLobbyJpaRepository gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
     private final LobbyCanStartPolicy lobbyCanStartPolicy = mock(LobbyCanStartPolicy.class);
+    private final LobbyPlayerNicknameResolver lobbyPlayerNicknameResolver = mock(LobbyPlayerNicknameResolver.class);
 
     private final LobbyQueryService lobbyQueryService = new LobbyQueryService(
             lobbyRepository,
             gameLobbyJpaRepository,
-            lobbyCanStartPolicy
+            lobbyCanStartPolicy,
+            lobbyPlayerNicknameResolver
     );
 
     @Test
@@ -413,95 +425,130 @@ class LobbyQueryServiceTest {
                 .containsExactly("VALID");
     }
 
-    /**
-     * 테스트용 로비 DTO를 생성한다.
-     *
-     * [의도]
-     * 각 테스트에서 필요한 값만 명확히 드러내기 위해 fixture 생성 메서드를 둔다.
-     * 실제 Redis 조회 로직은 테스트 대상이 아니므로,
-     * LobbyRedisDto builder를 사용해 Service 정책 검증에 필요한 필드만 채운다.
-     */
-    private LobbyRedisDto lobby(
-            String code,
-            String title,
-            String mapCategory,
-            int currentPlayers,
-            int maxPlayers,
-            LobbyStatus status,
-            Long createdAtEpochMillis
-    ) {
-        return lobby(
+    @Test
+    @DisplayName("로비 상세 조회 응답의 참여자 목록에 닉네임을 포함한다")
+    void getLobbyDetail_includesPlayerNicknames() {
+        // given
+        String code = "ABC123";
+        String hostIdentifier = "host-user-identifier";
+        String participantIdentifier = "participant-user-identifier";
+
+        JoinLobbyResponse lobbyInfo = new JoinLobbyResponse(
                 code,
-                title,
-                mapCategory,
-                currentPlayers,
-                maxPlayers,
-                status,
-                createdAtEpochMillis,
-                false
+                "테스트 로비",
+                hostIdentifier,
+                8,
+                2,
+                LobbyStatus.WAITING.name(),
+                1L,
+                "테스트 맵",
+                "K-POP"
         );
+
+        when(lobbyRepository.findByInviteCode(code))
+                .thenReturn(Optional.of(lobbyInfo));
+
+        when(lobbyRepository.getParticipantIdentifiers(code))
+                .thenReturn(List.of(hostIdentifier, participantIdentifier));
+
+        when(lobbyRepository.getReadyParticipantIdentifiers(code))
+                .thenReturn(Set.of(participantIdentifier));
+
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostIdentifier, participantIdentifier)))
+                .thenReturn(Map.of(
+                        hostIdentifier, "방장닉네임",
+                        participantIdentifier, "참여자닉네임"
+                ));
+
+        when(gameLobbyJpaRepository.findByInviteCode(code))
+                .thenReturn(Optional.empty());
+
+        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
+                .thenReturn(false);
+
+        CustomPrincipal principal = new CustomPrincipal(
+                1L,
+                hostIdentifier,
+                UserType.REGISTERED
+        );
+
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
+
+        // then
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::nickname)
+                .containsExactly("방장닉네임", "참여자닉네임");
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::userIdentifier)
+                .containsExactly(hostIdentifier, participantIdentifier);
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::host)
+                .containsExactly(true, false);
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::ready)
+                .containsExactly(false, true);
     }
 
-    /**
-     * 공개/비공개 여부를 직접 지정할 수 있는 테스트용 로비 DTO를 생성한다.
-     *
-     * [사용 목적]
-     * 정상 Redis 생성 경로에서는 비공개 로비가 lobby:public Set에 들어가지 않는다.
-     * 다만 운영 중 Redis 수동 조작이나 복구 과정에서 비공개 로비 코드가 섞일 수 있으므로,
-     * Service 계층의 최종 방어 필터를 검증하기 위해 isPrivate 값을 지정할 수 있게 한다.
-     */
-    private LobbyRedisDto lobby(
-            String code,
-            String title,
-            String mapCategory,
-            int currentPlayers,
-            int maxPlayers,
-            LobbyStatus status,
-            Long createdAtEpochMillis,
-            boolean isPrivate
-    ) {
-        return LobbyRedisDto.builder()
-                .code(code)
-                .hostId("host-user-id")
-                .title(title)
-                .mapId(1L)
-                .mapTitle("테스트 맵")
-                .mapCategory(mapCategory)
-                .currentPlayers(currentPlayers)
-                .maxPlayers(maxPlayers)
-                .isPrivate(isPrivate)
-                .status(status.name())
-                .createdAtEpochMillis(createdAtEpochMillis)
-                .build();
-    }
+    @Test
+    @DisplayName("로비 상세 조회 응답에서 닉네임을 찾지 못하면 fallback 닉네임을 사용한다")
+    void getLobbyDetail_usesFallbackNicknameWhenNicknameIsMissing() {
+        // given
+        String code = "ABC123";
+        String hostIdentifier = "host-user-identifier";
+        String participantIdentifier = "participant-user-identifier";
 
-    /**
-     * capacity 유효성 검증 테스트용 로비 DTO를 생성한다.
-     *
-     * [의도]
-     * 기존 lobby() fixture는 currentPlayers/maxPlayers를 primitive int로 받기 때문에
-     * null 값 검증에 사용할 수 없다.
-     * Redis 손상 데이터 방어 테스트에서는 null/0/음수 값을 명시적으로 만들 수 있어야 하므로
-     * Integer 기반 별도 fixture를 사용한다.
-     */
-    private LobbyRedisDto lobbyWithCapacity(
-            String code,
-            Integer currentPlayers,
-            Integer maxPlayers
-    ) {
-        return LobbyRedisDto.builder()
-                .code(code)
-                .hostId("host-user-id")
-                .title("테스트 로비")
-                .mapId(1L)
-                .mapTitle("테스트 맵")
-                .mapCategory("K-POP")
-                .currentPlayers(currentPlayers)
-                .maxPlayers(maxPlayers)
-                .isPrivate(false)
-                .status(LobbyStatus.WAITING.name())
-                .createdAtEpochMillis(1000L)
-                .build();
+        JoinLobbyResponse lobbyInfo = new JoinLobbyResponse(
+                code,
+                "테스트 로비",
+                hostIdentifier,
+                8,
+                2,
+                LobbyStatus.WAITING.name(),
+                null,
+                null,
+                null
+        );
+
+        when(lobbyRepository.findByInviteCode(code))
+                .thenReturn(Optional.of(lobbyInfo));
+
+        when(lobbyRepository.getParticipantIdentifiers(code))
+                .thenReturn(List.of(hostIdentifier, participantIdentifier));
+
+        when(lobbyRepository.getReadyParticipantIdentifiers(code))
+                .thenReturn(Set.of());
+
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostIdentifier, participantIdentifier)))
+                .thenReturn(Map.of(
+                        hostIdentifier, "방장닉네임"
+                ));
+
+        when(lobbyPlayerNicknameResolver.fallbackNickname(participantIdentifier))
+                .thenReturn("Unknown-partic");
+
+        when(gameLobbyJpaRepository.findByInviteCode(code))
+                .thenReturn(Optional.empty());
+
+        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
+                .thenReturn(false);
+
+        CustomPrincipal principal = new CustomPrincipal(
+                1L,
+                hostIdentifier,
+                UserType.REGISTERED
+        );
+
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
+
+        // then
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::nickname)
+                .containsExactly("방장닉네임", "Unknown-partic");
     }
 
     @Test
@@ -729,5 +776,96 @@ class LobbyQueryServiceTest {
                 .extracting(LobbyRedisDto::getCode)
                 .containsExactly("ONLY");
         assertThat(result.hasNext()).isFalse();
+    }
+
+    /**
+     * 테스트용 로비 DTO를 생성한다.
+     *
+     * [의도]
+     * 각 테스트에서 필요한 값만 명확히 드러내기 위해 fixture 생성 메서드를 둔다.
+     * 실제 Redis 조회 로직은 테스트 대상이 아니므로,
+     * LobbyRedisDto builder를 사용해 Service 정책 검증에 필요한 필드만 채운다.
+     */
+    private LobbyRedisDto lobby(
+            String code,
+            String title,
+            String mapCategory,
+            int currentPlayers,
+            int maxPlayers,
+            LobbyStatus status,
+            Long createdAtEpochMillis
+    ) {
+        return lobby(
+                code,
+                title,
+                mapCategory,
+                currentPlayers,
+                maxPlayers,
+                status,
+                createdAtEpochMillis,
+                false
+        );
+    }
+
+    /**
+     * 공개/비공개 여부를 직접 지정할 수 있는 테스트용 로비 DTO를 생성한다.
+     *
+     * [사용 목적]
+     * 정상 Redis 생성 경로에서는 비공개 로비가 lobby:public Set에 들어가지 않는다.
+     * 다만 운영 중 Redis 수동 조작이나 복구 과정에서 비공개 로비 코드가 섞일 수 있으므로,
+     * Service 계층의 최종 방어 필터를 검증하기 위해 isPrivate 값을 지정할 수 있게 한다.
+     */
+    private LobbyRedisDto lobby(
+            String code,
+            String title,
+            String mapCategory,
+            int currentPlayers,
+            int maxPlayers,
+            LobbyStatus status,
+            Long createdAtEpochMillis,
+            boolean isPrivate
+    ) {
+        return LobbyRedisDto.builder()
+                .code(code)
+                .hostId("host-user-id")
+                .title(title)
+                .mapId(1L)
+                .mapTitle("테스트 맵")
+                .mapCategory(mapCategory)
+                .currentPlayers(currentPlayers)
+                .maxPlayers(maxPlayers)
+                .isPrivate(isPrivate)
+                .status(status.name())
+                .createdAtEpochMillis(createdAtEpochMillis)
+                .build();
+    }
+
+    /**
+     * capacity 유효성 검증 테스트용 로비 DTO를 생성한다.
+     *
+     * [의도]
+     * 기존 lobby() fixture는 currentPlayers/maxPlayers를 primitive int로 받기 때문에
+     * null 값 검증에 사용할 수 없다.
+     * Redis 손상 데이터 방어 테스트에서는 null/0/음수 값을 명시적으로 만들 수 있어야 하므로
+     * Integer 기반 별도 fixture를 사용한다.
+     */
+    private LobbyRedisDto lobbyWithCapacity(
+            String code,
+            Integer currentPlayers,
+            Integer maxPlayers
+    ) {
+        return LobbyRedisDto.builder()
+                .code(code)
+                .hostId("host-user-id")
+                .title("테스트 로비")
+                .mapId(1L)
+                .mapTitle("테스트 맵")
+                .mapCategory("K-POP")
+                .currentPlayers(currentPlayers)
+                .maxPlayers(maxPlayers)
+                .isPrivate(false)
+                .status(LobbyStatus.WAITING.name())
+                .createdAtEpochMillis(1000L)
+                .build();
     }
 }

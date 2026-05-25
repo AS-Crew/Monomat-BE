@@ -755,10 +755,11 @@ public class LobbyQueryService {
     ) {
         boolean host = hostId != null && hostId.equals(participantIdentifier);
         boolean ready = !host && readyParticipantIdentifiers.contains(participantIdentifier);
-        String nickname = participantNicknameMap.getOrDefault(
-                participantIdentifier,
-                lobbyPlayerNicknameResolver.fallbackNickname(participantIdentifier)
-        );
+
+        String nickname = participantNicknameMap.get(participantIdentifier);
+        if (nickname == null || nickname.isBlank()) {
+            nickname = lobbyPlayerNicknameResolver.fallbackNickname(participantIdentifier);
+        }
 
         return new LobbyPlayerResponse(
                 participantIdentifier,
@@ -767,7 +768,7 @@ public class LobbyQueryService {
                 ready
         );
     }
-
+    
     /**
      * 로비 상세 응답에서 방장 정보가 누락되지 않도록 보정한다.
      *

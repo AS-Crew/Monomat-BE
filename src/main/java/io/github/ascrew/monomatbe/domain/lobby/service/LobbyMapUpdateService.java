@@ -18,6 +18,20 @@
  * DB 락이 게임 시작 경로(LobbyStartService.findByInviteCodeForUpdate)와 직렬화를 보장한다.
  * 보상 복구는 항상 Lua로 status==WAITING 원자 검증과 함께 수행되어
  * 이미 PLAYING으로 전환된 로비의 맵 메타데이터를 절대 건드리지 않는다.
+ *
+ * [Redis 선갱신 정책]
+ * Redis가 로비 실시간 상태의 source of truth이므로 맵 변경도 Redis를 먼저 반영하여
+ * 클라이언트 가시성(STOMP refresh로 즉시 노출)을 우선한다. DB는 영속/감사 스냅샷 역할이며,
+ * DB 갱신 실패 시 compensate_lobby_map.lua가 status==WAITING 원자 검증 후 보상한다.
+ * 자세한 정책은 docs/ARCHITECTURE.md "로비 맵 변경 Redis-DB 정합성" 섹션 참고.
+ *
+ * [보상 실패 시 운영 대응]
+ * compensate Lua가 LOBBY_NOT_FOUND를 반환하거나 예외가 발생하면 [MONITORING_REQUIRED] 로그가
+ * 남는다. 운영자는 해당 로그로 Redis/DB mapId 불일치를 수동 확인하고 정리한다.
+ *
+ * [Lock timeout 정책]
+ * findByInviteCodeForUpdate에 jakarta.persistence.lock.timeout = 3000ms 힌트가 적용되어
+ * 있다. 타임아웃 초과 시 PessimisticLockingFailureException을 잡아 409 CONFLICT로 변환한다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
@@ -32,6 +46,7 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,6 +77,8 @@ public class LobbyMapUpdateService {
             "맵 변경에 실패했습니다. 잠시 후 다시 시도해주세요.";
     private static final String ERROR_LOBBY_SNAPSHOT_NOT_FOUND =
             "로비 상태 정보가 일치하지 않습니다. 로비를 다시 생성해주세요.";
+    private static final String ERROR_LOBBY_LOCK_CONTENTION =
+            "다른 로비 상태 변경이 진행 중입니다. 잠시 후 다시 시도해주세요.";
 
     // =========================================================
     // 로그 메시지 상수
@@ -138,8 +155,7 @@ public class LobbyMapUpdateService {
                 ? null
                 : new LobbyMapMetadata(lobbyInfo.mapId(), lobbyInfo.mapTitle(), lobbyInfo.mapCategory());
 
-        GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCodeForUpdate(code)
-                .orElseGet(() -> handleMissingGameLobbySnapshot(code, principal.userIdentifier()));
+        GameLobby gameLobby = acquireGameLobbyRowLock(code, principal.userIdentifier());
 
         if (gameLobby.getStatus() != LobbyStatus.WAITING) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
@@ -150,7 +166,7 @@ public class LobbyMapUpdateService {
         Long newMapId = newMetadata != null ? newMetadata.mapId() : null;
         int updated;
         try {
-            updated = gameLobbyJpaRepository.updateMapIdIfWaiting(code, newMapId);
+            updated = gameLobbyJpaRepository.updateMapIdIfWaiting(code, newMapId, LobbyStatus.WAITING);
         } catch (Exception e) {
             log.error(LOG_DB_UPDATE_FAILED, code, e);
             compensateRedisMapMetadata(code, oldMetadata);
@@ -176,6 +192,29 @@ public class LobbyMapUpdateService {
         );
 
         registerMapChangedEventAfterCommit(code);
+    }
+
+    /**
+     * GAME_LOBBY 행에 대한 PESSIMISTIC_WRITE 락을 획득한다.
+     *
+     * [예외 처리]
+     * - row 부재 → handleMissingGameLobbySnapshot 분기 (409 SNAPSHOT_NOT_FOUND)
+     * - 락 획득 타임아웃(3초) → PessimisticLockingFailureException을 잡아 409 CONFLICT로 변환.
+     *   클라이언트가 "다른 상태 변경 진행 중" 의미를 명확히 받을 수 있게 한다.
+     */
+    private GameLobby acquireGameLobbyRowLock(String code, String requesterIdentifier) {
+        try {
+            return gameLobbyJpaRepository.findByInviteCodeForUpdate(code)
+                    .orElseGet(() -> handleMissingGameLobbySnapshot(code, requesterIdentifier));
+        } catch (PessimisticLockingFailureException e) {
+            log.warn(
+                    "로비 맵 변경 락 획득 타임아웃 - code: {}, requester: {}",
+                    code,
+                    requesterIdentifier,
+                    e
+            );
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_LOCK_CONTENTION);
+        }
     }
 
     /**

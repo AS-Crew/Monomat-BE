@@ -27,6 +27,7 @@ import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,6 +64,8 @@ public class LobbyStartService {
             "게임 시작 이벤트 발행을 위한 트랜잭션 동기화가 활성화되어 있지 않습니다.";
     private static final String ERROR_LOBBY_SNAPSHOT_NOT_FOUND =
             "로비 상태 정보가 일치하지 않습니다. 로비를 다시 생성해주세요.";
+    private static final String ERROR_LOBBY_LOCK_CONTENTION =
+            "다른 로비 상태 변경이 진행 중입니다. 잠시 후 다시 시도해주세요.";
 
     private static final String RECONCILIATION_REASON_DB_SYNC_FAILED =
             "START_DB_SYNC_FAILED";
@@ -105,8 +108,7 @@ public class LobbyStartService {
             );
         }
 
-        GameLobby gameLobby = gameLobbyJpaRepository.findByInviteCodeForUpdate(code)
-                .orElseGet(() -> handleMissingGameLobbySnapshot(code, requesterIdentifier));
+        GameLobby gameLobby = acquireGameLobbyRowLock(code, requesterIdentifier);
 
         QuizMap quizMap = lobbyStartPolicy.validateStartableMap(gameLobby);
 
@@ -154,6 +156,29 @@ public class LobbyStartService {
                 quizMap.getId(),
                 gameLobby.getRoundCount()
         );
+    }
+
+    /**
+     * GAME_LOBBY 행에 대한 PESSIMISTIC_WRITE 락을 획득한다.
+     *
+     * [예외 처리]
+     * - row 부재 → handleMissingGameLobbySnapshot 분기 (Redis 보상 삭제 + reconciliation)
+     * - 락 획득 타임아웃(3초) → PessimisticLockingFailureException을 잡아 409 CONFLICT로 변환.
+     *   동시 맵 변경(LobbyMapUpdateService)이 진행 중일 때 명확한 신호를 클라이언트에게 준다.
+     */
+    private GameLobby acquireGameLobbyRowLock(String code, String requesterIdentifier) {
+        try {
+            return gameLobbyJpaRepository.findByInviteCodeForUpdate(code)
+                    .orElseGet(() -> handleMissingGameLobbySnapshot(code, requesterIdentifier));
+        } catch (PessimisticLockingFailureException e) {
+            log.warn(
+                    "게임 시작 락 획득 타임아웃 - code: {}, requester: {}",
+                    code,
+                    requesterIdentifier,
+                    e
+            );
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_LOCK_CONTENTION);
+        }
     }
 
     private GameLobby handleMissingGameLobbySnapshot(

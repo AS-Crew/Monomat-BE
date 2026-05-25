@@ -939,10 +939,11 @@ lobbyCode|reason|attempt|nextRetryAtEpochMillis
 
 재처리 사유:
 
-| reason                        | 보정 정책                       |
-| ----------------------------- | --------------------------- |
-| `START_DB_SYNC_FAILED`        | Redis 상태를 `WAITING`으로 롤백    |
-| `START_DB_SNAPSHOT_NOT_FOUND` | DB 스냅샷이 없으므로 Redis 잔존 로비 삭제 |
+| reason                             | 보정 정책                       |
+| ---------------------------------- | --------------------------- |
+| `START_DB_SYNC_FAILED`             | Redis 상태를 `WAITING`으로 롤백    |
+| `START_DB_SNAPSHOT_NOT_FOUND`      | DB 스냅샷이 없으므로 Redis 잔존 로비 삭제 |
+| `MAP_UPDATE_DB_SNAPSHOT_NOT_FOUND` | 맵 변경 도중 DB 스냅샷 누락 감지, Redis 잔존 로비 삭제 |
 
 운영 모니터링 대상:
 
@@ -954,6 +955,53 @@ lobbyCode|reason|attempt|nextRetryAtEpochMillis
 | `metric:lobby:start:reconciliation:enqueued` | 재처리 큐 적재 횟수      |
 | `metric:lobby:start:reconciliation:success`  | 재처리 성공 횟수        |
 | `metric:lobby:start:reconciliation:failed`   | 재처리 실패 횟수        |
+
+### 로비 맵 변경 Redis-DB 정합성
+
+대기실에서 방장이 맵을 변경하는 흐름은 게임 시작과 동일한 `GAME_LOBBY` 행을 건드리므로
+두 유스케이스가 동시 실행될 때 Lost Update 또는 검증 우회가 발생할 수 있습니다.
+
+이를 방지하기 위해 다음 순서로 처리합니다.
+
+```text
+1. Redis 1차 조회 (존재 여부 / WAITING / 방장)
+2. GAME_LOBBY 행 PESSIMISTIC_WRITE 락 획득 (게임 시작 경로와 직렬화)
+3. 락 시점의 entity.status로 WAITING 재검증
+4. Redis 맵 메타데이터 선갱신 (source of truth 반영)
+5. DB GAME_LOBBY.map_id 조건부 갱신 (status = WAITING)
+6. DB 커밋 후 lobby info refresh 이벤트 발행
+```
+
+**Redis 선갱신 정당화:**
+
+Redis가 로비 실시간 상태의 source of truth입니다.
+맵 변경 결과를 클라이언트가 즉시 볼 수 있도록 Redis를 먼저 반영하고,
+DB는 영속/감사 스냅샷 역할로 뒤따라 동기화합니다.
+
+**보상 정책:**
+
+DB 갱신 실패(예외 또는 0행 반환) 시 `compensate_lobby_map.lua`가 실행됩니다.
+이 스크립트는 `status == WAITING`을 원자적으로 검증한 뒤에만
+`map_id / map_title / map_category` 필드를 이전 값으로 되돌립니다.
+
+| 반환값                  | 의미                                              |
+| -------------------- | ----------------------------------------------- |
+| `COMPENSATED`        | 보상 복구 성공                                        |
+| `SKIPPED_NOT_WAITING`| status가 이미 PLAYING 등으로 전환되어 보상을 안전상 건너뜀 (정상 경로) |
+| `LOBBY_NOT_FOUND`    | Redis 로비 자체가 없음 (이미 폭파/삭제됨)                     |
+
+**보상 실패 시 운영 대응:**
+
+`compensate Lua`가 `LOBBY_NOT_FOUND`를 반환하거나 예외가 발생하면
+`[MONITORING_REQUIRED]` 로그가 남습니다.
+운영자는 해당 로그로 Redis/DB `map_id` 불일치를 수동 확인하고 정리합니다.
+
+**Lock timeout 정책:**
+
+`findByInviteCodeForUpdate`에 `jakarta.persistence.lock.timeout = 3000` ms 힌트가 적용되어 있습니다.
+타임아웃 초과 시 `PessimisticLockingFailureException`이 던져지며,
+`LobbyMapUpdateService` / `LobbyStartService`는 이를 `409 CONFLICT`로 변환합니다.
+응답 메시지: `"다른 로비 상태 변경이 진행 중입니다. 잠시 후 다시 시도해주세요."`
 
 ### ready / participants 정합성 보정 정책
 

@@ -13,6 +13,7 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -212,6 +213,29 @@ class LobbyMapUpdateServiceTest {
                         .isEqualTo(HttpStatus.FORBIDDEN));
     }
 
+    // ─── 락 충돌 ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("DB row lock 획득이 타임아웃되면 409 CONFLICT로 변환한다")
+    void updateMap_throwsConflict_whenLockAcquisitionTimesOut() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        LobbyMapMetadata newMetadata = new LobbyMapMetadata(2L, "POP 히트곡", "POP");
+        when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenThrow(new PessimisticLockingFailureException("lock wait timeout"));
+
+        assertThatThrownBy(() -> sut.updateMap(CODE, request(2L), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("진행 중");
+                });
+
+        verify(lobbyRepository, never()).updateMapMetadata(any(), any());
+        verify(lobbyRepository, never()).compensateMapMetadataIfWaiting(any(), any());
+    }
+
     // ─── DB 스냅샷 누락 ─────────────────────────────────
 
     @Test
@@ -262,12 +286,12 @@ class LobbyMapUpdateServiceTest {
             when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
             when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                     .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
-            when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L)).thenReturn(1);
+            when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING)).thenReturn(1);
 
             sut.updateMap(CODE, request(2L), hostPrincipal());
 
             verify(lobbyRepository).updateMapMetadata(CODE, newMetadata);
-            verify(gameLobbyJpaRepository).updateMapIdIfWaiting(CODE, 2L);
+            verify(gameLobbyJpaRepository).updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING);
             verify(lobbyRepository, never()).compensateMapMetadataIfWaiting(any(), any());
 
             TransactionSynchronizationManager.getSynchronizations()
@@ -288,7 +312,7 @@ class LobbyMapUpdateServiceTest {
         when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                 .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
-        when(gameLobbyJpaRepository.updateMapIdIfWaiting(eq(CODE), eq(2L)))
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(eq(CODE), eq(2L), eq(LobbyStatus.WAITING)))
                 .thenThrow(new RuntimeException("DB 장애"));
         when(lobbyRepository.compensateMapMetadataIfWaiting(eq(CODE), any()))
                 .thenReturn(LobbyMapCompensationResult.COMPENSATED);
@@ -312,7 +336,7 @@ class LobbyMapUpdateServiceTest {
         when(lobbyMapPolicy.resolveLobbyMapMetadata(1L, USER_ID)).thenReturn(newMetadata);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                 .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, null)));
-        when(gameLobbyJpaRepository.updateMapIdIfWaiting(eq(CODE), eq(1L)))
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(eq(CODE), eq(1L), eq(LobbyStatus.WAITING)))
                 .thenThrow(new RuntimeException("DB 장애"));
         when(lobbyRepository.compensateMapMetadataIfWaiting(eq(CODE), any()))
                 .thenReturn(LobbyMapCompensationResult.COMPENSATED);
@@ -334,7 +358,7 @@ class LobbyMapUpdateServiceTest {
         when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                 .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
-        when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L)).thenReturn(0);
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING)).thenReturn(0);
         when(lobbyRepository.compensateMapMetadataIfWaiting(eq(CODE), any()))
                 .thenReturn(LobbyMapCompensationResult.COMPENSATED);
 
@@ -355,7 +379,7 @@ class LobbyMapUpdateServiceTest {
         when(lobbyMapPolicy.resolveLobbyMapMetadata(2L, USER_ID)).thenReturn(newMetadata);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                 .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
-        when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L)).thenReturn(0);
+        when(gameLobbyJpaRepository.updateMapIdIfWaiting(CODE, 2L, LobbyStatus.WAITING)).thenReturn(0);
         when(lobbyRepository.compensateMapMetadataIfWaiting(eq(CODE), any()))
                 .thenReturn(LobbyMapCompensationResult.SKIPPED_NOT_WAITING);
 

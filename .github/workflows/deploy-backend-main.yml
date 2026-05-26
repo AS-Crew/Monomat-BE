@@ -1,0 +1,56 @@
+name: Deploy Backend Main to OCI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy backend main
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to OCI via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OCI_HOST }}
+          username: ${{ secrets.OCI_USER }}
+          key: ${{ secrets.OCI_SSH_KEY }}
+          port: ${{ secrets.OCI_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+
+            APP_DIR="${{ secrets.OCI_APP_DIR }}"
+            IMAGE_NAME="monomat-be:latest"
+            CONTAINER_NAME="monomat-be"
+
+            cd "$APP_DIR"
+
+            git fetch origin
+            git checkout main
+            git pull origin main
+
+            sudo docker build -t "$IMAGE_NAME" .
+
+            sudo docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+
+            sudo docker run -d \
+              --name "$CONTAINER_NAME" \
+              --network monomat-network \
+              --add-host=host.docker.internal:host-gateway \
+              --env-file .env \
+              -p 8080:8080 \
+              --restart unless-stopped \
+              "$IMAGE_NAME"
+
+            sleep 40
+
+            sudo docker ps | grep "$CONTAINER_NAME"
+            curl -f http://localhost:8080/actuator/health

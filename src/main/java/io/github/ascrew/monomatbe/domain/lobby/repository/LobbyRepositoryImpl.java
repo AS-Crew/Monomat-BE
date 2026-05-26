@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -159,6 +160,20 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public boolean rollbackStartedLobbyStatus(String code) {
     return lobbyRedisCommandRepository.rollbackStartedLobbyStatus(code);
+  }
+
+  @Override
+  public void updateMapMetadata(String code, LobbyMapMetadata metadata) {
+    lobbyRedisCommandRepository.updateMapMetadata(code, metadata);
+  }
+
+  @Override
+  public LobbyMapCompensationResult compensateMapMetadataIfWaiting(
+          String code,
+          LobbyMapMetadata oldMetadata
+  ) {
+    String result = lobbyLuaScriptExecutor.executeCompensateLobbyMap(code, oldMetadata);
+    return lobbyLuaResultMapper.toLobbyMapCompensationResult(result, code);
   }
 
   // =========================================================

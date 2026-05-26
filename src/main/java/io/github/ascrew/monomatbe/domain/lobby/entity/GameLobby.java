@@ -139,4 +139,12 @@ public class GameLobby {
     public void changeStatus(LobbyStatus status) {
         this.status = status;
     }
+
+    /**
+     * 로비에 연결된 맵을 변경한다.
+     * 대기실에서 방장이 맵을 변경할 때 사용한다.
+     */
+    public void updateMap(Long mapId) {
+        this.mapId = mapId;
+    }
 }

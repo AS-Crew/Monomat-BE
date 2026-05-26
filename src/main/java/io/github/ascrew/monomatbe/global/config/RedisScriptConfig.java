@@ -96,6 +96,26 @@ public class RedisScriptConfig {
     }
 
     /**
+     * 로비 맵 변경 보상 복구 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - status == WAITING 원자 검증
+     * - 조건 만족 시 map_id/map_title/map_category 복구 (oldMetadata가 비어있으면 HDEL)
+     *
+     * [필요 이유]
+     * 보상 시점에 다른 트랜잭션이 status를 PLAYING으로 바꿨다면 맵 메타데이터를 되돌리면 안 된다.
+     * Java에서 status 조회 후 분기하면 race window가 남으므로 Lua로 원자 처리한다.
+     */
+    @Bean
+    public RedisScript<String> compensateLobbyMapScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/compensate_lobby_map.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
+
+    /**
      * 게임 세션 초기화 Lua 스크립트
      *
      * [처리 내용]

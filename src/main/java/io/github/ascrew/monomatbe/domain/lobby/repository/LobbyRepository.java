@@ -6,6 +6,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -244,4 +245,33 @@ public interface LobbyRepository {
    * @return 현재 참여 인원 수
    */
   int getCurrentPlayerCount(String inviteCode);
+
+  /**
+   * Redis 로비 Hash의 맵 메타데이터 3개 필드(map_id, map_title, map_category)를 갱신한다.
+   *
+   * @param code     로비 초대 코드
+   * @param metadata 새 맵 메타데이터 (null이면 맵 필드를 제거한다)
+   */
+  void updateMapMetadata(String code, LobbyMapMetadata metadata);
+
+  /**
+   * 로비 맵 변경 트랜잭션 보상 복구를 status==WAITING 원자 검증과 함께 수행한다.
+   *
+   * [필요 이유]
+   * 보상 시점에 다른 트랜잭션이 status를 PLAYING으로 바꿨다면 oldMetadata로 되돌리면 안 된다.
+   * Java에서 status 조회 후 분기하면 race window가 남으므로 compensate_lobby_map.lua로 원자 처리한다.
+   *
+   * [예외 정책]
+   * Redis 연결 단절·타임아웃·Lua 스크립트 로딩 실패 등 인프라 예외는 호출자에게 그대로 전파한다.
+   * 호출자(LobbyMapUpdateService)가 도메인 결과(LOBBY_NOT_FOUND)와 인프라 장애를 분리 처리한다.
+   *
+   * @param code        로비 초대 코드
+   * @param oldMetadata 복구할 이전 맵 메타데이터 (null 또는 필드가 null이면 HDEL 처리)
+   * @return 보상 처리 결과 (COMPENSATED / SKIPPED_NOT_WAITING / LOBBY_NOT_FOUND)
+   * @throws RuntimeException Redis 인프라 오류 발생 시
+   */
+  LobbyMapCompensationResult compensateMapMetadataIfWaiting(
+          String code,
+          LobbyMapMetadata oldMetadata
+  );
 }

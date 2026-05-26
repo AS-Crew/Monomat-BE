@@ -39,6 +39,9 @@ out/
 #Environment
 .env
 
+# Project running docs
+running/
+
 # macOS metadata
 .DS_Store
 **/.DS_Store

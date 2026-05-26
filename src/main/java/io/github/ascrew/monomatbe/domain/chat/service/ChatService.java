@@ -6,6 +6,7 @@
  * - 클라이언트 메시지를 서버 신뢰 데이터로 재구성
  * - 클라이언트 sender / timestamp 위변조 방지
  * - 채팅 메시지 본문 검증
+ * - 로비 채팅 전송 권한 검증
  * - Redis Pub/Sub 채널로 메시지 발행
  *
  * [주의]
@@ -14,15 +15,16 @@
  */
 package io.github.ascrew.monomatbe.domain.chat.service;
 
+import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.WebSocketSessionUtils;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
 
@@ -44,8 +46,15 @@ public class ChatService {
             "채팅 메시지는 500자 이하로 입력해주세요.";
     private static final String ERROR_INVALID_MESSAGE_TYPE =
             "일반 채팅으로 전송할 수 없는 메시지 타입입니다.";
+    private static final String ERROR_LOBBY_NOT_FOUND =
+            "존재하지 않는 로비입니다.";
+    private static final String ERROR_LOBBY_CHAT_FORBIDDEN =
+            "로비 참여자만 로비 채팅을 보낼 수 있습니다.";
+    private static final String ERROR_LOBBY_CHAT_KICKED =
+            "강퇴된 로비에는 채팅을 보낼 수 없습니다.";
 
     private final RedisPublisher redisPublisher;
+    private final LobbyRepository lobbyRepository;
 
     /**
      * 전체 채팅 메시지를 처리하고 Redis 전체 채팅 채널로 발행한다.
@@ -53,6 +62,9 @@ public class ChatService {
      * [보안]
      * 클라이언트가 전송한 sender, roomId, timestamp를 신뢰하지 않고,
      * 서버에서 신뢰 가능한 값으로 재구성한다.
+     *
+     * [정책]
+     * 전체 채팅은 특정 로비 참여 상태와 무관하므로 로비 참여자 검증을 수행하지 않는다.
      *
      * @param message  클라이언트로부터 수신한 메시지
      * @param accessor STOMP 헤더 접근자
@@ -71,9 +83,10 @@ public class ChatService {
      * 클라이언트가 전송한 sender, roomId, timestamp를 신뢰하지 않고,
      * 서버에서 신뢰 가능한 값으로 재구성한다.
      *
-     * [후속 단계]
-     * 로비 참여자 검증, 강퇴 유저 차단, Redis 기반 쿨타임/반복 전송 제한은
-     * 다음 단계에서 이 메서드에 추가합니다.
+     * [권한]
+     * - 존재하는 로비에 대해서만 전송할 수 있다.
+     * - 강퇴된 사용자는 전송할 수 없다.
+     * - 현재 로비 참여자만 전송할 수 있다.
      *
      * @param code     로비 초대 코드
      * @param message  클라이언트로부터 수신한 메시지
@@ -85,9 +98,38 @@ public class ChatService {
             SimpMessageHeaderAccessor accessor
     ) {
         String userIdentifier = WebSocketSessionUtils.extractUserIdentifier(accessor);
+
+        validateLobbyChatPermission(code, userIdentifier);
+
         ChatMessageDto secureMessage = buildUserChatMessage(message, code, userIdentifier);
 
         redisPublisher.publish(StompDestinations.subscribeLobbyChat(code), secureMessage);
+    }
+
+    /**
+     * 로비 채팅 전송 권한을 검증한다.
+     *
+     * [검증 순서]
+     * 1. 로비 존재 여부 확인
+     * 2. 강퇴 여부 확인
+     * 3. 현재 참여자 여부 확인
+     *
+     * [강퇴 여부를 참여자 여부보다 먼저 확인하는 이유]
+     * 강퇴 처리 후에는 participants Set에서 제거되고 kicked Set에 추가될 수 있다.
+     * 이때 참여자 검증을 먼저 수행하면 강퇴 유저도 단순 미참여자로만 처리되어 클라이언트가 정확한 사유를 알기 어렵다.
+     */
+    private void validateLobbyChatPermission(String code, String userIdentifier) {
+        if (!lobbyRepository.existsByCode(code)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_LOBBY_NOT_FOUND);
+        }
+
+        if (lobbyRepository.isKicked(code, userIdentifier)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_LOBBY_CHAT_KICKED);
+        }
+
+        if (!lobbyRepository.isParticipant(code, userIdentifier)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_LOBBY_CHAT_FORBIDDEN);
+        }
     }
 
     /**
@@ -128,7 +170,7 @@ public class ChatService {
     }
 
     /**
-     * 채팅 본문을 검증하고 trim된 문자열을 반환한다.
+     * 채팅 본문을 검증하고 trim된 문자열을 반환합니다.
      */
     private String normalizeContent(ChatMessageDto message) {
         if (message == null || message.getContent() == null) {

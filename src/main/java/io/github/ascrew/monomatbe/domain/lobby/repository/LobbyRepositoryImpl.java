@@ -79,6 +79,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   @Override
+  public boolean isKicked(String code, String userIdentifier) {
+    return lobbyRedisQueryRepository.isKicked(code, userIdentifier);
+  }
+
+  @Override
   public List<String> getParticipantIdentifiers(String code) {
     return lobbyRedisQueryRepository.getParticipantIdentifiers(code);
   }

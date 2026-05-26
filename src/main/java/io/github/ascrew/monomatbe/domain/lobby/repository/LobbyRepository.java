@@ -25,6 +25,9 @@ public interface LobbyRepository {
   /** 해당 유저가 해당 로비의 참여자인지 확인합니다. */
   boolean isParticipant(String code, String userId);
 
+  /** 해당 유저가 해당 로비에서 강퇴된 유저인지 확인합니다. */
+  boolean isKicked(String code, String userIdentifier);
+
   /**
    * 로비 참여자의 준비 상태를 변경한다.
    *

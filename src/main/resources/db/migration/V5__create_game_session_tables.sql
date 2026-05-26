@@ -9,7 +9,7 @@ CREATE TABLE game_session (
     ended_at DATETIME(6) NULL,
     created_at TIMESTAMP NOT NULL,
     CONSTRAINT fk_game_session_lobby FOREIGN KEY (lobby_id) REFERENCES game_lobby(id) ON DELETE CASCADE,
-    CONSTRAINT fk_game_session_map FOREIGN KEY (map_id) REFERENCES quiz_map(id)
+    CONSTRAINT fk_game_session_map FOREIGN KEY (map_id) REFERENCES map(id)
 );
 
 CREATE TABLE game_session_player (

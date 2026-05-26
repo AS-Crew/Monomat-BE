@@ -31,15 +31,14 @@ import java.util.regex.Pattern;
  * - CONNECT 시 Redis INCR 기반 sessionSequence 발급
  * - CONNECT 시 사용자 온라인 상태 저장
  * - SUBSCRIBE/SEND/UNSUBSCRIBE 시 인증 세션 검증
- * - 로비 채팅 채널 SUBSCRIBE 시 enter_lobby.lua를 먼저 실행하여 입장 상태를 확정
+ * - 로비 채팅 채널 SUBSCRIBE 시 enter_lobby.lua를 먼저 실행하여 입장 상태 확정
  *
  * [중요]
  * SessionSubscribeEvent는 구독 요청이 처리된 이후 발생한다.
  * 따라서 해당 이벤트에서 Redis 입장 처리를 수행하면 Lua 실패 시에도 클라이언트는 이미 구독된 상태가 될 수 있다.
  *
  * 이를 방지하기 위해 /topic/lobby/{code} 구독은 preSend 단계에서
- * enter_lobby.lua를 먼저 실행하고, Redis 입장 상태가 확정된 경우에만
- * SUBSCRIBE를 통과시킨다.
+ * enter_lobby.lua를 먼저 실행하고, Redis 입장 상태가 확정된 경우에만 SUBSCRIBE를 통과시킨다.
  */
 @Slf4j
 @Component
@@ -78,12 +77,11 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
     /**
      * ws:connection:{wsSessionId}, lobby:{code}:user_session:{userIdentifier},
-     * lobby:{code}:user_session_seq:{userIdentifier} 매핑 TTL.
+     * lobby:{code}:user_session_seq:{userIdentifier} 매핑 TTL
      *
      * WebSocket DISCONNECT 이벤트 누락, 서버 비정상 종료에 대비한 안전장치다.
      *
-     * 기존 2시간은 장시간 로비 대기 또는 게임 진행 중 TTL 만료 타이밍 이슈가 생길 수 있어
-     * 6시간으로 늘린다.
+     * 기존 2시간은 장시간 로비 대기 또는 게임 진행 중 TTL 만료 타이밍 이슈가 생길 수 있어 6시간으로 늘린다.
      *
      * 사용자 온라인 상태 TTL은 userStatusTtl 설정값을 사용한다.
      */
@@ -98,7 +96,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final RedisScript<String> enterLobbyScript;
 
     /**
-     * 사용자 온라인 상태 TTL.
+     * 사용자 온라인 상태 TTL
      *
      * [기본값]
      * - PT2H: 2시간
@@ -113,10 +111,10 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final Duration userStatusTtl;
 
     /**
-     * 로비 입장 Lua 재시도 횟수.
+     * 로비 입장 Lua 재시도 횟수
      *
      * 기본값은 2입니다.
-     * 즉, 최초 실행 1회 + 재시도 1회를 의미
+     * 즉, 최초 실행 1회 + 재시도 1회를 의미한다.
      *
      * 설정 파일에 값을 추가하지 않아도 기본값 2로 동작합니다.
      * 운영 환경에서 조정이 필요하면 아래 키를 사용할 수 있습니다.
@@ -154,14 +152,16 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             case CONNECT -> handleConnect(accessor, sessionAttributes);
             case SUBSCRIBE, SEND, UNSUBSCRIBE -> validateSession(accessor, sessionAttributes);
             case DISCONNECT -> handleDisconnect(sessionAttributes);
-            default -> { /* 별도 처리 불필요 */ }
+            default -> {
+                // 별도 처리 불필요
+            }
         }
 
         return message;
     }
 
     /**
-     * CONNECT 명령 처리.
+     * CONNECT 명령 처리
      */
     private void handleConnect(
             StompHeaderAccessor accessor,
@@ -231,12 +231,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             case SEND -> log.info("[SEND] 메시지 발송 - 식별자: {}, 경로: {}",
                     userIdentifier, accessor.getDestination());
             case UNSUBSCRIBE -> log.info("[UNSUBSCRIBE] 구독 해제 - 식별자: {}", userIdentifier);
-            default -> { /* 별도 처리 불필요 */ }
+            default -> {
+                // 별도 처리 불필요
+            }
         }
     }
 
     /**
-     * SUBSCRIBE 명령 처리.
+     * SUBSCRIBE 명령 처리
      */
     private void handleSubscribe(
             StompHeaderAccessor accessor,
@@ -313,41 +315,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         return result;
                     }
 
-                    case FULL -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_FULL);
-                    }
-
-                    case LOBBY_NOT_WAITING -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_NOT_WAITING);
-                    }
-
-                    case INVALID_LOBBY_CAPACITY -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_INVALID_CAPACITY);
-                    }
-
-                    case STALE_SESSION -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_STALE_SESSION);
-                    }
-
-                    case KICKED_USER -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_KICKED_USER);
-                    }
-
-                    case LOBBY_NOT_FOUND -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_NOT_FOUND);
-                    }
-
-                    case INVALID_SEQUENCE -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_INVALID_SEQUENCE);
-                    }
-
                     case UNKNOWN -> {
                         if (result == null) {
                             log.warn("로비 입장 Lua 결과 null - 재시도 여부 확인. attempt: {}/{}, 로비: {}, 식별자: {}, wsSessionId: {}",
@@ -358,9 +325,16 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         log.error("로비 입장 Lua 알 수 없는 반환값 - result: {}, 로비: {}, 식별자: {}, wsSessionId: {}",
                                 result, lobbyCode, userIdentifier, wsSessionId);
 
-                        cleanupWsConnection(wsSessionId);
-                        throw new StompErrorException(StompErrorCode.LOBBY_ENTER_UNKNOWN_RESULT);
+                        throwLobbyEnterFailure(
+                                wsSessionId,
+                                resultType.resolveErrorCode()
+                        );
                     }
+
+                    default -> throwLobbyEnterFailure(
+                            wsSessionId,
+                            resultType.resolveErrorCode()
+                    );
                 }
 
             } catch (StompErrorException e) {
@@ -497,6 +471,20 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     }
 
     /**
+     * 로비 입장 실패 결과를 STOMP 표준 예외로 변환한다.
+     *
+     * Lua 실패 결과는 대부분 현재 ws:connection을 유지할 이유가 없으므로
+     * 먼저 보상 삭제한 뒤, FE가 처리 가능한 StompErrorCode를 가진 예외를 던진다.
+     */
+    private void throwLobbyEnterFailure(
+            String wsSessionId,
+            StompErrorCode errorCode
+    ) {
+        cleanupWsConnection(wsSessionId);
+        throw new StompErrorException(errorCode);
+    }
+
+    /**
      * Lua 실패 시 현재 ws:connection 키를 보상 삭제한다.
      */
     private void cleanupWsConnection(String wsSessionId) {
@@ -559,17 +547,41 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
     }
 
+    /**
+     * enter_lobby.lua 반환값의 의미를 Java 내부 타입으로 변환한 값이다.
+     *
+     * 성공 타입은 errorCode가 null이다.
+     * 실패 타입은 FE에 내려줄 StompErrorCode를 직접 가진다.
+     *
+     * 이렇게 관리하면 Lua 반환값이 추가될 때 result type과 error code 매핑을
+     * 한 곳에서 함께 확인할 수 있다.
+     */
     private enum LobbyEnterResultType {
-        ENTERED,
-        ALREADY_JOINED,
-        SESSION_REPLACED,
-        STALE_SESSION,
-        LOBBY_NOT_FOUND,
-        INVALID_SEQUENCE,
-        FULL,
-        LOBBY_NOT_WAITING,
-        INVALID_LOBBY_CAPACITY,
-        KICKED_USER,
-        UNKNOWN
+        ENTERED(null),
+        ALREADY_JOINED(null),
+        SESSION_REPLACED(null),
+
+        STALE_SESSION(StompErrorCode.LOBBY_STALE_SESSION),
+        LOBBY_NOT_FOUND(StompErrorCode.LOBBY_NOT_FOUND),
+        INVALID_SEQUENCE(StompErrorCode.LOBBY_INVALID_SEQUENCE),
+        FULL(StompErrorCode.LOBBY_FULL),
+        LOBBY_NOT_WAITING(StompErrorCode.LOBBY_NOT_WAITING),
+        INVALID_LOBBY_CAPACITY(StompErrorCode.LOBBY_INVALID_CAPACITY),
+        KICKED_USER(StompErrorCode.LOBBY_KICKED_USER),
+        UNKNOWN(StompErrorCode.LOBBY_ENTER_UNKNOWN_RESULT);
+
+        private final StompErrorCode errorCode;
+
+        LobbyEnterResultType(StompErrorCode errorCode) {
+            this.errorCode = errorCode;
+        }
+
+        private StompErrorCode resolveErrorCode() {
+            if (errorCode == null) {
+                throw new IllegalStateException("성공 로비 입장 결과에는 STOMP 에러 코드가 없습니다: " + this);
+            }
+
+            return errorCode;
+        }
     }
 }

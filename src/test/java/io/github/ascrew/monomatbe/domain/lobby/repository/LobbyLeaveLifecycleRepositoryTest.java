@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -272,6 +273,104 @@ class LobbyLeaveLifecycleRepositoryTest {
             int availableSeats = Math.max(0, maxPlayers - currentPlayers);
             addPublicIndexes(lobbyCode, currentPlayers, availableSeats);
         }
+    }
+
+    @Test
+    @DisplayName("강퇴된 유저가 이후 퇴장 요청을 보내도 participants/order/current_players 상태가 깨지지 않는다")
+    void kickedUserLeaveDoesNotBreakLobbyState() {
+        // given
+        String targetWsSessionId = "ws-session-94-target";
+
+        givenLobby(
+                LOBBY_CODE,
+                HOST_ID,
+                false,
+                4,
+                HOST_ID,
+                SECOND_USER_ID,
+                THIRD_USER_ID
+        );
+
+        redisTemplate.opsForValue().set(
+                RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID),
+                targetWsSessionId
+        );
+
+        redisTemplate.opsForValue().set(
+                RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID),
+                "10"
+        );
+
+        redisTemplate.opsForSet().add(
+                RedisKeys.lobbyReadyKey(LOBBY_CODE),
+                SECOND_USER_ID,
+                THIRD_USER_ID
+        );
+
+        // when
+        KickLobbyResult kickResult = lobbyRepository.executeKickLobbyProcess(
+                LOBBY_CODE,
+                HOST_ID,
+                SECOND_USER_ID
+        );
+
+        // then
+        assertThat(kickResult).isInstanceOf(KickLobbyResult.Kicked.class);
+
+        KickLobbyResult.Kicked kicked = (KickLobbyResult.Kicked) kickResult;
+        assertThat(kicked.lobbyCode()).isEqualTo(LOBBY_CODE);
+        assertThat(kicked.targetUserIdentifier()).isEqualTo(SECOND_USER_ID);
+        assertThat(kicked.targetWsSessionId()).isEqualTo(targetWsSessionId);
+
+        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE)))
+                .containsExactlyInAnyOrder(HOST_ID, THIRD_USER_ID);
+
+        assertThat(redisTemplate.opsForList().range(RedisKeys.lobbyOrderKey(LOBBY_CODE), 0, -1))
+                .containsExactly(HOST_ID, THIRD_USER_ID);
+
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.lobbyKickedKey(LOBBY_CODE), SECOND_USER_ID))
+                .isTrue();
+
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID)))
+                .isFalse();
+
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID)))
+                .isFalse();
+
+        assertThat(redisTemplate.opsForHash()
+                .get(RedisKeys.lobbyKey(LOBBY_CODE), RedisKeys.FIELD_CURRENT_PLAYERS))
+                .isEqualTo("2");
+
+        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyReadyKey(LOBBY_CODE)))
+                .containsExactly(THIRD_USER_ID);
+
+        // when
+        LeaveLobbyResult leaveResult = lobbyRepository.executeLeaveLobbyProcess(
+                LOBBY_CODE,
+                SECOND_USER_ID
+        );
+
+        // then
+        assertThat(leaveResult).isInstanceOf(LeaveLobbyResult.Left.class);
+
+        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE)))
+                .containsExactlyInAnyOrder(HOST_ID, THIRD_USER_ID);
+
+        assertThat(redisTemplate.opsForList().range(RedisKeys.lobbyOrderKey(LOBBY_CODE), 0, -1))
+                .containsExactly(HOST_ID, THIRD_USER_ID);
+
+        assertThat(redisTemplate.opsForHash()
+                .get(RedisKeys.lobbyKey(LOBBY_CODE), RedisKeys.FIELD_CURRENT_PLAYERS))
+                .isEqualTo("2");
+
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.lobbyKickedKey(LOBBY_CODE), SECOND_USER_ID))
+                .isTrue();
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, LOBBY_CODE))
+                .isEqualTo(2.0);
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, LOBBY_CODE))
+                .isEqualTo(2.0);
     }
 
     private void addPublicIndexes(String lobbyCode, int currentPlayers, int availableSeats) {

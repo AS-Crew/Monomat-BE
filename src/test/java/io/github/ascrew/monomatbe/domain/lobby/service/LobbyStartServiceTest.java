@@ -1,17 +1,18 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
+import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
 import io.github.ascrew.monomatbe.domain.game.exception.GameSessionAlreadyExistsException;
 import io.github.ascrew.monomatbe.domain.game.service.GameRealtimeNotifier;
 import io.github.ascrew.monomatbe.domain.game.service.GameSessionCreateService;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
-import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,30 +20,42 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class LobbyStartServiceTest {
 
+    private static final String LOBBY_CODE = "ABC1234";
+    private static final String REQUESTER_IDENTIFIER = "uId";
+    private static final Long REQUESTER_USER_ID = 1L;
+    private static final Long MAP_ID = 1L;
+    private static final int ROUND_COUNT = 5;
+
     @Mock
     private LobbyRepository lobbyRepository;
+
     @Mock
     private LobbyRealtimeNotifier lobbyRealtimeNotifier;
+
     @Mock
     private GameLobbyJpaRepository gameLobbyJpaRepository;
+
     @Mock
     private GameSessionCreateService gameSessionCreateService;
+
     @Mock
     private GameRealtimeNotifier gameRealtimeNotifier;
+
     @Mock
     private QuizMapJpaRepository quizMapJpaRepository;
 
@@ -52,9 +65,9 @@ class LobbyStartServiceTest {
     @BeforeEach
     void setUp() {
         TransactionSynchronizationManager.initSynchronization();
-        
+
         lobbyStartPolicy = new LobbyStartPolicy(quizMapJpaRepository);
-        
+
         lobbyStartService = new LobbyStartService(
                 lobbyRepository,
                 lobbyRealtimeNotifier,
@@ -74,20 +87,23 @@ class LobbyStartServiceTest {
     @DisplayName("정상적으로 게임 세션 생성을 요청하고 성공한다")
     void startLobbyGame_success() {
         // given
-        String code = "ABC1234";
-        CustomPrincipal principal = new CustomPrincipal(1L, "uId", UserType.REGISTERED);
-        
-        GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(1L).roundCount(5).build();
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).isDeleted(false).build();
-        
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
-        when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.Started(code));
-        when(gameSessionCreateService.createGameSession(gameLobby, quizMap)).thenReturn(mock(RoundStartDto.class));
+        CustomPrincipal principal = registeredPrincipal();
+        GameLobby gameLobby = startableLobby();
+        QuizMap quizMap = startableMap();
+
+        when(lobbyRepository.findByInviteCode(LOBBY_CODE))
+                .thenReturn(Optional.of(mock(JoinLobbyResponse.class)));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(LOBBY_CODE))
+                .thenReturn(Optional.of(gameLobby));
+        when(quizMapJpaRepository.findById(MAP_ID))
+                .thenReturn(Optional.of(quizMap));
+        when(lobbyRepository.executeStartLobbyProcess(LOBBY_CODE, REQUESTER_IDENTIFIER))
+                .thenReturn(new StartLobbyResult.Started(LOBBY_CODE));
+        when(gameSessionCreateService.createGameSession(gameLobby, quizMap))
+                .thenReturn(mock(RoundStartDto.class));
 
         // when
-        lobbyStartService.startLobbyGame(code, principal);
+        lobbyStartService.startLobbyGame(LOBBY_CODE, principal);
 
         // then
         verify(gameLobbyJpaRepository).saveAndFlush(gameLobby);
@@ -98,38 +114,45 @@ class LobbyStartServiceTest {
     @DisplayName("맵이 없는 로비에서 시작 시 예외 발생")
     void startLobbyGame_failsWhenNoMap() {
         // given
-        String code = "ABC1234";
-        CustomPrincipal principal = new CustomPrincipal(1L, "uId", UserType.REGISTERED);
-        
-        // mapId가 없는 경우
-        GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(null).roundCount(5).build();
-        
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
+        CustomPrincipal principal = registeredPrincipal();
+        GameLobby gameLobby = GameLobby.builder()
+                .inviteCode(LOBBY_CODE)
+                .mapId(null)
+                .roundCount(ROUND_COUNT)
+                .build();
+
+        when(lobbyRepository.findByInviteCode(LOBBY_CODE))
+                .thenReturn(Optional.of(mock(JoinLobbyResponse.class)));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(LOBBY_CODE))
+                .thenReturn(Optional.of(gameLobby));
 
         // when & then
-        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
+        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(LOBBY_CODE, principal))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409 CONFLICT");
     }
 
     @Test
-    @DisplayName("문제가 없는 맵(또는 요구 라운드 수보다 적은 맵)으로 시작 시 예외 발생")
+    @DisplayName("문제가 없는 맵 또는 요구 라운드 수보다 적은 맵으로 시작 시 예외 발생")
     void startLobbyGame_failsWhenNotEnoughSongs() {
         // given
-        String code = "ABC1234";
-        CustomPrincipal principal = new CustomPrincipal(1L, "uId", UserType.REGISTERED);
-        
-        GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(1L).roundCount(5).build();
-        // 맵에 곡 수가 부족한 경우
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(3).isDeleted(false).build();
-        
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
+        CustomPrincipal principal = registeredPrincipal();
+        GameLobby gameLobby = startableLobby();
+        QuizMap quizMap = QuizMap.builder()
+                .id(MAP_ID)
+                .numOfSong(ROUND_COUNT - 1)
+                .isDeleted(false)
+                .build();
+
+        when(lobbyRepository.findByInviteCode(LOBBY_CODE))
+                .thenReturn(Optional.of(mock(JoinLobbyResponse.class)));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(LOBBY_CODE))
+                .thenReturn(Optional.of(gameLobby));
+        when(quizMapJpaRepository.findById(MAP_ID))
+                .thenReturn(Optional.of(quizMap));
 
         // when & then
-        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
+        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(LOBBY_CODE, principal))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409 CONFLICT");
     }
@@ -138,23 +161,24 @@ class LobbyStartServiceTest {
     @DisplayName("중복 게임 시작 요청 시 차단")
     void startLobbyGame_failsWhenDuplicateStart() {
         // given
-        String code = "ABC1234";
-        CustomPrincipal principal = new CustomPrincipal(1L, "uId", UserType.REGISTERED);
-        
-        GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(1L).roundCount(5).build();
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).isDeleted(false).build();
-        
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
-        // 이미 진행 중인 로비이므로 LobbyNotWaiting 반환
-        when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.LobbyNotWaiting(code));
+        CustomPrincipal principal = registeredPrincipal();
+        GameLobby gameLobby = startableLobby();
+        QuizMap quizMap = startableMap();
+
+        when(lobbyRepository.findByInviteCode(LOBBY_CODE))
+                .thenReturn(Optional.of(mock(JoinLobbyResponse.class)));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(LOBBY_CODE))
+                .thenReturn(Optional.of(gameLobby));
+        when(quizMapJpaRepository.findById(MAP_ID))
+                .thenReturn(Optional.of(quizMap));
+        when(lobbyRepository.executeStartLobbyProcess(LOBBY_CODE, REQUESTER_IDENTIFIER))
+                .thenReturn(new StartLobbyResult.LobbyNotWaiting(LOBBY_CODE));
 
         // when & then
-        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
+        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(LOBBY_CODE, principal))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409 CONFLICT");
-        
+
         verify(gameSessionCreateService, never()).createGameSession(any(), any());
     }
 
@@ -162,24 +186,50 @@ class LobbyStartServiceTest {
     @DisplayName("이미 게임 세션이 존재하는 경우 예외(409) 발생 및 롤백 확인")
     void startLobbyGame_alreadyExistsSession() {
         // given
-        String code = "ABC1234";
-        CustomPrincipal principal = new CustomPrincipal(1L, "uId", io.github.ascrew.monomatbe.domain.auth.entity.UserType.REGISTERED);
-        GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(1L).roundCount(5).build();
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).build();
+        CustomPrincipal principal = registeredPrincipal();
+        GameLobby gameLobby = startableLobby();
+        QuizMap quizMap = startableMap();
 
-        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(org.mockito.Mockito.mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
-        when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.Started(code));
-
+        when(lobbyRepository.findByInviteCode(LOBBY_CODE))
+                .thenReturn(Optional.of(mock(JoinLobbyResponse.class)));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(LOBBY_CODE))
+                .thenReturn(Optional.of(gameLobby));
+        when(quizMapJpaRepository.findById(MAP_ID))
+                .thenReturn(Optional.of(quizMap));
+        when(lobbyRepository.executeStartLobbyProcess(LOBBY_CODE, REQUESTER_IDENTIFIER))
+                .thenReturn(new StartLobbyResult.Started(LOBBY_CODE));
         when(gameSessionCreateService.createGameSession(gameLobby, quizMap))
                 .thenThrow(new GameSessionAlreadyExistsException("게임 세션이 이미 존재합니다."));
 
         // when & then
-        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
+        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(LOBBY_CODE, principal))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409 CONFLICT");
 
-        verify(lobbyRepository).rollbackStartedLobbyStatus(code);
+        verify(lobbyRepository).rollbackStartedLobbyStatus(LOBBY_CODE);
+    }
+
+    private CustomPrincipal registeredPrincipal() {
+        return new CustomPrincipal(
+                REQUESTER_USER_ID,
+                REQUESTER_IDENTIFIER,
+                UserType.REGISTERED
+        );
+    }
+
+    private GameLobby startableLobby() {
+        return GameLobby.builder()
+                .inviteCode(LOBBY_CODE)
+                .mapId(MAP_ID)
+                .roundCount(ROUND_COUNT)
+                .build();
+    }
+
+    private QuizMap startableMap() {
+        return QuizMap.builder()
+                .id(MAP_ID)
+                .numOfSong(ROUND_COUNT * 2)
+                .isDeleted(false)
+                .build();
     }
 }

@@ -345,7 +345,7 @@ POST /api/lobbies/join
 초대 코드로 로비 입장 가능 여부를 검증하고 로비 기본 정보를 반환합니다.
 JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 입장 가능합니다.
 
-> 이 API는 입장 허가 사전 검증만 수행합니다.
+> 이 API는 입장 허가 사전 검증만 수행합니다.  
 > 실제 참여자 등록은 응답 수신 후 WebSocket `/topic/lobby/{inviteCode}` 구독 시점에 처리됩니다.
 
 클라이언트 처리 순서:
@@ -427,6 +427,35 @@ JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 입장 �
 | `401 Unauthorized` | JWT 토큰 없음 또는 만료           |
 | `404 Not Found`    | 존재하지 않는 초대 코드             |
 | `409 Conflict`     | 게임이 이미 시작된 로비 또는 최대 인원 초과 |
+
+**REST join 성공 후 WebSocket SUBSCRIBE 실패 처리 기준**
+
+`POST /api/lobbies/join`은 UX용 사전 검증입니다.  
+실제 참여자 등록은 `SUBSCRIBE /topic/lobby/{inviteCode}` 시점에 `enter_lobby.lua`로 원자 처리됩니다.
+
+따라서 REST join이 성공했더라도 WebSocket SUBSCRIBE 시점에 로비 상태가 바뀌면 STOMP ERROR가 발생할 수 있습니다.
+
+클라이언트는 로비 입장을 다음 순서로 처리해야 합니다.
+
+```text
+1. POST /api/lobbies/join 호출
+2. 응답 성공 시 WebSocket CONNECT
+3. SUBSCRIBE /topic/lobby/{inviteCode}
+4. SUBSCRIBE 성공 후 로비 상세 조회 또는 refresh 이벤트 대기
+5. SUBSCRIBE 실패 시 STOMP ERROR payload의 action 기준으로 처리
+```
+
+| 상황 | 이유 | FE 처리 |
+| --- | --- | --- |
+| REST join 성공 후 다른 사용자가 먼저 입장 | SUBSCRIBE 시점에 `FULL` 발생 | `RETURN_TO_LOBBY_LIST` |
+| REST join 성공 후 방장이 게임 시작 | SUBSCRIBE 시점에 `LOBBY_NOT_WAITING` 발생 | `RETURN_TO_LOBBY_LIST` |
+| REST join 성공 후 로비 삭제 | SUBSCRIBE 시점에 `LOBBY_NOT_FOUND` 발생 | `RETURN_TO_LOBBY_LIST` |
+| 강퇴된 유저가 재입장 시도 | kicked Set 기준으로 `KICKED_USER` 발생 | `RETURN_TO_LOBBY_LIST` |
+| 같은 userIdentifier로 여러 세션이 경합 | 최신 sessionSequence 기준 stale 세션 차단 | `RECONNECT` |
+| Redis/Lua 일시 장애 | 최종 입장 상태 확인 불가 | `REFRESH_AND_RETRY` |
+
+> FE는 `POST /api/lobbies/join` 성공만으로 사용자를 로비 참여자로 확정하면 안 됩니다.  
+> 실제 로비 참여 확정 기준은 `SUBSCRIBE /topic/lobby/{code}` 성공입니다.
 
 ---
 
@@ -546,6 +575,7 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available&page=0&siz
 | `hasNext` | Boolean | 다음 페이지 존재 여부      |
 
 **`items[]` Fields**
+
 | 필드                     | 타입      | 설명                                                                                                      |
 | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
 | `code`                 | String  | 로비 초대 코드                                                                                                |
@@ -559,7 +589,6 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available&page=0&siz
 | `isPrivate`            | Boolean | 비공개 여부. 공개 로비 목록에서는 `false`                                                                             |
 | `status`               | String  | 로비 상태. 공개 로비 목록에서는 `WAITING`, `PLAYING`만 반환. `WAITING`은 입장 가능, `PLAYING`은 진행 중으로 목록에는 노출되지만 입장은 허용하지 않음 |
 | `createdAtEpochMillis` | Long    | 로비 생성 시각. Redis `TIME` 기준 epoch milliseconds                                                            |
-
 
 **Error**
 
@@ -620,6 +649,7 @@ JWT Access Token이 필요합니다.
     },
     {
       "userIdentifier": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
+      "nickname": "참여자닉네임",
       "host": false,
       "ready": true
     }
@@ -643,10 +673,10 @@ JWT Access Token이 필요합니다.
 | `timeLimitSeconds`         | Integer | 라운드 제한 시간                            |
 | `players`                  | Array   | 현재 로비 참여자 목록                         |
 | `players[].userIdentifier` | String  | 참여자 식별자                              |
+| `players[].nickname`       | String  | 참여자 닉네임                              |
 | `players[].host`           | Boolean | 방장 여부                                |
 | `players[].ready`          | Boolean | ready 여부. 방장은 ready 대상이 아니므로 `false` |
 | `canStart`                 | Boolean | 조회 시점 기준 게임 시작 가능 여부                 |
-| `players[].nickname` | String | 참여자 닉네임 |
 
 **canStart 계산 조건**
 
@@ -1146,15 +1176,113 @@ SEND /app/lobby/{code}/kick
 
 ### STOMP ERROR 프레임
 
-인증 실패 또는 유효하지 않은 요청 시 STOMP ERROR 프레임으로 응답합니다.
+인증 실패, 유효하지 않은 요청, 로비 입장 실패 등 WebSocket 처리 중 클라이언트가 복구 가능한 방식으로 판단해야 하는 오류는 STOMP `ERROR` 프레임으로 응답합니다.
 
-| 상황                          | 메시지                                              |
-| --------------------------- | ------------------------------------------------ |
-| `userIdentifier` 헤더 누락      | `STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다.`     |
-| 유효하지 않은 `userIdentifier` 형식 | `STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다.` |
-| 인증 없이 SEND/SUBSCRIBE 시도     | `인증 정보가 존재하지 않습니다.`                              |
-| 최대 인원 초과 로비 구독 시도           | `로비 입장 실패: 최대 인원에 도달했습니다.`                       |
-| 존재하지 않는 로비 구독 시도            | `로비 입장 실패: 존재하지 않는 로비입니다.`                       |
+기존에는 ERROR body에 문자열 메시지만 내려갔지만, 로비 입장 실패 케이스를 FE가 안정적으로 처리할 수 있도록 JSON payload를 표준 응답 형식으로 사용합니다.
+
+#### STOMP ERROR Payload
+
+```json
+{
+  "type": "STOMP_ERROR",
+  "code": "LOBBY_NOT_FOUND",
+  "message": "존재하지 않는 로비입니다.",
+  "action": "RETURN_TO_LOBBY_LIST",
+  "recoverable": false,
+  "timestamp": "2026-05-25T00:00:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `type` | String | 고정값 `STOMP_ERROR` |
+| `code` | String | 클라이언트 분기용 에러 코드 |
+| `message` | String | 사용자에게 표시 가능한 메시지 |
+| `action` | String | FE가 수행해야 하는 후속 동작 |
+| `recoverable` | Boolean | 같은 화면에서 재시도 가능한 오류인지 여부 |
+| `timestamp` | String | 서버에서 ERROR payload를 생성한 시각 |
+
+#### FE 처리 원칙
+
+FE는 `message` 문자열을 파싱하지 말고, 반드시 `code`, `action`, `recoverable` 기준으로 분기해야 합니다.
+
+| action | FE 권장 처리 |
+| --- | --- |
+| `RETURN_TO_LOBBY_LIST` | 현재 로비 입장을 중단하고 로비 목록 또는 이전 화면으로 복귀 |
+| `RETRY_CONNECT` | WebSocket 연결 자체를 다시 시도 |
+| `REFRESH_AND_RETRY` | 현재 화면 상태를 새로고침한 뒤 다시 시도 |
+| `RECONNECT` | 현재 WebSocket 세션을 폐기하고 새 세션으로 재연결 |
+| `NONE` | 별도 화면 전환 없이 현재 상태 유지 |
+
+#### CONNECT 실패 코드
+
+| code | message | action | recoverable |
+| --- | --- | --- | --- |
+| `CONNECT_USER_IDENTIFIER_MISSING` | 사용자 식별자가 없습니다. 다시 로그인 후 접속해주세요. | `RETRY_CONNECT` | `true` |
+| `CONNECT_USER_IDENTIFIER_INVALID` | 유효하지 않은 사용자 식별자입니다. 다시 로그인 후 접속해주세요. | `RETRY_CONNECT` | `true` |
+| `CONNECT_SESSION_SEQUENCE_FAILED` | WebSocket 세션 생성에 실패했습니다. 다시 접속해주세요. | `RETRY_CONNECT` | `true` |
+| `CONNECT_WS_SESSION_ID_MISSING` | WebSocket 세션 ID가 없습니다. 다시 접속해주세요. | `RETRY_CONNECT` | `true` |
+| `CONNECT_ONLINE_STATUS_FAILED` | 사용자 온라인 상태 저장에 실패했습니다. 잠시 후 다시 접속해주세요. | `RETRY_CONNECT` | `true` |
+
+#### 인증/세션 실패 코드
+
+| code | message | action | recoverable |
+| --- | --- | --- | --- |
+| `SESSION_UNAUTHENTICATED` | 인증 정보가 존재하지 않습니다. 다시 접속해주세요. | `RETRY_CONNECT` | `true` |
+| `LOBBY_ENTER_WS_SESSION_MISSING` | 로비 입장에 필요한 WebSocket 세션 ID가 없습니다. 다시 접속해주세요. | `RECONNECT` | `true` |
+| `LOBBY_ENTER_SESSION_ATTRIBUTES_MISSING` | 로비 입장에 필요한 세션 정보가 없습니다. 새로고침 후 다시 시도해주세요. | `REFRESH_AND_RETRY` | `true` |
+| `LOBBY_ENTER_SEQUENCE_MISSING` | WebSocket 세션 순서 정보가 없습니다. 새로고침 후 다시 시도해주세요. | `REFRESH_AND_RETRY` | `true` |
+
+#### 로비 입장 실패 코드
+
+`POST /api/lobbies/join`은 입장 가능 여부를 확인하는 사전 검증 API입니다.  
+실제 참여자 등록은 WebSocket `SUBSCRIBE /topic/lobby/{code}` 시점에 `enter_lobby.lua`로 원자 처리됩니다.
+
+따라서 REST join이 성공했더라도, WebSocket SUBSCRIBE 시점의 최종 상태가 달라지면 STOMP ERROR가 발생할 수 있습니다.
+
+| code | 발생 조건 | message | action | recoverable |
+| --- | --- | --- | --- | --- |
+| `LOBBY_NOT_FOUND` | 로비가 삭제되었거나 존재하지 않음 | 존재하지 않는 로비입니다. | `RETURN_TO_LOBBY_LIST` | `false` |
+| `LOBBY_FULL` | REST join 이후 다른 사용자가 먼저 입장하여 정원이 찬 경우 | 로비 최대 인원에 도달했습니다. | `RETURN_TO_LOBBY_LIST` | `false` |
+| `LOBBY_NOT_WAITING` | 로비가 이미 `PLAYING` 또는 `FINISHED` 상태로 변경된 경우 | 이미 시작되었거나 입장할 수 없는 로비입니다. | `RETURN_TO_LOBBY_LIST` | `false` |
+| `LOBBY_INVALID_CAPACITY` | Redis 로비 정원 정보가 없거나 유효하지 않은 경우 | 로비 정원 정보가 유효하지 않습니다. | `RETURN_TO_LOBBY_LIST` | `false` |
+| `LOBBY_STALE_SESSION` | 더 최신 WebSocket 세션이 이미 존재하는 경우 | 더 최신 WebSocket 세션이 이미 존재합니다. 다시 접속해주세요. | `RECONNECT` | `true` |
+| `LOBBY_KICKED_USER` | 강퇴된 사용자가 같은 로비에 재입장하려는 경우 | 강퇴된 로비에는 재입장할 수 없습니다. | `RETURN_TO_LOBBY_LIST` | `false` |
+| `LOBBY_INVALID_SEQUENCE` | WebSocket sessionSequence가 유효하지 않은 경우 | 로비 입장 세션 상태가 유효하지 않습니다. 새로고침 후 다시 시도해주세요. | `REFRESH_AND_RETRY` | `true` |
+| `LOBBY_ENTER_UNKNOWN_RESULT` | `enter_lobby.lua`가 알 수 없는 반환값을 반환한 경우 | 로비 입장 중 알 수 없는 서버 응답이 발생했습니다. 새로고침 후 다시 시도해주세요. | `REFRESH_AND_RETRY` | `true` |
+| `LOBBY_ENTER_TEMPORARILY_UNAVAILABLE` | Redis/Lua 실행이 일시적으로 실패한 경우 | 일시적으로 로비 입장 상태를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요. | `REFRESH_AND_RETRY` | `true` |
+
+#### 서버 내부 오류 코드
+
+| code | message | action | recoverable |
+| --- | --- | --- | --- |
+| `INTERNAL_STOMP_ERROR` | WebSocket 처리 중 서버 오류가 발생했습니다. | `REFRESH_AND_RETRY` | `true` |
+
+#### REST join 성공 후 WebSocket SUBSCRIBE 실패 처리 기준
+
+클라이언트는 로비 입장을 다음 순서로 처리해야 합니다.
+
+```text
+1. POST /api/lobbies/join 호출
+2. 응답 성공 시 WebSocket CONNECT
+3. SUBSCRIBE /topic/lobby/{inviteCode}
+4. SUBSCRIBE 성공 후 로비 상세 조회 또는 refresh 이벤트 대기
+5. SUBSCRIBE 실패 시 STOMP ERROR payload의 action 기준으로 처리
+```
+
+REST join 성공 후에도 다음 상황에서는 WebSocket SUBSCRIBE가 실패할 수 있습니다.
+
+| 상황 | 이유 | FE 처리 |
+| --- | --- | --- |
+| REST join 성공 후 다른 사용자가 먼저 입장 | SUBSCRIBE 시점에 `FULL` 발생 | `RETURN_TO_LOBBY_LIST` |
+| REST join 성공 후 방장이 게임 시작 | SUBSCRIBE 시점에 `LOBBY_NOT_WAITING` 발생 | `RETURN_TO_LOBBY_LIST` |
+| REST join 성공 후 로비 삭제 | SUBSCRIBE 시점에 `LOBBY_NOT_FOUND` 발생 | `RETURN_TO_LOBBY_LIST` |
+| 강퇴된 유저가 재입장 시도 | kicked Set 기준으로 `KICKED_USER` 발생 | `RETURN_TO_LOBBY_LIST` |
+| 같은 userIdentifier로 여러 세션이 경합 | 최신 sessionSequence 기준 stale 세션 차단 | `RECONNECT` |
+| Redis/Lua 일시 장애 | 최종 입장 상태 확인 불가 | `REFRESH_AND_RETRY` |
+
+> FE는 `POST /api/lobbies/join` 성공만으로 사용자를 로비 참여자로 확정하면 안 됩니다.  
+> 실제 로비 참여 확정 기준은 `SUBSCRIBE /topic/lobby/{code}` 성공입니다.
 
 ---
 

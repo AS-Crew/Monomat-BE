@@ -3,6 +3,8 @@ package io.github.ascrew.monomatbe.global.websocket;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
+import io.github.ascrew.monomatbe.global.websocket.error.StompErrorCode;
+import io.github.ascrew.monomatbe.global.websocket.error.StompErrorException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,22 +24,21 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * STOMP 채널 인터셉터.
+ * STOMP 채널 인터셉터
  *
  * [책임]
  * - CONNECT 시 userIdentifier 검증 및 세션 저장
  * - CONNECT 시 Redis INCR 기반 sessionSequence 발급
  * - CONNECT 시 사용자 온라인 상태 저장
  * - SUBSCRIBE/SEND/UNSUBSCRIBE 시 인증 세션 검증
- * - 로비 채팅 채널 SUBSCRIBE 시 enter_lobby.lua를 먼저 실행하여 입장 상태를 확정
+ * - 로비 채팅 채널 SUBSCRIBE 시 enter_lobby.lua를 먼저 실행하여 입장 상태 확정
  *
  * [중요]
  * SessionSubscribeEvent는 구독 요청이 처리된 이후 발생한다.
  * 따라서 해당 이벤트에서 Redis 입장 처리를 수행하면 Lua 실패 시에도 클라이언트는 이미 구독된 상태가 될 수 있다.
  *
  * 이를 방지하기 위해 /topic/lobby/{code} 구독은 preSend 단계에서
- * enter_lobby.lua를 먼저 실행하고, Redis 입장 상태가 확정된 경우에만
- * SUBSCRIBE를 통과시킨다.
+ * enter_lobby.lua를 먼저 실행하고, Redis 입장 상태가 확정된 경우에만 SUBSCRIBE를 통과시킨다.
  */
 @Slf4j
 @Component
@@ -48,55 +49,28 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                     "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
             );
 
-    // =========================================================
-    // Redis Lua 반환값 상수
-    // =========================================================
-
-    private static final String ENTER_RESULT_ENTERED = "ENTERED";
-    private static final String ENTER_RESULT_ALREADY_JOINED = "ALREADY_JOINED";
-    private static final String ENTER_RESULT_SESSION_REPLACED_PREFIX = "SESSION_REPLACED:";
-    private static final String ENTER_RESULT_STALE_SESSION_PREFIX = "STALE_SESSION:";
-    private static final String ENTER_RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
-    private static final String ENTER_RESULT_INVALID_SEQUENCE = "INVALID_SEQUENCE";
-    private static final String ENTER_RESULT_FULL = "FULL";
-    private static final String ENTER_RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
-    private static final String ENTER_RESULT_INVALID_LOBBY_CAPACITY = "INVALID_LOBBY_CAPACITY";
-    private static final String ENTER_RESULT_KICKED_USER = "KICKED_USER";
-
-    // =========================================================
-    // 실패 사유 상수
-    // =========================================================
-
     private static final String ENTER_FAILURE_NULL_RESULT = "Lua result is null";
     private static final String ENTER_FAILURE_EXCEPTION = "Lua execution exception";
 
-    // =========================================================
-    // TTL 상수
-    // =========================================================
-
     /**
      * ws:connection:{wsSessionId}, lobby:{code}:user_session:{userIdentifier},
-     * lobby:{code}:user_session_seq:{userIdentifier} 매핑 TTL.
+     * lobby:{code}:user_session_seq:{userIdentifier} 매핑 TTL
      *
      * WebSocket DISCONNECT 이벤트 누락, 서버 비정상 종료에 대비한 안전장치다.
      *
-     * 기존 2시간은 장시간 로비 대기 또는 게임 진행 중 TTL 만료 타이밍 이슈가 생길 수 있어
-     * 6시간으로 늘린다.
+     * 기존 2시간은 장시간 로비 대기 또는 게임 진행 중 TTL 만료 타이밍 이슈가 생길 수 있어 6시간으로 늘린다.
      *
      * 사용자 온라인 상태 TTL은 userStatusTtl 설정값을 사용한다.
      */
     private static final Duration WS_CONNECTION_TTL = Duration.ofHours(6);
 
-    // =========================================================
-    // 의존성
-    // =========================================================
-
     private final StringRedisTemplate stringRedisTemplate;
     private final WebSocketMetric webSocketMetric;
     private final RedisScript<String> enterLobbyScript;
+    private final LobbyEnterResultMapper lobbyEnterResultMapper = new LobbyEnterResultMapper();
 
     /**
-     * 사용자 온라인 상태 TTL.
+     * 사용자 온라인 상태 TTL
      *
      * [기본값]
      * - PT2H: 2시간
@@ -111,10 +85,10 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final Duration userStatusTtl;
 
     /**
-     * 로비 입장 Lua 재시도 횟수.
+     * 로비 입장 Lua 재시도 횟수
      *
      * 기본값은 2입니다.
-     * 즉, 최초 실행 1회 + 재시도 1회를 의미
+     * 즉, 최초 실행 1회 + 재시도 1회를 의미한다.
      *
      * 설정 파일에 값을 추가하지 않아도 기본값 2로 동작합니다.
      * 운영 환경에서 조정이 필요하면 아래 키를 사용할 수 있습니다.
@@ -152,14 +126,16 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             case CONNECT -> handleConnect(accessor, sessionAttributes);
             case SUBSCRIBE, SEND, UNSUBSCRIBE -> validateSession(accessor, sessionAttributes);
             case DISCONNECT -> handleDisconnect(sessionAttributes);
-            default -> { /* 별도 처리 불필요 */ }
+            default -> {
+                // 별도 처리 불필요
+            }
         }
 
         return message;
     }
 
     /**
-     * CONNECT 명령 처리.
+     * CONNECT 명령 처리
      */
     private void handleConnect(
             StompHeaderAccessor accessor,
@@ -169,24 +145,20 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (userIdentifier == null || userIdentifier.isBlank()) {
             log.warn("STOMP CONNECT 거부: 사용자 식별자 없음");
-            throw new IllegalArgumentException(
-                    "STOMP CONNECT: 사용자 식별자가 없습니다. 연결이 거부되었습니다."
-            );
+            throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_MISSING);
         }
 
         if (!UUID_PATTERN.matcher(userIdentifier).matches()) {
             log.warn("STOMP CONNECT 거부: 유효하지 않은 식별자 형식 = {}",
                     sanitizeForLog(userIdentifier));
-            throw new IllegalArgumentException(
-                    "STOMP CONNECT: 유효하지 않은 식별자 형식입니다. 연결이 거부되었습니다."
-            );
+            throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_INVALID);
         }
 
         Long sessionSequence = stringRedisTemplate.opsForValue()
                 .increment(RedisKeys.WS_SESSION_SEQUENCE);
 
         if (sessionSequence == null) {
-            throw new IllegalStateException("STOMP CONNECT: WebSocket 세션 sequence 발급에 실패했습니다.");
+            throw new StompErrorException(StompErrorCode.CONNECT_SESSION_SEQUENCE_FAILED);
         }
 
         if (sessionAttributes != null) {
@@ -198,7 +170,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (wsSessionId == null || wsSessionId.isBlank()) {
             log.warn("STOMP CONNECT 거부: WebSocket 세션 ID 없음 - userIdentifier: {}", userIdentifier);
-            throw new IllegalStateException("STOMP CONNECT: WebSocket 세션 ID가 없습니다.");
+            throw new StompErrorException(StompErrorCode.CONNECT_WS_SESSION_ID_MISSING);
         }
 
         log.debug("STOMP CONNECT 온라인 상태 저장 시작 - userIdentifier: {}, wsSessionId: {}, sessionSequence: {}",
@@ -225,7 +197,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         if (userIdentifier == null) {
             log.warn("[{}] 인증되지 않은 세션 접근 차단", accessor.getCommand());
-            throw new IllegalStateException("인증 정보가 존재하지 않습니다.");
+            throw new StompErrorException(StompErrorCode.SESSION_UNAUTHENTICATED);
         }
 
         switch (accessor.getCommand()) {
@@ -233,12 +205,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             case SEND -> log.info("[SEND] 메시지 발송 - 식별자: {}, 경로: {}",
                     userIdentifier, accessor.getDestination());
             case UNSUBSCRIBE -> log.info("[UNSUBSCRIBE] 구독 해제 - 식별자: {}", userIdentifier);
-            default -> { /* 별도 처리 불필요 */ }
+            default -> {
+                // 별도 처리 불필요
+            }
         }
     }
 
     /**
-     * SUBSCRIBE 명령 처리.
+     * SUBSCRIBE 명령 처리
      */
     private void handleSubscribe(
             StompHeaderAccessor accessor,
@@ -291,7 +265,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             Map<String, Object> sessionAttributes
     ) {
         if (wsSessionId == null || wsSessionId.isBlank()) {
-            throw new IllegalStateException("로비 입장 실패: WebSocket 세션 ID가 없습니다.");
+            throw new StompErrorException(StompErrorCode.LOBBY_ENTER_WS_SESSION_MISSING);
         }
 
         long sessionSequence = extractSessionSequence(sessionAttributes);
@@ -308,46 +282,12 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         sessionSequence
                 );
 
-                LobbyEnterResultType resultType = parseLobbyEnterResultType(result);
+                LobbyEnterResultMapper.LobbyEnterResultType resultType =
+                        lobbyEnterResultMapper.parse(result);
 
                 switch (resultType) {
                     case ENTERED, ALREADY_JOINED, SESSION_REPLACED -> {
                         return result;
-                    }
-
-                    case FULL -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 최대 인원에 도달했습니다.");
-                    }
-
-                    case LOBBY_NOT_WAITING -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 게임이 이미 시작된 로비입니다.");
-                    }
-
-                    case INVALID_LOBBY_CAPACITY -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 로비 정원 정보가 유효하지 않습니다.");
-                    }
-
-                    case STALE_SESSION -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 더 최신 WebSocket 세션이 이미 존재합니다.");
-                    }
-
-                    case KICKED_USER -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패 : 강퇴된 로비에는 재입장할 수 없습니다.");
-                    }
-
-                    case LOBBY_NOT_FOUND -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalArgumentException("로비 입장 실패: 존재하지 않는 로비입니다.");
-                    }
-
-                    case INVALID_SEQUENCE -> {
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 세션 상태가 유효하지 않습니다. 새로고침 후 다시 시도해주세요.");
                     }
 
                     case UNKNOWN -> {
@@ -360,12 +300,19 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         log.error("로비 입장 Lua 알 수 없는 반환값 - result: {}, 로비: {}, 식별자: {}, wsSessionId: {}",
                                 result, lobbyCode, userIdentifier, wsSessionId);
 
-                        cleanupWsConnection(wsSessionId);
-                        throw new IllegalStateException("로비 입장 실패: 알 수 없는 서버 응답입니다.");
+                        throwLobbyEnterFailure(
+                                wsSessionId,
+                                resultType.resolveErrorCode()
+                        );
                     }
+
+                    default -> throwLobbyEnterFailure(
+                            wsSessionId,
+                            resultType.resolveErrorCode()
+                    );
                 }
 
-            } catch (IllegalArgumentException | IllegalStateException e) {
+            } catch (StompErrorException e) {
                 throw e;
             } catch (RuntimeException e) {
                 lastException = e;
@@ -383,7 +330,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
 
         cleanupWsConnection(wsSessionId);
-        throw new IllegalStateException("일시적으로 로비 입장 상태를 확인할 수 없습니다. 새로고침 후 다시 시도해주세요.");
+        throw new StompErrorException(StompErrorCode.LOBBY_ENTER_TEMPORARILY_UNAVAILABLE);
     }
 
     /**
@@ -391,7 +338,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
      */
     private long extractSessionSequence(Map<String, Object> sessionAttributes) {
         if (sessionAttributes == null) {
-            throw new IllegalStateException("로비 입장 실패: STOMP 세션 속성이 없습니다.");
+            throw new StompErrorException(StompErrorCode.LOBBY_ENTER_SESSION_ATTRIBUTES_MISSING);
         }
 
         Object value = sessionAttributes.get(WebSocketHeaders.SESSION_SEQUENCE);
@@ -400,7 +347,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             return number.longValue();
         }
 
-        throw new IllegalStateException("로비 입장 실패: WebSocket 세션 sequence가 없습니다.");
+        throw new StompErrorException(StompErrorCode.LOBBY_ENTER_SEQUENCE_MISSING);
     }
 
     /**
@@ -449,53 +396,17 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     }
 
     /**
-     * Lua 반환값을 enum으로 파싱한다.
+     * 로비 입장 실패 결과를 STOMP 표준 예외로 변환한다.
      *
-     * 반환 문자열 분기 처리를 이 메서드로 중앙화하여,
-     * Lua 반환값이 추가될 때 Java 수정 위치를 명확하게 한다.
+     * Lua 실패 결과는 대부분 현재 ws:connection을 유지할 이유가 없으므로
+     * 먼저 보상 삭제한 뒤, FE가 처리 가능한 StompErrorCode를 가진 예외를 던진다.
      */
-    private LobbyEnterResultType parseLobbyEnterResultType(String result) {
-        if (ENTER_RESULT_ENTERED.equals(result)) {
-            return LobbyEnterResultType.ENTERED;
-        }
-
-        if (ENTER_RESULT_ALREADY_JOINED.equals(result)) {
-            return LobbyEnterResultType.ALREADY_JOINED;
-        }
-
-        if (result != null && result.startsWith(ENTER_RESULT_SESSION_REPLACED_PREFIX)) {
-            return LobbyEnterResultType.SESSION_REPLACED;
-        }
-
-        if (result != null && result.startsWith(ENTER_RESULT_STALE_SESSION_PREFIX)) {
-            return LobbyEnterResultType.STALE_SESSION;
-        }
-
-        if (ENTER_RESULT_LOBBY_NOT_FOUND.equals(result)) {
-            return LobbyEnterResultType.LOBBY_NOT_FOUND;
-        }
-
-        if (ENTER_RESULT_INVALID_SEQUENCE.equals(result)) {
-            return LobbyEnterResultType.INVALID_SEQUENCE;
-        }
-
-        if (ENTER_RESULT_FULL.equals(result)) {
-            return LobbyEnterResultType.FULL;
-        }
-
-        if (ENTER_RESULT_LOBBY_NOT_WAITING.equals(result)) {
-            return LobbyEnterResultType.LOBBY_NOT_WAITING;
-        }
-
-        if (ENTER_RESULT_INVALID_LOBBY_CAPACITY.equals(result)) {
-            return LobbyEnterResultType.INVALID_LOBBY_CAPACITY;
-        }
-
-        if (ENTER_RESULT_KICKED_USER.equals(result)) {
-            return LobbyEnterResultType.KICKED_USER;
-        }
-
-        return LobbyEnterResultType.UNKNOWN;
+    private void throwLobbyEnterFailure(
+            String wsSessionId,
+            StompErrorCode errorCode
+    ) {
+        cleanupWsConnection(wsSessionId);
+        throw new StompErrorException(errorCode);
     }
 
     /**
@@ -557,21 +468,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         } catch (RuntimeException e) {
             log.error("STOMP CONNECT 온라인 상태 저장 실패 - userIdentifier: {}, wsSessionId: {}, userStatusKey: {}, userStatusSessionsKey: {}",
                     userIdentifier, wsSessionId, userStatusKey, userStatusSessionsKey, e);
-            throw new IllegalStateException("STOMP CONNECT: 사용자 온라인 상태 저장에 실패했습니다.", e);
+            throw new StompErrorException(StompErrorCode.CONNECT_ONLINE_STATUS_FAILED, e);
         }
-    }
-
-    private enum LobbyEnterResultType {
-        ENTERED,
-        ALREADY_JOINED,
-        SESSION_REPLACED,
-        STALE_SESSION,
-        LOBBY_NOT_FOUND,
-        INVALID_SEQUENCE,
-        FULL,
-        LOBBY_NOT_WAITING,
-        INVALID_LOBBY_CAPACITY,
-        KICKED_USER,
-        UNKNOWN
     }
 }

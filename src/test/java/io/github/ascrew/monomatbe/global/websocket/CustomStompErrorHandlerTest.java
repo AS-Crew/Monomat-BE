@@ -9,16 +9,20 @@ import org.springframework.messaging.MessageDeliveryException;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CustomStompErrorHandlerTest {
 
+    private final JsonMapper jsonMapper = JsonMapper.builder().build();
+
     private final CustomStompErrorHandler errorHandler =
-            new CustomStompErrorHandler(JsonMapper.builder().build());
+            new CustomStompErrorHandler(jsonMapper);
 
     @Test
     @DisplayName("StompErrorException은 표준 STOMP ERROR JSON payload로 변환된다")
@@ -38,17 +42,19 @@ class CustomStompErrorHandlerTest {
 
         // then
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
+        Map<String, Object> payload = payloadAsMap(result);
 
         assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(accessor.getMessage()).isEqualTo("LOBBY_NOT_FOUND");
 
-        assertThat(payload).contains("\"type\":\"STOMP_ERROR\"");
-        assertThat(payload).contains("\"code\":\"LOBBY_NOT_FOUND\"");
-        assertThat(payload).contains("\"message\":\"존재하지 않는 로비입니다.\"");
-        assertThat(payload).contains("\"action\":\"RETURN_TO_LOBBY_LIST\"");
-        assertThat(payload).contains("\"recoverable\":false");
-        assertThat(payload).contains("\"timestamp\"");
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "LOBBY_NOT_FOUND")
+                .containsEntry("message", "존재하지 않는 로비입니다.")
+                .containsEntry("action", "RETURN_TO_LOBBY_LIST")
+                .containsEntry("recoverable", false);
+
+        assertTimestampExists(payload);
     }
 
     @Test
@@ -69,15 +75,19 @@ class CustomStompErrorHandlerTest {
 
         // then
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
+        Map<String, Object> payload = payloadAsMap(result);
 
         assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(accessor.getMessage()).isEqualTo("LOBBY_KICKED_USER");
 
-        assertThat(payload).contains("\"code\":\"LOBBY_KICKED_USER\"");
-        assertThat(payload).contains("\"message\":\"강퇴된 로비에는 재입장할 수 없습니다.\"");
-        assertThat(payload).contains("\"action\":\"RETURN_TO_LOBBY_LIST\"");
-        assertThat(payload).contains("\"recoverable\":false");
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "LOBBY_KICKED_USER")
+                .containsEntry("message", "강퇴된 로비에는 재입장할 수 없습니다.")
+                .containsEntry("action", "RETURN_TO_LOBBY_LIST")
+                .containsEntry("recoverable", false);
+
+        assertTimestampExists(payload);
     }
 
     @Test
@@ -98,14 +108,19 @@ class CustomStompErrorHandlerTest {
 
         // then
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
+        Map<String, Object> payload = payloadAsMap(result);
 
         assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(accessor.getMessage()).isEqualTo("LOBBY_STALE_SESSION");
 
-        assertThat(payload).contains("\"code\":\"LOBBY_STALE_SESSION\"");
-        assertThat(payload).contains("\"action\":\"RECONNECT\"");
-        assertThat(payload).contains("\"recoverable\":true");
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "LOBBY_STALE_SESSION")
+                .containsEntry("message", "더 최신 WebSocket 세션이 이미 존재합니다. 다시 접속해주세요.")
+                .containsEntry("action", "RECONNECT")
+                .containsEntry("recoverable", true);
+
+        assertTimestampExists(payload);
     }
 
     @Test
@@ -132,45 +147,19 @@ class CustomStompErrorHandlerTest {
 
         // then
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
+        Map<String, Object> payload = payloadAsMap(result);
 
         assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(accessor.getMessage()).isEqualTo("LOBBY_FULL");
 
-        assertThat(payload).contains("\"code\":\"LOBBY_FULL\"");
-        assertThat(payload).contains("\"message\":\"로비 최대 인원에 도달했습니다.\"");
-        assertThat(payload).contains("\"action\":\"RETURN_TO_LOBBY_LIST\"");
-        assertThat(payload).contains("\"recoverable\":false");
-    }
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "LOBBY_FULL")
+                .containsEntry("message", "로비 최대 인원에 도달했습니다.")
+                .containsEntry("action", "RETURN_TO_LOBBY_LIST")
+                .containsEntry("recoverable", false);
 
-    @Test
-    @DisplayName("표준화되지 않은 IllegalStateException은 INTERNAL_STOMP_ERROR로 변환된다")
-    void handleClientMessageProcessingError_withNonStandardIllegalStateException_returnsInternalStompError() {
-        // given
-        Message<byte[]> clientMessage = emptyClientMessage();
-
-        IllegalStateException exception = new IllegalStateException(
-                "legacy stomp error"
-        );
-
-        // when
-        Message<byte[]> result = errorHandler.handleClientMessageProcessingError(
-                clientMessage,
-                exception
-        );
-
-        // then
-        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
-
-        assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
-        assertThat(accessor.getMessage()).isEqualTo("INTERNAL_STOMP_ERROR");
-
-        assertThat(payload).contains("\"type\":\"STOMP_ERROR\"");
-        assertThat(payload).contains("\"code\":\"INTERNAL_STOMP_ERROR\"");
-        assertThat(payload).contains("\"message\":\"WebSocket 처리 중 서버 오류가 발생했습니다.\"");
-        assertThat(payload).contains("\"action\":\"REFRESH_AND_RETRY\"");
-        assertThat(payload).contains("\"recoverable\":true");
+        assertTimestampExists(payload);
     }
 
     @Test
@@ -202,15 +191,52 @@ class CustomStompErrorHandlerTest {
 
         // then
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
+        Map<String, Object> payload = payloadAsMap(result);
 
         assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(accessor.getMessage()).isEqualTo("LOBBY_FULL");
 
-        assertThat(payload).contains("\"code\":\"LOBBY_FULL\"");
-        assertThat(payload).contains("\"message\":\"로비 최대 인원에 도달했습니다.\"");
-        assertThat(payload).contains("\"action\":\"RETURN_TO_LOBBY_LIST\"");
-        assertThat(payload).contains("\"recoverable\":false");
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "LOBBY_FULL")
+                .containsEntry("message", "로비 최대 인원에 도달했습니다.")
+                .containsEntry("action", "RETURN_TO_LOBBY_LIST")
+                .containsEntry("recoverable", false);
+
+        assertTimestampExists(payload);
+    }
+
+    @Test
+    @DisplayName("표준화되지 않은 IllegalStateException은 INTERNAL_STOMP_ERROR로 변환된다")
+    void handleClientMessageProcessingError_withNonStandardIllegalStateException_returnsInternalStompError() {
+        // given
+        Message<byte[]> clientMessage = emptyClientMessage();
+
+        IllegalStateException exception = new IllegalStateException(
+                "legacy stomp error"
+        );
+
+        // when
+        Message<byte[]> result = errorHandler.handleClientMessageProcessingError(
+                clientMessage,
+                exception
+        );
+
+        // then
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
+        Map<String, Object> payload = payloadAsMap(result);
+
+        assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
+        assertThat(accessor.getMessage()).isEqualTo("INTERNAL_STOMP_ERROR");
+
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "INTERNAL_STOMP_ERROR")
+                .containsEntry("message", "WebSocket 처리 중 서버 오류가 발생했습니다.")
+                .containsEntry("action", "REFRESH_AND_RETRY")
+                .containsEntry("recoverable", true);
+
+        assertTimestampExists(payload);
     }
 
     @Test
@@ -231,21 +257,47 @@ class CustomStompErrorHandlerTest {
 
         // then
         StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
-        String payload = payloadAsString(result);
+        Map<String, Object> payload = payloadAsMap(result);
 
         assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
         assertThat(accessor.getMessage()).isEqualTo("INTERNAL_STOMP_ERROR");
 
-        assertThat(payload).contains("\"code\":\"INTERNAL_STOMP_ERROR\"");
-        assertThat(payload).contains("\"action\":\"REFRESH_AND_RETRY\"");
-        assertThat(payload).contains("\"recoverable\":true");
+        assertThat(payload)
+                .containsEntry("type", "STOMP_ERROR")
+                .containsEntry("code", "INTERNAL_STOMP_ERROR")
+                .containsEntry("message", "WebSocket 처리 중 서버 오류가 발생했습니다.")
+                .containsEntry("action", "REFRESH_AND_RETRY")
+                .containsEntry("recoverable", true);
+
+        assertTimestampExists(payload);
     }
 
     private Message<byte[]> emptyClientMessage() {
         return MessageBuilder.withPayload(new byte[0]).build();
     }
 
+    private Map<String, Object> payloadAsMap(Message<byte[]> message) {
+        try {
+            return jsonMapper.readValue(
+                    payloadAsString(message),
+                    new TypeReference<>() {}
+            );
+        } catch (Exception e) {
+            throw new AssertionError("STOMP ERROR payload JSON 파싱 실패", e);
+        }
+    }
+
     private String payloadAsString(Message<byte[]> message) {
         return new String(message.getPayload(), StandardCharsets.UTF_8);
+    }
+
+    private void assertTimestampExists(Map<String, Object> payload) {
+        assertThat(payload)
+                .containsKey("timestamp");
+
+        assertThat(payload.get("timestamp"))
+                .isInstanceOf(String.class)
+                .asString()
+                .isNotBlank();
     }
 }

@@ -14,6 +14,8 @@ local playersKey = KEYS[3]
 local totalRounds = ARGV[1]
 local mapItemIds  = ARGV[2] -- 쉼표로 구분된 문자열 (예: "1,4,5,2,3")
 local participants = ARGV[3] -- 쉼표로 구분된 문자열 (예: "uuid1,uuid2")
+local timeLimitSeconds = ARGV[4]
+local roundStartedAt = ARGV[5]
 
 -- 1. 기존 게임 세션 데이터 초기화 (재시도 대응)
 redis.call('DEL', sessionKey, roundsKey, playersKey)
@@ -22,7 +24,9 @@ redis.call('DEL', sessionKey, roundsKey, playersKey)
 redis.call('HSET', sessionKey, 
     'current_round_no', '1',
     'total_round_count', totalRounds,
-    'status', 'PLAYING'
+    'status', 'READY',
+    'time_limit_seconds', timeLimitSeconds,
+    'round_started_at', roundStartedAt
 )
 redis.call('EXPIRE', sessionKey, 7200)
 

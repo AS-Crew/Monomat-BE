@@ -96,12 +96,16 @@ public class GameSessionCreateService {
                 .collect(Collectors.joining(","));
         String participantsStr = String.join(",", participantIdentifiers);
 
+        long serverStartedAt = System.currentTimeMillis();
+
         String result = redisTemplate.execute(
                 initGameSessionScript,
                 List.of(sessionKey, roundsKey, playersKey),
                 String.valueOf(lobby.getRoundCount()),
                 mapItemIdsStr,
-                participantsStr
+                participantsStr,
+                String.valueOf(lobby.getTimeLimitSeconds()),
+                String.valueOf(serverStartedAt)
         );
 
         if (!"OK".equals(result)) {
@@ -113,11 +117,14 @@ public class GameSessionCreateService {
 
         MapItem firstItem = selectedItems.get(0);
         return RoundStartDto.builder()
+                .type("ROUND_STARTED")
                 .videoId(firstItem.getVideoId())
+                .youtubeUrl(firstItem.getYoutubeUrl())
                 .startTime(firstItem.getStartTime())
                 .endTime(firstItem.getEndTime())
+                .timeLimitSeconds(lobby.getTimeLimitSeconds())
                 .roundNo(1)
-                .serverTime(System.currentTimeMillis())
+                .serverStartedAt(serverStartedAt)
                 .build();
     }
 }

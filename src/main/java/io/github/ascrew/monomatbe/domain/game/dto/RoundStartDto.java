@@ -8,10 +8,18 @@ import lombok.Builder;
  */
 @Builder
 public record RoundStartDto(
+        String type,
         String videoId,
+        String youtubeUrl,
         int startTime,
         int endTime,
+        int timeLimitSeconds,
         int roundNo,
-        long serverTime
+        long serverStartedAt
 ) {
+    public RoundStartDto {
+        if (type == null) {
+            type = "ROUND_STARTED";
+        }
+    }
 }

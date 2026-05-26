@@ -19,20 +19,14 @@ public class GameParticipantResolver {
     private final GuestSessionRepository guestSessionRepository;
 
     public List<User> resolveUsers(List<String> participantIdentifiers) {
-        List<User> users = new ArrayList<>();
+        java.util.Map<Long, User> userMap = new java.util.HashMap<>();
 
-        List<User> sessionUsers = userSessionRepository.findBySessionIdIn(participantIdentifiers)
-                .stream()
-                .map(UserSession::getUser)
-                .toList();
-        users.addAll(sessionUsers);
+        userSessionRepository.findBySessionIdIn(participantIdentifiers)
+                .forEach(session -> userMap.put(session.getUser().getId(), session.getUser()));
 
-        List<User> guestUsers = guestSessionRepository.findByGuestTokenIn(participantIdentifiers)
-                .stream()
-                .map(GuestSession::getUser)
-                .toList();
-        users.addAll(guestUsers);
+        guestSessionRepository.findByGuestTokenIn(participantIdentifiers)
+                .forEach(session -> userMap.put(session.getUser().getId(), session.getUser()));
 
-        return users;
+        return new ArrayList<>(userMap.values());
     }
 }

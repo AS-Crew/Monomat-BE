@@ -4,6 +4,8 @@ import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.PublicMapPageResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
 import io.github.ascrew.monomatbe.domain.map.service.MapService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,9 +38,23 @@ public class MapController {
     @GetMapping
     public ResponseEntity<PublicMapPageResponse> getPublicMaps(
             @RequestParam(defaultValue = "0") Integer page,
-            @RequestParam(defaultValue = "20") Integer size
+            @RequestParam(defaultValue = "20") Integer size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) MapCategory category,
+            @RequestParam(required = false) MapSortType sort
     ) {
-        return ResponseEntity.ok(mapService.getPublicMaps(page, size));
+        return ResponseEntity.ok(mapService.getPublicMaps(page, size, keyword, category, sort));
+    }
+
+    @Operation(summary = "내 맵 목록 조회", description = "로그인한 사용자의 공개/비공개 맵을 모두 조회합니다.")
+    @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PublicMapPageResponse> getMyMaps(
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "20") Integer size,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        return ResponseEntity.ok(mapService.getMyMaps(page, size, principal));
     }
 
     @Operation(summary = "공개 맵 단건 조회")

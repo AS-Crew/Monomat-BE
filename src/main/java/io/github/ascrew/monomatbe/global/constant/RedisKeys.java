@@ -488,6 +488,31 @@ public final class RedisKeys {
     }
 
     /**
+     * 검색 조건이 포함된 공개 맵 목록 캐시 키를 반환합니다.
+     *
+     * <p>버전 기반 무효화 정책이 유지되므로 {@link #mapPublicListVersionKey()} 버전 증가 시
+     * 이 키로 저장된 모든 캐시도 함께 무효화됩니다.
+     *
+     * @param version  캐시 버전
+     * @param keyword  제목 검색어 (null 또는 빈 문자열 허용)
+     * @param category 카테고리 이름 (null 허용)
+     * @param sort     정렬 기준 이름 (null 허용)
+     * @param page     페이지 번호
+     * @param size     페이지 크기
+     * @return "map:public:list:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
+     */
+    public static String mapPublicListKey(
+            String version, String keyword, String category, String sort, int page, int size) {
+        return MAP_PUBLIC_LIST_PREFIX
+                + ":v:" + version
+                + ":k:" + (keyword == null ? "" : keyword)
+                + ":c:" + (category == null ? "" : category)
+                + ":sort:" + (sort == null ? "" : sort)
+                + ":p:" + page
+                + ":s:" + size;
+    }
+
+    /**
      * 공개 맵 단건 캐시 키를 반환합니다.
      *
      * @param mapId 맵 ID

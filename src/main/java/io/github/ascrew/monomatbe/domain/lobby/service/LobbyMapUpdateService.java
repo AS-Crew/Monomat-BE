@@ -260,17 +260,33 @@ public class LobbyMapUpdateService {
      * [안전 정책]
      * 보상 시점에 다른 트랜잭션이 status를 PLAYING으로 바꿨다면 oldMetadata로 되돌리면 안 된다.
      * Lua 내부에서 원자 검증하므로 SKIPPED_NOT_WAITING은 정상 경로로 간주하고 로그만 남긴다.
+     *
+     * [인프라 장애 분리]
+     * Lua 결과값(LOBBY_NOT_FOUND)은 로비 데이터가 Redis에 없는 정상 도메인 결과다.
+     * Redis 연결 단절·타임아웃·스크립트 로딩 실패 등 인프라 예외는 catch 블록에서 별도 처리하여
+     * 원인 분류와 운영 대응이 가능하도록 한다.
      */
     private void compensateRedisMapMetadata(String code, LobbyMapMetadata oldMetadata) {
-        LobbyMapCompensationResult result = lobbyRepository.compensateMapMetadataIfWaiting(code, oldMetadata);
+        try {
+            LobbyMapCompensationResult result =
+                    lobbyRepository.compensateMapMetadataIfWaiting(code, oldMetadata);
 
-        switch (result) {
-            case COMPENSATED -> log.info("Redis 맵 보상 복구 완료 - code: {}", code);
-            case SKIPPED_NOT_WAITING -> log.warn(LOG_COMPENSATION_SKIPPED, code);
-            case LOBBY_NOT_FOUND -> log.error(
-                    "{} Redis 맵 보상 복구 실패 - 로비 데이터 없음 또는 Lua 실행 실패. code: {}",
+            switch (result) {
+                case COMPENSATED -> log.info("Redis 맵 보상 복구 완료 - code: {}", code);
+                case SKIPPED_NOT_WAITING -> log.warn(LOG_COMPENSATION_SKIPPED, code);
+                case LOBBY_NOT_FOUND -> log.error(
+                        "{} Redis 맵 보상 복구 불가 - Redis에 로비 없음 (이미 삭제됨). code: {}",
+                        LOG_MONITORING_REQUIRED,
+                        code
+                );
+            }
+        } catch (Exception e) {
+            log.error(
+                    "{} Redis 맵 보상 복구 실패 - Redis 인프라 오류 (연결 단절/타임아웃/Lua 로딩 등). "
+                            + "Redis-DB mapId 불일치 가능성 있음. code: {}",
                     LOG_MONITORING_REQUIRED,
-                    code
+                    code,
+                    e
             );
         }
     }

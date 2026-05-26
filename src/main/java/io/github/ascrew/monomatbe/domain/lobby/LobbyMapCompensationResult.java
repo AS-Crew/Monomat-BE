@@ -8,8 +8,9 @@ package io.github.ascrew.monomatbe.domain.lobby;
  * 그러나 보상 시점에 다른 트랜잭션(start_lobby.lua)이 status를 PLAYING으로 바꿨다면
  * 이미 시작된 로비의 맵 메타데이터를 임의로 되돌려서는 안 된다.
  *
- * 이 enum은 compensate_lobby_map.lua의 결과를 도메인 의미로 표현하여
- * 호출자가 "복구 성공 / 안전상 스킵 / 로비 없음"을 구분할 수 있게 한다.
+ * 이 enum은 compensate_lobby_map.lua가 정상 실행된 경우의 도메인 결과만 표현한다.
+ * Redis 연결 단절·타임아웃·Lua 스크립트 로딩 실패 등 인프라 예외는 enum 값이 아닌
+ * RuntimeException으로 전파되며, 호출자(LobbyMapUpdateService)가 별도로 처리한다.
  */
 public enum LobbyMapCompensationResult {
 

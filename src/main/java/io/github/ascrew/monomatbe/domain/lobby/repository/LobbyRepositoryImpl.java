@@ -172,18 +172,8 @@ public class LobbyRepositoryImpl implements LobbyRepository {
           String code,
           LobbyMapMetadata oldMetadata
   ) {
-    try {
-      String result = lobbyLuaScriptExecutor.executeCompensateLobbyMap(code, oldMetadata);
-      return lobbyLuaResultMapper.toLobbyMapCompensationResult(result, code);
-
-    } catch (Exception e) {
-      log.error(
-              "맵 변경 보상 Lua 스크립트 실행 중 예외 발생 - lobbyCode: {}",
-              code,
-              e
-      );
-      return LobbyMapCompensationResult.LOBBY_NOT_FOUND;
-    }
+    String result = lobbyLuaScriptExecutor.executeCompensateLobbyMap(code, oldMetadata);
+    return lobbyLuaResultMapper.toLobbyMapCompensationResult(result, code);
   }
 
   // =========================================================

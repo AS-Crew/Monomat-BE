@@ -860,6 +860,7 @@ JWT Access Token이 필요하며, 방장만 호출할 수 있습니다.
 * 로비 상태가 이미 변경된 경우
 * participants Set에 stale 유저가 남아 있는 경우
 * Redis participants/ready/session 정합성이 깨진 경우
+* 이미 진행 중인 게임 세션이 존재하는 경우
 
 ---
 
@@ -1136,11 +1137,14 @@ SUBSCRIBE /topic/game/{code}/round
 
 ```json
 {
+  "type": "ROUND_READY",
   "videoId": "dQw4w9WgXcQ",
+  "youtubeUrl": "https://youtube.com/watch?v=dQw4w9WgXcQ",
   "startTime": 10,
   "endTime": 30,
+  "timeLimitSeconds": 30,
   "roundNo": 1,
-  "serverTime": 1716500000000
+  "serverStartedAt": 1716500000000
 }
 ```
 

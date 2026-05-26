@@ -29,7 +29,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
-
+import io.github.ascrew.monomatbe.domain.game.service.GameRoundStartService;
+import io.github.ascrew.monomatbe.domain.game.service.GameSessionCreateService;
 @ExtendWith(MockitoExtension.class)
 class LobbyStartServiceTest {
 
@@ -44,24 +45,24 @@ class LobbyStartServiceTest {
     @Mock
     private GameRealtimeNotifier gameRealtimeNotifier;
     @Mock
-    private QuizMapJpaRepository quizMapJpaRepository;
+    private GameRoundStartService gameRoundStartService;
+    @Mock
+    private LobbyStartPolicy lobbyStartPolicy;
 
     private LobbyStartService lobbyStartService;
-    private LobbyStartPolicy lobbyStartPolicy;
 
     @BeforeEach
     void setUp() {
         TransactionSynchronizationManager.initSynchronization();
         
-        lobbyStartPolicy = new LobbyStartPolicy(quizMapJpaRepository);
-        
         lobbyStartService = new LobbyStartService(
                 lobbyRepository,
                 lobbyRealtimeNotifier,
-                gameLobbyJpaRepository,
-                lobbyStartPolicy,
+                gameRealtimeNotifier,
                 gameSessionCreateService,
-                gameRealtimeNotifier
+                gameRoundStartService,
+                gameLobbyJpaRepository,
+                lobbyStartPolicy
         );
     }
 
@@ -81,8 +82,8 @@ class LobbyStartServiceTest {
         QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).isDeleted(false).build();
         
         when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(code)).thenReturn(Optional.of(gameLobby));
+        when(lobbyStartPolicy.validateStartableMap(gameLobby)).thenReturn(quizMap);
         when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.Started(code));
         when(gameSessionCreateService.createGameSession(gameLobby, quizMap)).thenReturn(mock(RoundStartDto.class));
 
@@ -105,7 +106,8 @@ class LobbyStartServiceTest {
         GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(null).roundCount(5).build();
         
         when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(code)).thenReturn(Optional.of(gameLobby));
+        when(lobbyStartPolicy.validateStartableMap(gameLobby)).thenThrow(new ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "게임을 시작하려면 맵을 선택해야 합니다."));
 
         // when & then
         assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
@@ -125,8 +127,8 @@ class LobbyStartServiceTest {
         QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(3).isDeleted(false).build();
         
         when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(code)).thenReturn(Optional.of(gameLobby));
+        when(lobbyStartPolicy.validateStartableMap(gameLobby)).thenThrow(new ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "맵의 문제 수가 설정된 라운드 수보다 적습니다."));
 
         // when & then
         assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
@@ -145,8 +147,8 @@ class LobbyStartServiceTest {
         QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).isDeleted(false).build();
         
         when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(code)).thenReturn(Optional.of(gameLobby));
+        when(lobbyStartPolicy.validateStartableMap(gameLobby)).thenReturn(quizMap);
         // 이미 진행 중인 로비이므로 LobbyNotWaiting 반환
         when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.LobbyNotWaiting(code));
 
@@ -168,8 +170,8 @@ class LobbyStartServiceTest {
         QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).build();
 
         when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(org.mockito.Mockito.mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
-        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
-        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(code)).thenReturn(Optional.of(gameLobby));
+        when(lobbyStartPolicy.validateStartableMap(gameLobby)).thenReturn(quizMap);
         when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.Started(code));
 
         when(gameSessionCreateService.createGameSession(gameLobby, quizMap))

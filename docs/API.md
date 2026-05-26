@@ -12,6 +12,27 @@
 
 ## REST API
 
+### 시스템 (System)
+
+#### 서버 시간 동기화 조회
+
+```http
+GET /api/system/time
+```
+
+클라이언트가 서버와의 시간 오차(delta)를 계산하기 위해 호출합니다.
+인증 토큰 없이 누구나 호출할 수 있습니다.
+
+**Response `200 OK`**
+
+```json
+{
+  "serverTimeMillis": 1716500000000
+}
+```
+
+---
+
 ### 인증 (Auth)
 
 #### 게스트 로그인
@@ -1149,6 +1170,43 @@ SUBSCRIBE /topic/game/{code}/round
 ```
 
 > **참고**: 클라이언트 스포일러 방지를 위해 정답, 힌트, 제목, 아티스트 등의 메타데이터는 라운드 시작 시점에 전송되지 않으며, 정답 공개 시점에 별도의 채널과 DTO(`RoundMetadataDto`)를 통해 전송될 예정입니다.
+
+#### 유튜브 IFrame 로딩 완료(Ready To Play) 송신
+
+```text
+SEND /app/game/{code}/ready-to-play
+```
+
+클라이언트가 `ROUND_READY` 메시지를 수신한 후, 유튜브 IFrame 로딩이 완료되면 호출합니다.
+참가한 모든 플레이어가 해당 신호를 보내거나, 10초 타임아웃이 지나면 실제 라운드 재생(`ROUND_PLAYBACK_STARTED`)이 트리거됩니다.
+
+**Body**
+
+```json
+{
+  "roundNo": 1
+}
+```
+
+#### 라운드 동영상 재생 시작 이벤트 수신
+
+```text
+SUBSCRIBE /topic/game/{code}/round
+```
+(이전 `ROUND_READY` 메시지와 동일한 채널로 수신)
+
+모든 클라이언트의 준비 완료가 취합되거나, 10초 타임아웃이 발생하면 브로드캐스트됩니다. 클라이언트는 이 메시지를 받는 즉시 로드해둔 유튜브 영상을 재생합니다.
+
+**수신 메시지 (RoundPlaybackStartedDto)**
+
+```json
+{
+  "type": "ROUND_PLAYBACK_STARTED",
+  "roundNo": 1,
+  "serverStartedAt": 1716500000000,
+  "durationSeconds": 30
+}
+```
 
 #### 로비 유저 강퇴 송신
 

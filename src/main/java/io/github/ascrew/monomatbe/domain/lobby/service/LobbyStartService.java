@@ -19,6 +19,9 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
+import io.github.ascrew.monomatbe.domain.game.service.GameRealtimeNotifier;
+import io.github.ascrew.monomatbe.domain.game.service.GameRoundStartService;
+import io.github.ascrew.monomatbe.domain.game.service.GameSessionCreateService;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
@@ -76,10 +79,11 @@ public class LobbyStartService {
 
     private final LobbyRepository lobbyRepository;
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
+    private final GameRealtimeNotifier gameRealtimeNotifier;
+    private final GameSessionCreateService gameSessionCreateService;
+    private final GameRoundStartService gameRoundStartService;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyStartPolicy lobbyStartPolicy;
-    private final io.github.ascrew.monomatbe.domain.game.service.GameSessionCreateService gameSessionCreateService;
-    private final io.github.ascrew.monomatbe.domain.game.service.GameRealtimeNotifier gameRealtimeNotifier;
 
     /**
      * 로비 게임 시작 요청을 처리한다.
@@ -291,6 +295,7 @@ public class LobbyStartService {
 
                 try {
                     gameRealtimeNotifier.notifyRoundStart(code, firstRound);
+                    gameRoundStartService.scheduleForcePlaybackStart(code, firstRound.roundNo(), firstRound.timeLimitSeconds());
                 } catch (Exception e) {
                     log.error("[ALERT_REQUIRED] ROUND_START 발행 실패 - code: {}, requester: {}, roundNo: {}", code, requesterIdentifier, firstRound.roundNo(), e);
                 }

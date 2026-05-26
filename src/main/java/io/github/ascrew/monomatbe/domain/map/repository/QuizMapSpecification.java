@@ -29,7 +29,7 @@ public class QuizMapSpecification {
         if (keyword == null || keyword.isBlank()) {
             return null;
         }
-        String pattern = "%" + keyword.toLowerCase() + "%";
+        String pattern = "%" + keyword + "%";
         return (root, query, cb) ->
                 cb.like(cb.lower(root.get("title")), pattern);
     }

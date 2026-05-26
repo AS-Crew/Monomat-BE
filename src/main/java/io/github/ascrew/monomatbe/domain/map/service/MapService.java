@@ -71,7 +71,8 @@ public class MapService {
         this.jsonMapper = jsonMapper;
     }
 
-    // 공개된 맵 목록을 검색 조건과 함께 페이징하여 조회합니다. Redis 캐싱을 적용합니다.
+    // 공개된 맵 목록을 검색 조건과 함께 페이징하여 조회합니다.
+    // keyword 없는 경우에만 Redis 캐싱을 적용합니다 (keyword 검색은 무한 조합으로 캐시 효율이 낮음).
     @Transactional(readOnly = true)
     public PublicMapPageResponse getPublicMaps(
             Integer page, Integer size, String keyword, MapCategory category, MapSortType sort
@@ -80,10 +81,18 @@ public class MapService {
         int normalizedSize = size == null || size <= 0 ? DEFAULT_SIZE : Math.min(size, MAX_SIZE);
         MapSortType normalizedSort = sort == null ? MapSortType.NEWEST : sort;
 
+        String normalizedKeyword = (keyword == null || keyword.isBlank())
+                ? null
+                : keyword.trim().toLowerCase();
+
+        if (normalizedKeyword != null) {
+            return queryPublicMaps(normalizedKeyword, category, normalizedPage, normalizedSize, normalizedSort);
+        }
+
         String version = getPublicListCacheVersion();
         String cacheKey = RedisKeys.mapPublicListKey(
                 version,
-                keyword,
+                null,
                 category == null ? null : category.name(),
                 normalizedSort.name(),
                 normalizedPage,
@@ -108,12 +117,23 @@ public class MapService {
             log.warn("공개 맵 목록 캐시 조회 실패 - key: {}. DB fallback", cacheKey, e);
         }
 
+        PublicMapPageResponse response =
+                queryPublicMaps(null, category, normalizedPage, normalizedSize, normalizedSort);
+
+        safeWriteCache(cacheKey, response);
+
+        return response;
+    }
+
+    private PublicMapPageResponse queryPublicMaps(
+            String keyword, MapCategory category, int page, int size, MapSortType sort
+    ) {
         Specification<QuizMap> spec = Specification
                 .where(QuizMapSpecification.isPublicAndNotDeleted())
                 .and(QuizMapSpecification.withKeyword(keyword))
                 .and(QuizMapSpecification.withCategory(category));
 
-        Pageable pageable = PageRequest.of(normalizedPage, normalizedSize, toSort(normalizedSort));
+        Pageable pageable = PageRequest.of(page, size, toSort(sort));
         Page<QuizMap> pageResult = quizMapJpaRepository.findAll(spec, pageable);
 
         List<MapSummaryResponse> content = pageResult.getContent()
@@ -121,7 +141,7 @@ public class MapService {
                 .map(this::toSummaryResponse)
                 .toList();
 
-        PublicMapPageResponse response = PublicMapPageResponse.builder()
+        return PublicMapPageResponse.builder()
                 .content(content)
                 .page(pageResult.getNumber())
                 .size(pageResult.getSize())
@@ -129,10 +149,6 @@ public class MapService {
                 .totalPages(pageResult.getTotalPages())
                 .hasNext(pageResult.hasNext())
                 .build();
-
-        safeWriteCache(cacheKey, response);
-
-        return response;
     }
 
     // 로그인한 사용자의 맵 목록(공개/비공개 모두, 삭제 제외)을 페이징하여 조회합니다.
@@ -369,7 +385,7 @@ public class MapService {
 
     private MapSummaryResponse toSummaryResponse(QuizMap quizMap) {
         return MapSummaryResponse.builder()
-                .id(quizMap.getId())
+                .mapId(quizMap.getId())
                 .title(quizMap.getTitle())
                 .category(quizMap.getCategory())
                 .numOfSong(quizMap.getNumOfSong())

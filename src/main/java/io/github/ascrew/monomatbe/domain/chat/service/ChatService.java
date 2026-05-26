@@ -7,6 +7,7 @@
  * - 클라이언트 sender / timestamp 위변조 방지
  * - 채팅 메시지 본문 검증
  * - 로비 채팅 전송 권한 검증
+ * - Redis 기반 로비 채팅 쿨타임/반복 전송 제한
  * - Redis Pub/Sub 채널로 메시지 발행
  *
  * [주의]
@@ -55,6 +56,7 @@ public class ChatService {
 
     private final RedisPublisher redisPublisher;
     private final LobbyRepository lobbyRepository;
+    private final LobbyChatRateLimitService lobbyChatRateLimitService;
 
     /**
      * 전체 채팅 메시지를 처리하고 Redis 전체 채팅 채널로 발행한다.
@@ -65,6 +67,7 @@ public class ChatService {
      *
      * [정책]
      * 전체 채팅은 특정 로비 참여 상태와 무관하므로 로비 참여자 검증을 수행하지 않는다.
+     * 이번 이슈 범위는 로비 채팅 제한이므로, Redis 쿨타임도 로비 채팅에만 적용한다.
      *
      * @param message  클라이언트로부터 수신한 메시지
      * @param accessor STOMP 헤더 접근자
@@ -88,6 +91,10 @@ public class ChatService {
      * - 강퇴된 사용자는 전송할 수 없다.
      * - 현재 로비 참여자만 전송할 수 있다.
      *
+     * [도배 방지]
+     * - Redis 기반 쿨타임을 적용한다.
+     * - 짧은 시간 내 동일 메시지 반복 전송을 차단한다.
+     *
      * @param code     로비 초대 코드
      * @param message  클라이언트로부터 수신한 메시지
      * @param accessor STOMP 헤더 접근자
@@ -103,6 +110,12 @@ public class ChatService {
 
         ChatMessageDto secureMessage = buildUserChatMessage(message, code, userIdentifier);
 
+        lobbyChatRateLimitService.validateAndRecord(
+                code,
+                userIdentifier,
+                secureMessage.getContent()
+        );
+
         redisPublisher.publish(StompDestinations.subscribeLobbyChat(code), secureMessage);
     }
 
@@ -116,7 +129,8 @@ public class ChatService {
      *
      * [강퇴 여부를 참여자 여부보다 먼저 확인하는 이유]
      * 강퇴 처리 후에는 participants Set에서 제거되고 kicked Set에 추가될 수 있다.
-     * 이때 참여자 검증을 먼저 수행하면 강퇴 유저도 단순 미참여자로만 처리되어 클라이언트가 정확한 사유를 알기 어렵다.
+     * 이때 참여자 검증을 먼저 수행하면 강퇴 유저도 단순 미참여자로만 처리되어
+     * 클라이언트가 정확한 사유를 알기 어렵다.
      */
     private void validateLobbyChatPermission(String code, String userIdentifier) {
         if (!lobbyRepository.existsByCode(code)) {
@@ -170,7 +184,7 @@ public class ChatService {
     }
 
     /**
-     * 채팅 본문을 검증하고 trim된 문자열을 반환합니다.
+     * 채팅 본문을 검증하고 trim된 문자열을 반환한다.
      */
     private String normalizeContent(ChatMessageDto message) {
         if (message == null || message.getContent() == null) {

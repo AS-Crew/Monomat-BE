@@ -83,14 +83,14 @@ class LobbyStartServiceTest {
         when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
         when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
         when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.Started(code));
-        when(gameSessionCreateService.createGameSession(gameLobby)).thenReturn(mock(RoundStartDto.class));
+        when(gameSessionCreateService.createGameSession(gameLobby, quizMap)).thenReturn(mock(RoundStartDto.class));
 
         // when
         lobbyStartService.startLobbyGame(code, principal);
 
         // then
         verify(gameLobbyJpaRepository).saveAndFlush(gameLobby);
-        verify(gameSessionCreateService).createGameSession(gameLobby);
+        verify(gameSessionCreateService).createGameSession(gameLobby, quizMap);
     }
 
     @Test
@@ -154,6 +154,6 @@ class LobbyStartServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409 CONFLICT");
         
-        verify(gameSessionCreateService, never()).createGameSession(any());
+        verify(gameSessionCreateService, never()).createGameSession(any(), any());
     }
 }

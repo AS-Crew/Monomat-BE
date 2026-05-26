@@ -97,11 +97,12 @@ class GameSessionCreateServiceTest {
                 anyString(),
                 anyString(),
                 anyString(),
+                anyString(),
                 anyString()
         )).thenReturn("OK");
 
         // when
-        RoundStartDto result = gameSessionCreateService.createGameSession(lobby);
+        RoundStartDto result = gameSessionCreateService.createGameSession(lobby, quizMap);
 
         // then
         // 1. DB Session 생성 확인
@@ -119,7 +120,7 @@ class GameSessionCreateServiceTest {
         assertThat(savedPlayers.get(0).getUser()).isEqualTo(user);
 
         // 3. Payload 필드 검증 (정답 및 민감정보 미포함, 신규 필드 포함)
-        assertThat(result.type()).isEqualTo("ROUND_STARTED");
+        assertThat(result.type()).isEqualTo("ROUND_READY");
         assertThat(result.videoId()).isEqualTo("vId");
         assertThat(result.youtubeUrl()).isEqualTo("https://youtube.com/vId");
         assertThat(result.startTime()).isEqualTo(10);

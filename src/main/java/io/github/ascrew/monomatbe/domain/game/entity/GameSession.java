@@ -22,6 +22,10 @@ public class GameSession {
     @JoinColumn(name = "lobby_id", nullable = false)
     private GameLobby lobby;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "map_id", nullable = false)
+    private io.github.ascrew.monomatbe.domain.map.entity.QuizMap map;
+
     @Column(name = "current_round_no", nullable = false)
     private Integer currentRoundNo;
 
@@ -31,6 +35,12 @@ public class GameSession {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private GameSessionStatus status;
+
+    @Column(name = "started_at", nullable = false, updatable = false)
+    private LocalDateTime startedAt;
+
+    @Column(name = "ended_at")
+    private LocalDateTime endedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

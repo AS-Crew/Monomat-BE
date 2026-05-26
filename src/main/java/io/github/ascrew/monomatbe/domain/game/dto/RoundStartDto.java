@@ -19,7 +19,7 @@ public record RoundStartDto(
 ) {
     public RoundStartDto {
         if (type == null) {
-            type = "ROUND_STARTED";
+            type = "ROUND_READY";
         }
     }
 }

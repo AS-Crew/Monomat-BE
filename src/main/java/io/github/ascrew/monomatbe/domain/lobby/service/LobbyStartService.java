@@ -125,7 +125,11 @@ public class LobbyStartService {
         try {
             gameLobby.changeStatus(LobbyStatus.PLAYING);
             gameLobbyJpaRepository.saveAndFlush(gameLobby);
-            firstRound = gameSessionCreateService.createGameSession(gameLobby);
+            firstRound = gameSessionCreateService.createGameSession(gameLobby, quizMap);
+        } catch (io.github.ascrew.monomatbe.domain.game.exception.NotEnoughMapItemsException e) {
+            log.warn("게임 시작 요청 거부 - 문제 수 부족. code: {}, requester: {}", code, requesterIdentifier);
+            lobbyRepository.rollbackStartedLobbyStatus(code);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "출제 가능한 문제 수가 라운드 수보다 적습니다.");
         } catch (Exception e) {
             log.error(
                     "게임 시작 DB 상태 변경 실패 - Redis 상태 보상 롤백 시도. code: {}, requester: {}",

@@ -10,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.game.repository.GameSessionPlayerJpaRep
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
+import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
@@ -47,25 +48,30 @@ public class GameSessionCreateService {
      * 로비 게임 시작 시 호출되어 게임 세션을 초기화한다.
      * 트랜잭션 내에서 실행되므로, 이 과정 중 예외가 발생하면 로비 상태 변경도 롤백된다.
      */
-    public RoundStartDto createGameSession(GameLobby lobby) {
+    public RoundStartDto createGameSession(GameLobby lobby, QuizMap map) {
         String code = lobby.getInviteCode();
 
         // 1. 문제 데이터 로드 및 셔플링
-        List<MapItem> mapItems = mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(lobby.getMapId());
+        List<MapItem> mapItems = mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(map.getId());
         Collections.shuffle(mapItems);
         List<MapItem> selectedItems = mapItems.stream()
                 .limit(lobby.getRoundCount())
                 .toList();
 
         if (selectedItems.size() < lobby.getRoundCount()) {
-            throw new IllegalStateException("출제 가능한 문제 수가 라운드 수보다 적습니다.");
+            throw new io.github.ascrew.monomatbe.domain.game.exception.NotEnoughMapItemsException("출제 가능한 문제 수가 라운드 수보다 적습니다.");
         }
+
+        long serverStartedAt = System.currentTimeMillis();
+        java.time.LocalDateTime startedAt = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(serverStartedAt), java.time.ZoneId.systemDefault());
 
         // 2. DB 세션 생성
         GameSession gameSession = GameSession.builder()
                 .lobby(lobby)
+                .map(map)
                 .currentRoundNo(1)
                 .totalRoundCount(lobby.getRoundCount())
+                .startedAt(startedAt)
                 .build();
         gameSessionJpaRepository.save(gameSession);
 
@@ -96,8 +102,6 @@ public class GameSessionCreateService {
                 .collect(Collectors.joining(","));
         String participantsStr = String.join(",", participantIdentifiers);
 
-        long serverStartedAt = System.currentTimeMillis();
-
         String result = redisTemplate.execute(
                 initGameSessionScript,
                 List.of(sessionKey, roundsKey, playersKey),
@@ -105,9 +109,13 @@ public class GameSessionCreateService {
                 mapItemIdsStr,
                 participantsStr,
                 String.valueOf(lobby.getTimeLimitSeconds()),
-                String.valueOf(serverStartedAt)
+                String.valueOf(serverStartedAt),
+                String.valueOf(7200)
         );
 
+        if ("ERROR_ALREADY_EXISTS".equals(result)) {
+            throw new IllegalStateException("게임 세션이 이미 존재합니다.");
+        }
         if (!"OK".equals(result)) {
             throw new IllegalStateException("게임 세션 Redis 초기화 실패: " + result);
         }
@@ -117,7 +125,7 @@ public class GameSessionCreateService {
 
         MapItem firstItem = selectedItems.get(0);
         return RoundStartDto.builder()
-                .type("ROUND_STARTED")
+                .type("ROUND_READY")
                 .videoId(firstItem.getVideoId())
                 .youtubeUrl(firstItem.getYoutubeUrl())
                 .startTime(firstItem.getStartTime())

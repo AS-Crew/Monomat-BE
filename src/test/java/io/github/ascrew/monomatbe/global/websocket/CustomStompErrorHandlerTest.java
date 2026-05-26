@@ -174,6 +174,46 @@ class CustomStompErrorHandlerTest {
     }
 
     @Test
+    @DisplayName("중간 cause에 IllegalStateException이 있어도 더 깊은 StompErrorException을 우선한다")
+    void handleClientMessageProcessingError_withNestedStompErrorException_prioritizesStompErrorException() {
+        // given
+        Message<byte[]> clientMessage = emptyClientMessage();
+
+        StompErrorException stompErrorException = new StompErrorException(
+                StompErrorCode.LOBBY_FULL
+        );
+
+        IllegalStateException intermediateException = new IllegalStateException(
+                "wrapped legacy exception",
+                stompErrorException
+        );
+
+        MessageDeliveryException wrappedException = new MessageDeliveryException(
+                clientMessage,
+                "STOMP message delivery failed",
+                intermediateException
+        );
+
+        // when
+        Message<byte[]> result = errorHandler.handleClientMessageProcessingError(
+                clientMessage,
+                wrappedException
+        );
+
+        // then
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(result);
+        String payload = payloadAsString(result);
+
+        assertThat(accessor.getCommand()).isEqualTo(StompCommand.ERROR);
+        assertThat(accessor.getMessage()).isEqualTo("LOBBY_FULL");
+
+        assertThat(payload).contains("\"code\":\"LOBBY_FULL\"");
+        assertThat(payload).contains("\"message\":\"로비 최대 인원에 도달했습니다.\"");
+        assertThat(payload).contains("\"action\":\"RETURN_TO_LOBBY_LIST\"");
+        assertThat(payload).contains("\"recoverable\":false");
+    }
+
+    @Test
     @DisplayName("예상하지 못한 RuntimeException도 INTERNAL_STOMP_ERROR로 변환된다")
     void handleClientMessageProcessingError_withUnexpectedRuntimeException_returnsInternalStompError() {
         // given

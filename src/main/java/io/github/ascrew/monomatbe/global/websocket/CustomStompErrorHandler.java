@@ -68,15 +68,70 @@ public class CustomStompErrorHandler extends StompSubProtocolErrorHandler {
     }
 
     /**
-     * Spring WebSocket 내부에서 예외가 MessageDeliveryException 등으로 래핑될 수 있으므로,
-     * cause chain을 순회하면서 우리가 처리할 수 있는 예외를 찾는다.
+     * Spring WebSocket 내부에서 예외가 MessageDeliveryException 등으로 래핑될 수 있으므로
+     * cause chain을 순회하면서 처리 가능한 예외를 찾는다.
+     *
+     * [중요]
+     * StompErrorException은 FE 계약에 직접 연결되는 code/action/recoverable을 가진 예외다.
+     * 따라서 IllegalStateException / IllegalArgumentException보다 항상 우선해야 한다.
+     *
+     * 예:
+     * MessageDeliveryException
+     *   └── IllegalStateException
+     *       └── StompErrorException(LOBBY_FULL)
+     *
+     * 위 구조에서 중간의 IllegalStateException을 먼저 반환하면 LOBBY_FULL이 INTERNAL_STOMP_ERROR로 손실된다.
      */
     private Throwable findHandledException(Throwable throwable) {
+        StompErrorException stompErrorException = findCause(
+                throwable,
+                StompErrorException.class
+        );
+
+        if (stompErrorException != null) {
+            return stompErrorException;
+        }
+
+        Throwable legacyException = findLegacyClientException(throwable);
+
+        if (legacyException != null) {
+            return legacyException;
+        }
+
+        return throwable;
+    }
+
+    /**
+     * cause chain 전체에서 targetType에 해당하는 예외를 찾는다.
+     */
+    private <T extends Throwable> T findCause(
+            Throwable throwable,
+            Class<T> targetType
+    ) {
         Throwable current = throwable;
 
         while (current != null) {
-            if (current instanceof StompErrorException
-                    || current instanceof IllegalArgumentException
+            if (targetType.isInstance(current)) {
+                return targetType.cast(current);
+            }
+
+            current = current.getCause();
+        }
+
+        return null;
+    }
+
+    /**
+     * 기존 코드에서 사용하던 IllegalArgumentException / IllegalStateException 기반 STOMP 예외를 찾는다.
+     *
+     * 이 예외들은 구체적인 StompErrorCode를 갖고 있지 않으므로,
+     * INTERNAL_STOMP_ERROR로 fallback 처리한다.
+     */
+    private Throwable findLegacyClientException(Throwable throwable) {
+        Throwable current = throwable;
+
+        while (current != null) {
+            if (current instanceof IllegalArgumentException
                     || current instanceof IllegalStateException) {
                 return current;
             }
@@ -84,7 +139,7 @@ public class CustomStompErrorHandler extends StompSubProtocolErrorHandler {
             current = current.getCause();
         }
 
-        return throwable;
+        return null;
     }
 
     /**

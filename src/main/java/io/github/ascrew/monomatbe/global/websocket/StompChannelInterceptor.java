@@ -94,6 +94,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final StringRedisTemplate stringRedisTemplate;
     private final WebSocketMetric webSocketMetric;
     private final RedisScript<String> enterLobbyScript;
+    private final LobbyEnterResultMapper lobbyEnterResultMapper = new LobbyEnterResultMapper();
 
     /**
      * 사용자 온라인 상태 TTL
@@ -308,7 +309,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                         sessionSequence
                 );
 
-                LobbyEnterResultType resultType = parseLobbyEnterResultType(result);
+                LobbyEnterResultMapper.LobbyEnterResultType resultType =
+                        lobbyEnterResultMapper.parse(result);
 
                 switch (resultType) {
                     case ENTERED, ALREADY_JOINED, SESSION_REPLACED -> {

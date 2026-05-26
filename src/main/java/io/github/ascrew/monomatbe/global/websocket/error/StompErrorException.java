@@ -36,9 +36,23 @@ public class StompErrorException extends RuntimeException {
             String clientMessage,
             Throwable cause
     ) {
-        super(resolveClientMessage(errorCode, clientMessage), cause);
-        this.errorCode = Objects.requireNonNull(errorCode, "errorCode must not be null");
-        this.clientMessage = resolveClientMessage(errorCode, clientMessage);
+        this(
+                Objects.requireNonNull(errorCode, "errorCode must not be null"),
+                resolveClientMessage(errorCode, clientMessage),
+                cause,
+                true
+        );
+    }
+
+    private StompErrorException(
+            StompErrorCode errorCode,
+            String resolvedClientMessage,
+            Throwable cause,
+            boolean ignored
+    ) {
+        super(resolvedClientMessage, cause);
+        this.errorCode = errorCode;
+        this.clientMessage = resolvedClientMessage;
     }
 
     public StompErrorCode getErrorCode() {
@@ -59,13 +73,8 @@ public class StompErrorException extends RuntimeException {
             StompErrorCode errorCode,
             String clientMessage
     ) {
-        StompErrorCode resolvedErrorCode = Objects.requireNonNull(
-                errorCode,
-                "errorCode must not be null"
-        );
-
         if (clientMessage == null || clientMessage.isBlank()) {
-            return resolvedErrorCode.getDefaultMessage();
+            return errorCode.getDefaultMessage();
         }
 
         return clientMessage;

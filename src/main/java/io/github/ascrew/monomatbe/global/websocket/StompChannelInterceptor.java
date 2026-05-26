@@ -49,31 +49,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
                     "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
             );
 
-    // =========================================================
-    // Redis Lua 반환값 상수
-    // =========================================================
-
-    private static final String ENTER_RESULT_ENTERED = "ENTERED";
-    private static final String ENTER_RESULT_ALREADY_JOINED = "ALREADY_JOINED";
-    private static final String ENTER_RESULT_SESSION_REPLACED_PREFIX = "SESSION_REPLACED:";
-    private static final String ENTER_RESULT_STALE_SESSION_PREFIX = "STALE_SESSION:";
-    private static final String ENTER_RESULT_LOBBY_NOT_FOUND = "LOBBY_NOT_FOUND";
-    private static final String ENTER_RESULT_INVALID_SEQUENCE = "INVALID_SEQUENCE";
-    private static final String ENTER_RESULT_FULL = "FULL";
-    private static final String ENTER_RESULT_LOBBY_NOT_WAITING = "LOBBY_NOT_WAITING";
-    private static final String ENTER_RESULT_INVALID_LOBBY_CAPACITY = "INVALID_LOBBY_CAPACITY";
-    private static final String ENTER_RESULT_KICKED_USER = "KICKED_USER";
-
-    // =========================================================
-    // 실패 사유 상수
-    // =========================================================
-
     private static final String ENTER_FAILURE_NULL_RESULT = "Lua result is null";
     private static final String ENTER_FAILURE_EXCEPTION = "Lua execution exception";
-
-    // =========================================================
-    // TTL 상수
-    // =========================================================
 
     /**
      * ws:connection:{wsSessionId}, lobby:{code}:user_session:{userIdentifier},
@@ -86,10 +63,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
      * 사용자 온라인 상태 TTL은 userStatusTtl 설정값을 사용한다.
      */
     private static final Duration WS_CONNECTION_TTL = Duration.ofHours(6);
-
-    // =========================================================
-    // 의존성
-    // =========================================================
 
     private final StringRedisTemplate stringRedisTemplate;
     private final WebSocketMetric webSocketMetric;
@@ -423,56 +396,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     }
 
     /**
-     * Lua 반환값을 enum으로 파싱한다.
-     *
-     * 반환 문자열 분기 처리를 이 메서드로 중앙화하여,
-     * Lua 반환값이 추가될 때 Java 수정 위치를 명확하게 한다.
-     */
-    private LobbyEnterResultType parseLobbyEnterResultType(String result) {
-        if (ENTER_RESULT_ENTERED.equals(result)) {
-            return LobbyEnterResultType.ENTERED;
-        }
-
-        if (ENTER_RESULT_ALREADY_JOINED.equals(result)) {
-            return LobbyEnterResultType.ALREADY_JOINED;
-        }
-
-        if (result != null && result.startsWith(ENTER_RESULT_SESSION_REPLACED_PREFIX)) {
-            return LobbyEnterResultType.SESSION_REPLACED;
-        }
-
-        if (result != null && result.startsWith(ENTER_RESULT_STALE_SESSION_PREFIX)) {
-            return LobbyEnterResultType.STALE_SESSION;
-        }
-
-        if (ENTER_RESULT_LOBBY_NOT_FOUND.equals(result)) {
-            return LobbyEnterResultType.LOBBY_NOT_FOUND;
-        }
-
-        if (ENTER_RESULT_INVALID_SEQUENCE.equals(result)) {
-            return LobbyEnterResultType.INVALID_SEQUENCE;
-        }
-
-        if (ENTER_RESULT_FULL.equals(result)) {
-            return LobbyEnterResultType.FULL;
-        }
-
-        if (ENTER_RESULT_LOBBY_NOT_WAITING.equals(result)) {
-            return LobbyEnterResultType.LOBBY_NOT_WAITING;
-        }
-
-        if (ENTER_RESULT_INVALID_LOBBY_CAPACITY.equals(result)) {
-            return LobbyEnterResultType.INVALID_LOBBY_CAPACITY;
-        }
-
-        if (ENTER_RESULT_KICKED_USER.equals(result)) {
-            return LobbyEnterResultType.KICKED_USER;
-        }
-
-        return LobbyEnterResultType.UNKNOWN;
-    }
-
-    /**
      * 로비 입장 실패 결과를 STOMP 표준 예외로 변환한다.
      *
      * Lua 실패 결과는 대부분 현재 ws:connection을 유지할 이유가 없으므로
@@ -546,44 +469,6 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             log.error("STOMP CONNECT 온라인 상태 저장 실패 - userIdentifier: {}, wsSessionId: {}, userStatusKey: {}, userStatusSessionsKey: {}",
                     userIdentifier, wsSessionId, userStatusKey, userStatusSessionsKey, e);
             throw new StompErrorException(StompErrorCode.CONNECT_ONLINE_STATUS_FAILED, e);
-        }
-    }
-
-    /**
-     * enter_lobby.lua 반환값의 의미를 Java 내부 타입으로 변환한 값이다.
-     *
-     * 성공 타입은 errorCode가 null이다.
-     * 실패 타입은 FE에 내려줄 StompErrorCode를 직접 가진다.
-     *
-     * 이렇게 관리하면 Lua 반환값이 추가될 때 result type과 error code 매핑을
-     * 한 곳에서 함께 확인할 수 있다.
-     */
-    private enum LobbyEnterResultType {
-        ENTERED(null),
-        ALREADY_JOINED(null),
-        SESSION_REPLACED(null),
-
-        STALE_SESSION(StompErrorCode.LOBBY_STALE_SESSION),
-        LOBBY_NOT_FOUND(StompErrorCode.LOBBY_NOT_FOUND),
-        INVALID_SEQUENCE(StompErrorCode.LOBBY_INVALID_SEQUENCE),
-        FULL(StompErrorCode.LOBBY_FULL),
-        LOBBY_NOT_WAITING(StompErrorCode.LOBBY_NOT_WAITING),
-        INVALID_LOBBY_CAPACITY(StompErrorCode.LOBBY_INVALID_CAPACITY),
-        KICKED_USER(StompErrorCode.LOBBY_KICKED_USER),
-        UNKNOWN(StompErrorCode.LOBBY_ENTER_UNKNOWN_RESULT);
-
-        private final StompErrorCode errorCode;
-
-        LobbyEnterResultType(StompErrorCode errorCode) {
-            this.errorCode = errorCode;
-        }
-
-        private StompErrorCode resolveErrorCode() {
-            if (errorCode == null) {
-                throw new IllegalStateException("성공 로비 입장 결과에는 STOMP 에러 코드가 없습니다: " + this);
-            }
-
-            return errorCode;
         }
     }
 }

@@ -7,6 +7,7 @@ import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionJpaRepository;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionPlayerJpaRepository;
+import io.github.ascrew.monomatbe.domain.game.exception.GameSessionAlreadyExistsException;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
@@ -18,6 +19,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Collections;
 import java.util.List;
@@ -114,7 +117,7 @@ public class GameSessionCreateService {
         );
 
         if ("ERROR_ALREADY_EXISTS".equals(result)) {
-            throw new IllegalStateException("게임 세션이 이미 존재합니다.");
+            throw new GameSessionAlreadyExistsException("게임 세션이 이미 존재합니다.");
         }
         if (!"OK".equals(result)) {
             throw new IllegalStateException("게임 세션 Redis 초기화 실패: " + result);
@@ -122,6 +125,16 @@ public class GameSessionCreateService {
 
         log.info("게임 세션 생성 완료 - 로비 코드: {}, 라운드 수: {}, 참여자 수: {}", 
                  code, lobby.getRoundCount(), participantIdentifiers.size());
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    log.warn("DB 트랜잭션 롤백 감지 - Redis 세션 잔여 데이터 정리. code: {}", code);
+                    redisTemplate.delete(List.of(sessionKey, roundsKey, playersKey));
+                }
+            }
+        });
 
         MapItem firstItem = selectedItems.get(0);
         return RoundStartDto.builder()

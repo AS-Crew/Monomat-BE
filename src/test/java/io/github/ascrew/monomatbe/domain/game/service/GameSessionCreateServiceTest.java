@@ -6,6 +6,7 @@ import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionStatus;
+import io.github.ascrew.monomatbe.domain.game.exception.GameSessionAlreadyExistsException;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionJpaRepository;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionPlayerJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
@@ -23,6 +24,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 
 import java.util.List;
 
@@ -53,6 +57,16 @@ class GameSessionCreateServiceTest {
 
     @InjectMocks
     private GameSessionCreateService gameSessionCreateService;
+
+    @BeforeEach
+    void setUp() {
+        TransactionSynchronizationManager.initSynchronization();
+    }
+
+    @AfterEach
+    void tearDown() {
+        TransactionSynchronizationManager.clearSynchronization();
+    }
 
     @Test
     @DisplayName("정상적으로 게임 세션이 생성되고 라운드 시작 이벤트 payload에 정답이 포함되지 않는지 검증")
@@ -130,5 +144,40 @@ class GameSessionCreateServiceTest {
         assertThat(result.serverStartedAt()).isGreaterThan(0L);
 
         // title, artist, answer 같은 필드가 DTO에 아예 존재하지 않음을 코드 구조상(record 정의) 보장됨.
+    }
+
+    @Test
+    @DisplayName("Redis 세션 키가 이미 존재하여 ERROR_ALREADY_EXISTS가 반환될 때 GameSessionAlreadyExistsException 발생")
+    void createGameSession_alreadyExistsThrowsException() {
+        // given
+        GameLobby lobby = GameLobby.builder()
+                .inviteCode("ABC1234")
+                .mapId(1L)
+                .roundCount(1)
+                .timeLimitSeconds(30)
+                .status(LobbyStatus.PLAYING)
+                .build();
+        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
+        MapItem mapItem = MapItem.builder().map(quizMap).orderNum(1).videoId("vId").build();
+
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L)).thenReturn(List.of(mapItem));
+        when(lobbyRepository.getParticipantIdentifiers("ABC1234")).thenReturn(List.of("uId"));
+        when(gameParticipantResolver.resolveUsers(List.of("uId"))).thenReturn(List.of(User.builder().id(1L).build()));
+
+        when(redisTemplate.execute(
+                eq(initGameSessionScript),
+                any(List.class),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString()
+        )).thenReturn("ERROR_ALREADY_EXISTS");
+
+        // when & then
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameSessionCreateService.createGameSession(lobby, quizMap))
+                .isInstanceOf(GameSessionAlreadyExistsException.class)
+                .hasMessage("게임 세션이 이미 존재합니다.");
     }
 }

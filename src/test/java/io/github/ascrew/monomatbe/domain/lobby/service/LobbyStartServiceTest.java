@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
+import io.github.ascrew.monomatbe.domain.game.exception.GameSessionAlreadyExistsException;
 import io.github.ascrew.monomatbe.domain.game.service.GameRealtimeNotifier;
 import io.github.ascrew.monomatbe.domain.game.service.GameSessionCreateService;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
@@ -155,5 +156,30 @@ class LobbyStartServiceTest {
                 .hasMessageContaining("409 CONFLICT");
         
         verify(gameSessionCreateService, never()).createGameSession(any(), any());
+    }
+
+    @Test
+    @DisplayName("이미 게임 세션이 존재하는 경우 예외(409) 발생 및 롤백 확인")
+    void startLobbyGame_alreadyExistsSession() {
+        // given
+        String code = "ABC1234";
+        CustomPrincipal principal = new CustomPrincipal(1L, "uId", io.github.ascrew.monomatbe.domain.auth.entity.UserType.REGISTERED);
+        GameLobby gameLobby = GameLobby.builder().inviteCode(code).mapId(1L).roundCount(5).build();
+        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(10).build();
+
+        when(lobbyRepository.findByInviteCode(code)).thenReturn(Optional.of(org.mockito.Mockito.mock(io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse.class)));
+        when(gameLobbyJpaRepository.findByInviteCode(code)).thenReturn(Optional.of(gameLobby));
+        when(quizMapJpaRepository.findById(1L)).thenReturn(Optional.of(quizMap));
+        when(lobbyRepository.executeStartLobbyProcess(code, "uId")).thenReturn(new StartLobbyResult.Started(code));
+
+        when(gameSessionCreateService.createGameSession(gameLobby, quizMap))
+                .thenThrow(new GameSessionAlreadyExistsException("게임 세션이 이미 존재합니다."));
+
+        // when & then
+        assertThatThrownBy(() -> lobbyStartService.startLobbyGame(code, principal))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("409 CONFLICT");
+
+        verify(lobbyRepository).rollbackStartedLobbyStatus(code);
     }
 }

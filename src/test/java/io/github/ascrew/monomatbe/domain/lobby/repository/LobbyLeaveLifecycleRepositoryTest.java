@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.flyway.enabled=false"
 })
 class LobbyLeaveLifecycleRepositoryTest {
-    
+
     private static final String LOBBY_CODE = "TEST94";
 
     private static final String HOST_ID = "11111111-1111-1111-1111-111111111111";
@@ -154,6 +154,89 @@ class LobbyLeaveLifecycleRepositoryTest {
         assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_LATEST, LOBBY_CODE)).isNull();
         assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, LOBBY_CODE)).isNull();
         assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, LOBBY_CODE)).isNull();
+    }
+
+    @Test
+    @DisplayName("공개 로비에서 일반 참가자가 퇴장하면 public 인원 정렬 인덱스 score가 갱신된다")
+    void updatePublicCapacityIndexesWhenPublicLobbyParticipantLeaves() {
+        // given
+        givenLobby(
+                LOBBY_CODE,
+                HOST_ID,
+                false,
+                4,
+                HOST_ID,
+                SECOND_USER_ID,
+                THIRD_USER_ID
+        );
+
+        // when
+        LeaveLobbyResult result = lobbyRepository.executeLeaveLobbyProcess(LOBBY_CODE, THIRD_USER_ID);
+
+        // then
+        assertThat(result).isInstanceOf(LeaveLobbyResult.Left.class);
+
+        assertThat(redisTemplate.opsForHash()
+                .get(RedisKeys.lobbyKey(LOBBY_CODE), RedisKeys.FIELD_CURRENT_PLAYERS))
+                .isEqualTo("2");
+
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_PUBLIC, LOBBY_CODE))
+                .isTrue();
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, LOBBY_CODE))
+                .isEqualTo(2.0);
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, LOBBY_CODE))
+                .isEqualTo(2.0);
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_LATEST, LOBBY_CODE))
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("비공개 로비에서 참가자가 퇴장해도 public index에 복구되지 않는다")
+    void doesNotRestorePrivateLobbyToPublicIndexesWhenParticipantLeaves() {
+        // given
+        givenLobby(
+                LOBBY_CODE,
+                HOST_ID,
+                true,
+                4,
+                HOST_ID,
+                SECOND_USER_ID,
+                THIRD_USER_ID
+        );
+
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_PUBLIC, LOBBY_CODE))
+                .isFalse();
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_LATEST, LOBBY_CODE))
+                .isNull();
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, LOBBY_CODE))
+                .isNull();
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, LOBBY_CODE))
+                .isNull();
+
+        // when
+        LeaveLobbyResult result = lobbyRepository.executeLeaveLobbyProcess(LOBBY_CODE, SECOND_USER_ID);
+
+        // then
+        assertThat(result).isInstanceOf(LeaveLobbyResult.Left.class);
+
+        assertThat(redisTemplate.opsForHash()
+                .get(RedisKeys.lobbyKey(LOBBY_CODE), RedisKeys.FIELD_CURRENT_PLAYERS))
+                .isEqualTo("2");
+
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_PUBLIC, LOBBY_CODE))
+                .isFalse();
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_LATEST, LOBBY_CODE))
+                .isNull();
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, LOBBY_CODE))
+                .isNull();
+
+        assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, LOBBY_CODE))
+                .isNull();
     }
 
     private void givenLobby(

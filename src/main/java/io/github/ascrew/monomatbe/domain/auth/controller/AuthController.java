@@ -9,6 +9,8 @@ import io.github.ascrew.monomatbe.domain.auth.dto.RefreshTokenRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.RefreshTokenResponse;
 import io.github.ascrew.monomatbe.domain.auth.dto.RegisterRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.RegisterResponse;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.service.GuestAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.LoginAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.LogoutAuthService;
@@ -28,7 +30,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequiredArgsConstructor
@@ -73,6 +74,7 @@ public class AuthController {
                 request.password(),
                 request.nickname()
         );
+
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -91,6 +93,7 @@ public class AuthController {
                 resolveClientIp(httpServletRequest),
                 httpServletRequest.getHeader("User-Agent")
         );
+
         return ResponseEntity.ok(response);
     }
 
@@ -105,6 +108,7 @@ public class AuthController {
                 resolveClientIp(httpServletRequest),
                 httpServletRequest.getHeader("User-Agent")
         );
+
         return ResponseEntity.ok(response);
     }
 
@@ -115,8 +119,9 @@ public class AuthController {
             @RequestHeader("Authorization") String authorizationHeader
     ) {
         if (principal == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "인증 정보가 없습니다.");
+            throw new AuthException(AuthErrorCode.AUTH_UNAUTHENTICATED);
         }
+
         logoutAuthService.logout(principal.userId(), principal.userIdentifier(), authorizationHeader);
         return ResponseEntity.ok(new LogoutResponse("로그아웃이 완료되었습니다."));
     }
@@ -124,10 +129,12 @@ public class AuthController {
     private String resolveClientIp(HttpServletRequest request) {
         if (trustForwardedHeaders) {
             String forwardedFor = request.getHeader("X-Forwarded-For");
+
             if (forwardedFor != null && !forwardedFor.isBlank()) {
                 return forwardedFor.split(",")[0].trim();
             }
         }
+
         return request.getRemoteAddr();
     }
 }

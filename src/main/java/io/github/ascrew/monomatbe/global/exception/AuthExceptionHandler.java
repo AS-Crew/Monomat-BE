@@ -28,7 +28,11 @@ public class AuthExceptionHandler {
     private static final String FIELD_LOGIN_ID = "loginId";
     private static final String FIELD_PASSWORD = "password";
     private static final String FIELD_NICKNAME = "nickname";
+    private static final String FIELD_REFRESH_TOKEN = "refreshToken";
 
+    /**
+     * 인증 도메인 전용 예외를 표준 응답으로 변환한다.
+     */
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<AuthErrorResponse> handleAuthException(AuthException exception) {
         AuthErrorCode errorCode = exception.getErrorCode();
@@ -42,7 +46,7 @@ public class AuthExceptionHandler {
      * @Valid 검증 실패를 인증 에러 코드 응답으로 변환한다.
      *
      * [우선순위]
-     * 1. 빈 값(null, blank)은 REQUIRED로 처리
+     * 1. 빈 값(null, blank)은 REQUIRED 계열로 처리
      * 2. 로그인 ID/비밀번호의 순수 공백 포함은 CONTAINS_WHITESPACE로 처리
      * 3. 그 외에는 DTO annotation message에 지정된 AuthErrorCode를 사용
      *
@@ -56,7 +60,9 @@ public class AuthExceptionHandler {
     public ResponseEntity<AuthErrorResponse> handleValidationException(
             MethodArgumentNotValidException exception
     ) {
-        AuthErrorCode errorCode = resolveAuthErrorCode(exception.getBindingResult().getFieldErrors());
+        AuthErrorCode errorCode = resolveAuthErrorCode(
+                exception.getBindingResult().getFieldErrors()
+        );
 
         return ResponseEntity
                 .status(errorCode.getHttpStatus())
@@ -139,6 +145,7 @@ public class AuthExceptionHandler {
             case FIELD_LOGIN_ID -> AuthErrorCode.AUTH_LOGIN_ID_REQUIRED;
             case FIELD_PASSWORD -> AuthErrorCode.AUTH_PASSWORD_REQUIRED;
             case FIELD_NICKNAME -> AuthErrorCode.AUTH_NICKNAME_REQUIRED;
+            case FIELD_REFRESH_TOKEN -> AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN;
             default -> AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
         };
     }
@@ -167,7 +174,8 @@ public class AuthExceptionHandler {
             return switch (errorCode) {
                 case AUTH_LOGIN_ID_REQUIRED,
                      AUTH_PASSWORD_REQUIRED,
-                     AUTH_NICKNAME_REQUIRED -> 1;
+                     AUTH_NICKNAME_REQUIRED,
+                     AUTH_INVALID_REFRESH_TOKEN -> 1;
 
                 case AUTH_LOGIN_ID_CONTAINS_WHITESPACE,
                      AUTH_PASSWORD_CONTAINS_WHITESPACE -> 2;

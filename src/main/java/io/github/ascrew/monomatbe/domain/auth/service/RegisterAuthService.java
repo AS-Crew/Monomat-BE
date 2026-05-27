@@ -5,26 +5,35 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserCredential;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 /**
- * 회원가입 비즈니스 로직.
+ * 회원가입 비즈니스 로직
+ *
+ * [에러 응답 정책]
+ * 인증 도메인 에러는 AuthException + AuthErrorCode로 처리한다.
+ * FE는 message가 아니라 code와 field를 기준으로 에러 UI를 제어한다.
  */
 @Service
 @RequiredArgsConstructor
 public class RegisterAuthService {
 
-    private static final String ERR_DUPLICATE_LOGIN_ID = "이미 사용 중인 로그인 ID입니다.";
-    private static final String ERR_DUPLICATE_NICKNAME = "이미 사용 중인 닉네임입니다.";
-    private static final int MAX_NICKNAME_LENGTH = 8;
+    private static final int MIN_LOGIN_ID_LENGTH = 4;
+    private static final int MAX_LOGIN_ID_LENGTH = 50;
+    private static final int MIN_PASSWORD_LENGTH = 8;
+    private static final int MAX_PASSWORD_LENGTH = 100;
+    private static final int MIN_NICKNAME_LENGTH = 2;
+    private static final int MAX_NICKNAME_LENGTH = 12;
+
+    private static final String LOGIN_ID_PATTERN = "^[A-Za-z0-9]+$";
 
     private final UserRepository userRepository;
     private final UserCredentialRepository userCredentialRepository;
@@ -32,19 +41,19 @@ public class RegisterAuthService {
 
     @Transactional
     public RegisterResponse register(String rawLoginId, String rawPassword, String rawNickname) {
-        String loginId = normalizeRequiredWithTrim(rawLoginId, "로그인 ID");
-        validateNoWhitespace(loginId, "로그인 ID");
+        String loginId = normalizeLoginId(rawLoginId);
+        String password = normalizePassword(rawPassword);
+        String nickname = normalizeNickname(rawNickname);
 
-        String password = validateNoWhitespace(rawPassword, "비밀번호");
-
-        String nickname = normalizeRequiredWithTrim(rawNickname, "닉네임");
-        validateNicknameLength(nickname);
         validateDuplicate(loginId, nickname);
 
         User savedUser;
 
-        // user_credentials 저장 실패 시 @Transactional에 의해 users 저장도 함께 롤백됨
-        // ResponseStatusException은 런타임 예외이므로 롤백 대상에 포함됨
+        /*
+         * user_credentials 저장 실패 시 @Transactional에 의해 users 저장도 함께 롤백된다.
+         * DB unique 제약과 애플리케이션 중복 검증 사이의 race condition은
+         * DataIntegrityViolationException을 AuthException으로 변환해 동일한 응답 계약을 유지한다.
+         */
         try {
             savedUser = userRepository.saveAndFlush(User.builder()
                     .username(nickname)
@@ -52,7 +61,7 @@ public class RegisterAuthService {
                     .status(UserStatus.ACTIVE)
                     .build());
         } catch (DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_NICKNAME);
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_DUPLICATED, e);
         }
 
         try {
@@ -62,7 +71,7 @@ public class RegisterAuthService {
                     .passwordHash(passwordEncoder.encode(password))
                     .build());
         } catch (DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_LOGIN_ID);
+            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_DUPLICATED, e);
         }
 
         return RegisterResponse.builder()
@@ -75,40 +84,75 @@ public class RegisterAuthService {
 
     private void validateDuplicate(String loginId, String nickname) {
         if (userCredentialRepository.existsByLoginId(loginId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_LOGIN_ID);
+            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_DUPLICATED);
         }
+
         if (userRepository.existsByUsername(nickname)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERR_DUPLICATE_NICKNAME);
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_DUPLICATED);
         }
     }
 
-    /**
-     * 서비스 직접 호출 경로를 위한 최소 방어선: trim + null/blank 차단.
-     */
-    private String normalizeRequiredWithTrim(String value, String fieldName) {
-        if (value == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
+    private String normalizeLoginId(String value) {
+        String loginId = normalizeRequiredWithTrim(value, AuthErrorCode.AUTH_LOGIN_ID_REQUIRED);
+
+        if (containsWhitespace(loginId)) {
+            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_CONTAINS_WHITESPACE);
         }
-        String normalized = value.trim();
+
+        if (loginId.length() < MIN_LOGIN_ID_LENGTH || loginId.length() > MAX_LOGIN_ID_LENGTH) {
+            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_INVALID_LENGTH);
+        }
+
+        if (!loginId.matches(LOGIN_ID_PATTERN)) {
+            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_INVALID_FORMAT);
+        }
+
+        return loginId;
+    }
+
+    private String normalizePassword(String value) {
+        String password = normalizeRequired(value, AuthErrorCode.AUTH_PASSWORD_REQUIRED);
+
+        if (containsWhitespace(password)) {
+            throw new AuthException(AuthErrorCode.AUTH_PASSWORD_CONTAINS_WHITESPACE);
+        }
+
+        if (password.length() < MIN_PASSWORD_LENGTH || password.length() > MAX_PASSWORD_LENGTH) {
+            throw new AuthException(AuthErrorCode.AUTH_PASSWORD_INVALID_LENGTH);
+        }
+
+        return password;
+    }
+
+    private String normalizeNickname(String value) {
+        String nickname = normalizeRequiredWithTrim(value, AuthErrorCode.AUTH_NICKNAME_REQUIRED);
+
+        if (nickname.length() < MIN_NICKNAME_LENGTH || nickname.length() > MAX_NICKNAME_LENGTH) {
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_INVALID_LENGTH);
+        }
+
+        return nickname;
+    }
+
+    private String normalizeRequiredWithTrim(String value, AuthErrorCode requiredErrorCode) {
+        String normalized = normalizeRequired(value, requiredErrorCode).trim();
+
         if (normalized.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
+            throw new AuthException(requiredErrorCode);
         }
+
         return normalized;
     }
 
-    private String validateNoWhitespace(String value, String fieldName) {
+    private String normalizeRequired(String value, AuthErrorCode requiredErrorCode) {
         if (value == null || value.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
+            throw new AuthException(requiredErrorCode);
         }
-        if (value.chars().anyMatch(Character::isWhitespace)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "에는 공백을 포함할 수 없습니다.");
-        }
+
         return value;
     }
 
-    private void validateNicknameLength(String nickname) {
-        if (nickname.length() > MAX_NICKNAME_LENGTH) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "닉네임은 8자를 초과할 수 없습니다.");
-        }
+    private boolean containsWhitespace(String value) {
+        return value.chars().anyMatch(Character::isWhitespace);
     }
 }

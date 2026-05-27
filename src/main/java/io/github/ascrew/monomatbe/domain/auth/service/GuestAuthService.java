@@ -7,9 +7,11 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
-import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
+import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
@@ -18,12 +20,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -47,6 +47,9 @@ public class GuestAuthService {
 
     private static final Duration GUEST_SESSION_TTL = Duration.ofDays(30);
 
+    private static final int MIN_NICKNAME_LENGTH = 2;
+    private static final int MAX_NICKNAME_LENGTH = 12;
+
     private final UserRepository userRepository;
     private final GuestSessionRepository guestSessionRepository;
     private final UserSessionRepository userSessionRepository;
@@ -67,9 +70,10 @@ public class GuestAuthService {
         validateNicknameAvailability(nickname);
 
         LocalDateTime now = LocalDateTime.now();
+
         User savedUser;
+
         try {
-            // users: 게스트 사용자 기본 정보 저장 (saveAndFlush로 즉시 쿼리 실행하여 중복 예외 캐치)
             savedUser = userRepository.saveAndFlush(User.builder()
                     .username(nickname)
                     .userType(UserType.GUEST)
@@ -77,14 +81,11 @@ public class GuestAuthService {
                     .lastLoginAt(now)
                     .build());
         } catch (DataIntegrityViolationException e) {
-            // Check-then-Act 구간 사이 다른 요청으로 인해 닉네임 중복이 발생한 경우
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다.");
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_DUPLICATED, e);
         }
 
-        // 게스트/회원 공통 식별 정책: userIdentifier는 UUID 사용
         String userIdentifier = UUID.randomUUID().toString();
 
-        // guest_sessions: UUID와 사용자 매핑 저장 (TTL 상수로 교체)
         guestSessionRepository.save(GuestSession.builder()
                 .user(savedUser)
                 .guestToken(userIdentifier)
@@ -97,11 +98,13 @@ public class GuestAuthService {
                 savedUser.getUserType(),
                 userIdentifier
         );
+
         TokenWithExpiry refreshToken = jwtTokenProvider.createRefreshToken(
                 savedUser.getId(),
                 savedUser.getUserType(),
                 userIdentifier
         );
+
         String refreshTokenHash = TokenHashUtils.sha256(refreshToken.token());
 
         userSessionRepository.save(UserSession.builder()
@@ -116,17 +119,24 @@ public class GuestAuthService {
                 .status(UserSessionStatus.ACTIVE)
                 .build());
 
-        userSessionLifecycleService.enforceActiveSessionLimit(savedUser.getId(), savedUser.getUserType(), userIdentifier, now);
+        userSessionLifecycleService.enforceActiveSessionLimit(
+                savedUser.getId(),
+                savedUser.getUserType(),
+                userIdentifier,
+                now
+        );
 
-        // Redis에는 DB 트랜잭션이 성공적으로 커밋된 이후에만 세션 정보를 저장합니다. (고아 데이터 방지)
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 try {
                     storeGuestSessionToRedis(savedUser, userIdentifier, refreshTokenHash);
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     log.error("Redis 게스트 세션 저장 실패 - userId: {}", savedUser.getId(), e);
-                    userSessionLifecycleService.markSessionRevokedCompensating(userIdentifier, LocalDateTime.now());
+                    userSessionLifecycleService.markSessionRevokedCompensating(
+                            userIdentifier,
+                            LocalDateTime.now()
+                    );
                 }
             }
         });
@@ -143,22 +153,41 @@ public class GuestAuthService {
                 .build();
     }
 
-    /**
-     * 입력 닉네임을 trim 합니다.
-     * (null 체크나 길이 검증은 Controller의 @Valid에서 수행되므로 중복 검증 제거)
-     */
-    private String normalizeNickname(String rawNickname) {
-        return rawNickname.trim();
+    private String normalizeNickname(String value) {
+        String nickname = normalizeRequiredWithTrim(value, AuthErrorCode.AUTH_NICKNAME_REQUIRED);
+
+        if (nickname.length() < MIN_NICKNAME_LENGTH || nickname.length() > MAX_NICKNAME_LENGTH) {
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_INVALID_LENGTH);
+        }
+
+        return nickname;
+    }
+
+    private String normalizeRequiredWithTrim(String value, AuthErrorCode requiredErrorCode) {
+        if (value == null) {
+            throw new AuthException(requiredErrorCode);
+        }
+
+        String normalized = value.trim();
+
+        if (normalized.isBlank()) {
+            throw new AuthException(requiredErrorCode);
+        }
+
+        return normalized;
     }
 
     private String normalizeOptionalLength(String value, int maxLength) {
         if (value == null) {
             return null;
         }
+
         String normalized = value.trim();
+
         if (normalized.isEmpty()) {
             return null;
         }
+
         return normalized.length() > maxLength
                 ? normalized.substring(0, maxLength)
                 : normalized;
@@ -171,14 +200,11 @@ public class GuestAuthService {
      */
     private void validateNicknameAvailability(String nickname) {
         if (userRepository.existsByUsernameAndUserType(nickname, UserType.REGISTERED)) {
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
-                    "다른 회원이 이미 사용 중인 닉네임입니다."
-            );
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_DUPLICATED);
         }
 
         if (userRepository.existsByUsername(nickname)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다.");
+            throw new AuthException(AuthErrorCode.AUTH_NICKNAME_DUPLICATED);
         }
     }
 
@@ -190,16 +216,20 @@ public class GuestAuthService {
     private void storeGuestSessionToRedis(User user, String userIdentifier, String refreshTokenHash) {
         String guestSessionKey = RedisKeys.guestSessionKey(userIdentifier);
 
-        // RedisKeys.FIELD_GUEST_* 상수로 Hash 필드 키 참조 (오타 방지)
         redisTemplate.opsForHash().putAll(guestSessionKey, Map.of(
                 RedisKeys.FIELD_GUEST_USER_ID, String.valueOf(user.getId()),
                 RedisKeys.FIELD_GUEST_USERNAME, user.getUsername(),
                 RedisKeys.FIELD_GUEST_USER_TYPE, user.getUserType().name()
         ));
+
         redisTemplate.expire(guestSessionKey, GUEST_SESSION_TTL);
 
         String refreshTokenKey = RedisKeys.refreshTokenKey(userIdentifier);
         redisTemplate.opsForValue().set(refreshTokenKey, refreshTokenHash, jwtTokenProvider.refreshTokenTtl());
-        redisTemplate.opsForValue().set(RedisKeys.activeSessionKey(userIdentifier), "1", jwtTokenProvider.refreshTokenTtl());
+        redisTemplate.opsForValue().set(
+                RedisKeys.activeSessionKey(userIdentifier),
+                "1",
+                jwtTokenProvider.refreshTokenTtl()
+        );
     }
 }

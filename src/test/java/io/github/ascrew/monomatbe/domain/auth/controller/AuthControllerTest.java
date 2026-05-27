@@ -3,16 +3,16 @@ package io.github.ascrew.monomatbe.domain.auth.controller;
 import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.GuestLoginResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.service.GuestAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.LoginAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.LogoutAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.RefreshAuthService;
 import io.github.ascrew.monomatbe.domain.auth.service.RegisterAuthService;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.server.ResponseStatusException;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,7 +24,7 @@ import static org.mockito.Mockito.when;
 class AuthControllerTest {
 
     @Test
-    void logout_nullPrincipal_returnsUnauthorized() {
+    void logout_nullPrincipal_returnsUnauthenticatedAuthError() {
         AuthController controller = new AuthController(
                 mock(GuestAuthService.class),
                 mock(RegisterAuthService.class),
@@ -33,18 +33,18 @@ class AuthControllerTest {
                 mock(LogoutAuthService.class)
         );
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> controller.logout(null, "Bearer token")
         );
 
-        assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatusCode());
-        assertEquals("인증 정보가 없습니다.", exception.getReason());
+        assertEquals(AuthErrorCode.AUTH_UNAUTHENTICATED, exception.getErrorCode());
     }
 
     @Test
     void guestLogin_whenTrustForwardedHeadersFalse_usesRemoteAddr() {
         GuestAuthService guestAuthService = mock(GuestAuthService.class);
+
         when(guestAuthService.loginAsGuest("guest", "127.0.0.10", "JUnit-Agent"))
                 .thenReturn(GuestLoginResponse.builder()
                         .userId(1L)
@@ -62,6 +62,7 @@ class AuthControllerTest {
                 mock(RefreshAuthService.class),
                 mock(LogoutAuthService.class)
         );
+
         ReflectionTestUtils.setField(controller, "trustForwardedHeaders", false);
 
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -70,12 +71,14 @@ class AuthControllerTest {
         request.setRemoteAddr("127.0.0.10");
 
         assertDoesNotThrow(() -> controller.guestLogin(new GuestLoginRequest("guest"), request));
+
         verify(guestAuthService).loginAsGuest("guest", "127.0.0.10", "JUnit-Agent");
     }
 
     @Test
     void guestLogin_whenTrustForwardedHeadersTrue_usesForwardedForFirstIp() {
         GuestAuthService guestAuthService = mock(GuestAuthService.class);
+
         when(guestAuthService.loginAsGuest("guest", "198.51.100.10", "JUnit-Agent"))
                 .thenReturn(GuestLoginResponse.builder()
                         .userId(1L)
@@ -93,6 +96,7 @@ class AuthControllerTest {
                 mock(RefreshAuthService.class),
                 mock(LogoutAuthService.class)
         );
+
         ReflectionTestUtils.setField(controller, "trustForwardedHeaders", true);
 
         MockHttpServletRequest request = new MockHttpServletRequest();
@@ -101,6 +105,7 @@ class AuthControllerTest {
         request.setRemoteAddr("127.0.0.10");
 
         assertDoesNotThrow(() -> controller.guestLogin(new GuestLoginRequest("guest"), request));
+
         verify(guestAuthService).loginAsGuest("guest", "198.51.100.10", "JUnit-Agent");
     }
 }

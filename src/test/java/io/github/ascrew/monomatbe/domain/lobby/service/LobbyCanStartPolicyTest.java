@@ -139,7 +139,9 @@ class LobbyCanStartPolicyTest {
                 "WAITING",
                 MAP_ID,
                 "테스트 맵",
-                "K-POP"
+                "K-POP",
+                10,
+                30
         );
     }
 

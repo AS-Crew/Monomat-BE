@@ -12,7 +12,7 @@ import java.util.List;
  * [포함 정보]
  * - 로비 기본 정보
  * - 선택된 맵 정보
- * - 룰 정보 (roundCount, timeLimitSeconds)
+ * - 룰 정보 (questionCount, timeLimitSeconds)
  * - 참여자별 ready 상태
  * - 현재 게임 시작 버튼 활성화 가능 여부 (canStart)
  */

@@ -624,7 +624,7 @@ public class LobbyQueryService {
      *
      * [조회 대상]
      * - 로비 기본 정보
-     * - DB에 저장된 룰 정보(roundCount, timeLimitSeconds)
+     * - Redis에 저장된 룰 정보(questionCount, timeLimitSeconds)
      * - Redis 참여자 목록
      * - Redis ready 상태
      * - 현재 시작 가능 여부(canStart)
@@ -704,8 +704,8 @@ public class LobbyQueryService {
                 .mapId(lobbyInfo.mapId())
                 .mapTitle(lobbyInfo.mapTitle())
                 .mapCategory(lobbyInfo.mapCategory())
-                .questionCount(gameLobby != null ? gameLobby.getQuestionCount() : null)
-                .timeLimitSeconds(gameLobby != null ? gameLobby.getTimeLimitSeconds() : null)
+                .questionCount(lobbyInfo.questionCount())
+                .timeLimitSeconds(lobbyInfo.timeLimitSeconds())
                 .players(players)
                 .canStart(canStart)
                 .build();

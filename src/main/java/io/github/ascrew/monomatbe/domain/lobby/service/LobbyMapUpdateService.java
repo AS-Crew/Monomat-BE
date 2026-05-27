@@ -164,29 +164,19 @@ public class LobbyMapUpdateService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
         }
 
-        lobbyRepository.updateMapMetadata(code, newMetadata);
-
+        int oldQuestionCount = gameLobby.getQuestionCount();
         Long newMapId = newMetadata != null ? newMetadata.mapId() : null;
         int newQuestionCount = resolveNewQuestionCount(gameLobby, newMetadata);
 
-        int updated;
+        lobbyRepository.updateMapMetadata(code, newMetadata, newQuestionCount);
+
         try {
-            updated = gameLobbyJpaRepository.updateMapAndQuestionCountIfWaiting(
-                    code, newMapId, newQuestionCount, LobbyStatus.WAITING);
+            gameLobby.updateMapAndQuestionCount(newMapId, newQuestionCount);
+            gameLobbyJpaRepository.saveAndFlush(gameLobby);
         } catch (Exception e) {
             log.error(LOG_DB_UPDATE_FAILED, code, e);
-            compensateRedisMapMetadata(code, oldMetadata);
+            compensateRedisMapMetadata(code, oldMetadata, oldQuestionCount);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, ERROR_UPDATE_MAP_FAILED);
-        }
-
-        if (updated == 0) {
-            log.error(
-                    "{} 락 보유 중에 updateMapAndQuestionCountIfWaiting이 0행 반환 - 정합성 이상. code: {}",
-                    LOG_MONITORING_REQUIRED,
-                    code
-            );
-            compensateRedisMapMetadata(code, oldMetadata);
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_LOBBY_NOT_WAITING);
         }
 
         log.info(
@@ -262,7 +252,7 @@ public class LobbyMapUpdateService {
     }
 
     /**
-     * Redis 맵 메타데이터를 status==WAITING 원자 조건으로 보상 복구한다.
+     * Redis 맵 메타데이터와 문제 수를 status==WAITING 원자 조건으로 보상 복구한다.
      *
      * [안전 정책]
      * 보상 시점에 다른 트랜잭션이 status를 PLAYING으로 바꿨다면 oldMetadata로 되돌리면 안 된다.
@@ -273,10 +263,10 @@ public class LobbyMapUpdateService {
      * Redis 연결 단절·타임아웃·스크립트 로딩 실패 등 인프라 예외는 catch 블록에서 별도 처리하여
      * 원인 분류와 운영 대응이 가능하도록 한다.
      */
-    private void compensateRedisMapMetadata(String code, LobbyMapMetadata oldMetadata) {
+    private void compensateRedisMapMetadata(String code, LobbyMapMetadata oldMetadata, int oldQuestionCount) {
         try {
             LobbyMapCompensationResult result =
-                    lobbyRepository.compensateMapMetadataIfWaiting(code, oldMetadata);
+                    lobbyRepository.compensateMapMetadataIfWaiting(code, oldMetadata, oldQuestionCount);
 
             switch (result) {
                 case COMPENSATED -> log.info("Redis 맵 보상 복구 완료 - code: {}", code);

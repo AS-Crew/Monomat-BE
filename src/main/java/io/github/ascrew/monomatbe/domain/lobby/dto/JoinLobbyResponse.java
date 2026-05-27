@@ -31,6 +31,10 @@ public record JoinLobbyResponse(
         // 선택된 맵 제목 (미선택 시 null)
         String mapTitle,
         // 선택된 맵의 카테고리 (미선택 시 null)
-        String mapCategory
+        String mapCategory,
+        // 문제 수 (Redis에 저장된 값, 없으면 null)
+        Integer questionCount,
+        // 제한 시간(초) (Redis에 저장된 값, 없으면 null)
+        Integer timeLimitSeconds
 ) {
 }

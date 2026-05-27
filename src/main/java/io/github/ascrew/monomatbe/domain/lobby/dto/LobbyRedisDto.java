@@ -27,6 +27,8 @@ public class LobbyRedisDto {
     private Integer currentPlayers; // 현재 참여 인원 수
     private Boolean isPrivate;    // 공개(false) / 비공개(true) 여부
     private String status;        // 로비 상태 (WAITING, PLAYING)
+    private Integer questionCount;     // 문제 수
+    private Integer timeLimitSeconds;  // 제한 시간(초)
 
     /*
      * 로비 생성 시각

@@ -125,7 +125,9 @@ public class LobbyCreateService {
         String inviteCode = lobbyRepository.saveToRedis(
                 request,
                 principal.userIdentifier(),
-                mapMetadata
+                mapMetadata,
+                effectiveQuestionCount,
+                request.timeLimitSeconds()
         );
 
         try {
@@ -187,22 +189,35 @@ public class LobbyCreateService {
      * 유효한 questionCount를 결정한다.
      *
      * [결정 규칙]
-     * - mapId 있음: min(request.questionCount ?: numOfSong, numOfSong)
-     *   → 맵 선택 시 기본값은 맵의 전체 문제 수, 명시 시에는 numOfSong 초과 불가
      * - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * - mapId 있음:
+     *   - request.questionCount == null → numOfSong (맵 전체 문제 수로 자동 설정)
+     *   - request.questionCount > numOfSong → 400 BAD_REQUEST
+     *   - request.questionCount <= numOfSong → request.questionCount 그대로 사용
      *
      * LobbyMapPolicy가 이미 맵 존재·삭제·권한을 검증했으므로 findById는 항상 성공한다.
      */
     private int resolveQuestionCount(CreateLobbyRequest request, LobbyMapMetadata mapMetadata) {
-        if (mapMetadata != null && mapMetadata.mapId() != null) {
-            QuizMap map = quizMapJpaRepository.findById(mapMetadata.mapId()).orElseThrow();
-            int numOfSong = map.getNumOfSong();
+        if (mapMetadata == null || mapMetadata.mapId() == null) {
             return (request.questionCount() == null)
-                    ? numOfSong
-                    : Math.min(request.questionCount(), numOfSong);
+                    ? LobbyDefaults.DEFAULT_QUESTION_COUNT
+                    : request.questionCount();
         }
-        return (request.questionCount() == null)
-                ? LobbyDefaults.DEFAULT_QUESTION_COUNT
-                : request.questionCount();
+
+        QuizMap map = quizMapJpaRepository.findById(mapMetadata.mapId()).orElseThrow();
+        int numOfSong = map.getNumOfSong();
+
+        if (request.questionCount() == null) {
+            return numOfSong;
+        }
+
+        if (request.questionCount() > numOfSong) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "설정한 문제 수(" + request.questionCount() + ")가 맵의 등록 곡 수(" + numOfSong + ")보다 많습니다."
+            );
+        }
+
+        return request.questionCount();
     }
 }

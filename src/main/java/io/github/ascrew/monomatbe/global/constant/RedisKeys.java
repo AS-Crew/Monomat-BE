@@ -79,6 +79,12 @@ public final class RedisKeys {
     /** YouTube oEmbed 실패 캐시 키 접두사 */
     private static final String YOUTUBE_OEMBED_FAILURE_PREFIX = "youtube:oembed:failure:";
 
+    /** 로비 채팅 쿨타임 키 접두사 */
+    private static final String LOBBY_CHAT_COOLDOWN_PREFIX = "chat:lobby:";
+
+    /** 로비 채팅 최근 메시지 키 접두사 */
+    private static final String LOBBY_CHAT_RECENT_MESSAGE_PREFIX = "chat:lobby:";
+
     // =========================================================
     // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
     // =========================================================
@@ -541,6 +547,38 @@ public final class RedisKeys {
      */
     public static String youtubeOembedFailureKey(String videoId) {
         return YOUTUBE_OEMBED_FAILURE_PREFIX + videoId;
+    }
+
+    /**
+     * 로비 채팅 쿨타임 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : chat:lobby:{code}:cooldown:{userIdentifier}
+     * - Value : "1"
+     * - TTL   : 채팅 쿨타임
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return 로비 채팅 쿨타임 Redis key
+     */
+    public static String lobbyChatCooldownKey(String code, String userIdentifier) {
+        return LOBBY_CHAT_COOLDOWN_PREFIX + code + ":cooldown:" + userIdentifier;
+    }
+
+    /**
+     * 로비 채팅 최근 메시지 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : chat:lobby:{code}:recent:{userIdentifier}
+     * - Value : 최근 전송한 메시지 본문 해시
+     * - TTL   : 반복 메시지 감지 기간
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return 로비 채팅 최근 메시지 Redis key
+     */
+    public static String lobbyChatRecentMessageKey(String code, String userIdentifier) {
+        return LOBBY_CHAT_RECENT_MESSAGE_PREFIX + code + ":recent:" + userIdentifier;
     }
 
     // =========================================================

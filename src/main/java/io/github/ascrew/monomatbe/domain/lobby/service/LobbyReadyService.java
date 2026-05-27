@@ -8,6 +8,7 @@
  * - 로비 참여자 여부 검증
  * - 방장 ready 변경 차단
  * - Redis ready Set 갱신
+ * - READY_CHANGED 시스템 메시지 발행
  * - 로비 정보 refresh 이벤트 발행
  *
  * [주의]
@@ -57,6 +58,7 @@ public class LobbyReadyService {
      * - WAITING 상태의 로비에서만 준비 상태를 변경할 수 있다.
      * - 로비 참여자만 준비 상태를 변경할 수 있다.
      * - 방장은 ready 대상에서 제외한다.
+     * - 변경 완료 후 READY_CHANGED 시스템 메시지를 발행한다.
      * - 변경 완료 후 로비 내부 refresh 신호를 전송한다.
      */
     public void updateReadyStatus(
@@ -97,11 +99,28 @@ public class LobbyReadyService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_HOST_READY_NOT_ALLOWED);
         }
 
+        boolean ready = Boolean.TRUE.equals(request.ready());
+
         lobbyRepository.updateReadyStatus(
                 code,
                 userIdentifier,
-                Boolean.TRUE.equals(request.ready())
+                ready
         );
+
+        boolean messagePublished = lobbyRealtimeNotifier.notifyReadyChangedMessage(
+                code,
+                userIdentifier,
+                ready
+        );
+
+        if (!messagePublished) {
+            log.error(
+                    "[ALERT_REQUIRED] READY_CHANGED 메시지 발행 실패 - code: {}, userIdentifier: {}, ready: {}",
+                    code,
+                    userIdentifier,
+                    ready
+            );
+        }
 
         lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, userIdentifier);
 
@@ -109,7 +128,7 @@ public class LobbyReadyService {
                 "로비 준비 상태 변경 완료 - code: {}, userIdentifier: {}, ready: {}",
                 code,
                 userIdentifier,
-                request.ready()
+                ready
         );
     }
 

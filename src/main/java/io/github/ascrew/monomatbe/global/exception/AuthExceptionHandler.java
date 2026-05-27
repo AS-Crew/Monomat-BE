@@ -10,6 +10,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.List;
+
 /**
  * 인증 API 전용 예외 핸들러
  *
@@ -23,9 +25,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice(assignableTypes = AuthController.class)
 public class AuthExceptionHandler {
 
-    /**
-     * 인증 도메인 전용 예외를 표준 응답으로 변환한다.
-     */
+    private static final String FIELD_LOGIN_ID = "loginId";
+    private static final String FIELD_PASSWORD = "password";
+    private static final String FIELD_NICKNAME = "nickname";
+
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<AuthErrorResponse> handleAuthException(AuthException exception) {
         AuthErrorCode errorCode = exception.getErrorCode();
@@ -38,36 +41,145 @@ public class AuthExceptionHandler {
     /**
      * @Valid 검증 실패를 인증 에러 코드 응답으로 변환한다.
      *
-     * [중요]
-     * DTO validation message에는 AuthErrorCode enum 이름을 넣는 방식으로 매핑한다.
+     * [우선순위]
+     * 1. 빈 값(null, blank)은 REQUIRED로 처리
+     * 2. 로그인 ID/비밀번호의 순수 공백 포함은 CONTAINS_WHITESPACE로 처리
+     * 3. 그 외에는 DTO annotation message에 지정된 AuthErrorCode를 사용
      *
-     * 예:
-     * @NotBlank(message = "AUTH_LOGIN_ID_REQUIRED")
-     *
-     * 이렇게 해야 message 문자열 변경과 FE 분기 코드가 분리된다.
+     * [이유]
+     * 하나의 값이 여러 제약을 동시에 위반할 수 있다.
+     * 예: loginId="" 는 @NotBlank와 @Size를 동시에 위반한다.
+     * Spring Validation의 FieldError 순서에 의존하면 REQUIRED 대신 INVALID_LENGTH가 내려갈 수 있으므로,
+     * 인증 API에서는 서버가 명시적으로 우선순위를 결정한다.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<AuthErrorResponse> handleValidationException(
             MethodArgumentNotValidException exception
     ) {
-        AuthErrorCode errorCode = resolveAuthErrorCode(exception);
+        AuthErrorCode errorCode = resolveAuthErrorCode(exception.getBindingResult().getFieldErrors());
 
         return ResponseEntity
                 .status(errorCode.getHttpStatus())
                 .body(AuthErrorResponse.from(errorCode));
     }
 
-    private AuthErrorCode resolveAuthErrorCode(MethodArgumentNotValidException exception) {
-        FieldError fieldError = exception.getBindingResult()
-                .getFieldErrors()
-                .stream()
-                .findFirst()
-                .orElse(null);
+    private AuthErrorCode resolveAuthErrorCode(List<FieldError> fieldErrors) {
+        if (fieldErrors == null || fieldErrors.isEmpty()) {
+            return AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+        }
 
+        return fieldErrors.stream()
+                .map(this::resolveAuthErrorCode)
+                .min(AuthValidationErrorPriority::compare)
+                .orElse(AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE);
+    }
+
+    private AuthErrorCode resolveAuthErrorCode(FieldError fieldError) {
         if (fieldError == null) {
             return AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
         }
 
+        String field = fieldError.getField();
+        Object rejectedValue = fieldError.getRejectedValue();
+
+        if (isBlankValue(rejectedValue)) {
+            return resolveRequiredErrorCode(field);
+        }
+
+        if (hasOnlyWhitespaceViolation(field, rejectedValue)) {
+            return resolveWhitespaceErrorCode(field);
+        }
+
         return AuthErrorCode.fromCode(fieldError.getDefaultMessage());
+    }
+
+    private boolean isBlankValue(Object rejectedValue) {
+        if (rejectedValue == null) {
+            return true;
+        }
+
+        if (rejectedValue instanceof String value) {
+            return value.isBlank();
+        }
+
+        return false;
+    }
+
+    /**
+     * 순수 공백 위반만 CONTAINS_WHITESPACE로 분리한다.
+     *
+     * 예:
+     * - "test id"  -> whitespace 위반
+     * - "test id!" -> 특수문자도 포함하므로 invalid format
+     * - "test!"    -> invalid format
+     */
+    private boolean hasOnlyWhitespaceViolation(String field, Object rejectedValue) {
+        if (!(rejectedValue instanceof String value)) {
+            return false;
+        }
+
+        if (!FIELD_LOGIN_ID.equals(field) && !FIELD_PASSWORD.equals(field)) {
+            return false;
+        }
+
+        if (value.chars().noneMatch(Character::isWhitespace)) {
+            return false;
+        }
+
+        if (FIELD_PASSWORD.equals(field)) {
+            return true;
+        }
+
+        String valueWithoutWhitespace = value.replaceAll("\\s+", "");
+        return valueWithoutWhitespace.matches("^[A-Za-z0-9]+$");
+    }
+
+    private AuthErrorCode resolveRequiredErrorCode(String field) {
+        return switch (field) {
+            case FIELD_LOGIN_ID -> AuthErrorCode.AUTH_LOGIN_ID_REQUIRED;
+            case FIELD_PASSWORD -> AuthErrorCode.AUTH_PASSWORD_REQUIRED;
+            case FIELD_NICKNAME -> AuthErrorCode.AUTH_NICKNAME_REQUIRED;
+            default -> AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+        };
+    }
+
+    private AuthErrorCode resolveWhitespaceErrorCode(String field) {
+        return switch (field) {
+            case FIELD_LOGIN_ID -> AuthErrorCode.AUTH_LOGIN_ID_CONTAINS_WHITESPACE;
+            case FIELD_PASSWORD -> AuthErrorCode.AUTH_PASSWORD_CONTAINS_WHITESPACE;
+            default -> AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+        };
+    }
+
+    /**
+     * 여러 FieldError가 동시에 발생했을 때 사용자에게 가장 정확한 에러를 먼저 반환하기 위한 우선순위.
+     */
+    private static final class AuthValidationErrorPriority {
+
+        private AuthValidationErrorPriority() {
+        }
+
+        private static int compare(AuthErrorCode left, AuthErrorCode right) {
+            return Integer.compare(priority(left), priority(right));
+        }
+
+        private static int priority(AuthErrorCode errorCode) {
+            return switch (errorCode) {
+                case AUTH_LOGIN_ID_REQUIRED,
+                     AUTH_PASSWORD_REQUIRED,
+                     AUTH_NICKNAME_REQUIRED -> 1;
+
+                case AUTH_LOGIN_ID_CONTAINS_WHITESPACE,
+                     AUTH_PASSWORD_CONTAINS_WHITESPACE -> 2;
+
+                case AUTH_LOGIN_ID_INVALID_LENGTH,
+                     AUTH_PASSWORD_INVALID_LENGTH,
+                     AUTH_NICKNAME_INVALID_LENGTH -> 3;
+
+                case AUTH_LOGIN_ID_INVALID_FORMAT -> 4;
+
+                default -> 100;
+            };
+        }
     }
 }

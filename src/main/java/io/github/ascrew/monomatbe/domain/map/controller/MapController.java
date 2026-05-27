@@ -2,7 +2,7 @@ package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
-import io.github.ascrew.monomatbe.domain.map.dto.PublicMapPageResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.MapPageResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
@@ -36,7 +36,7 @@ public class MapController {
 
     @Operation(summary = "공개 맵 목록 조회")
     @GetMapping
-    public ResponseEntity<PublicMapPageResponse> getPublicMaps(
+    public ResponseEntity<MapPageResponse> getPublicMaps(
             @RequestParam(defaultValue = "0") Integer page,
             @RequestParam(defaultValue = "20") Integer size,
             @RequestParam(required = false) String keyword,
@@ -49,7 +49,7 @@ public class MapController {
     @Operation(summary = "내 맵 목록 조회", description = "로그인한 사용자의 공개/비공개 맵을 모두 조회합니다.")
     @GetMapping("/me")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<PublicMapPageResponse> getMyMaps(
+    public ResponseEntity<MapPageResponse> getMyMaps(
             @RequestParam(defaultValue = "0") Integer page,
             @RequestParam(defaultValue = "20") Integer size,
             @AuthenticationPrincipal CustomPrincipal principal

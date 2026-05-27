@@ -5,7 +5,7 @@ import lombok.Builder;
 import java.util.List;
 
 @Builder
-public record PublicMapPageResponse(
+public record MapPageResponse(
         List<MapSummaryResponse> content,
         int page,
         int size,

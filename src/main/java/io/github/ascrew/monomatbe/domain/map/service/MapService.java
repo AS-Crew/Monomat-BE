@@ -6,7 +6,7 @@ import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
-import io.github.ascrew.monomatbe.domain.map.dto.PublicMapPageResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.MapPageResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
@@ -74,7 +74,7 @@ public class MapService {
     // 공개된 맵 목록을 검색 조건과 함께 페이징하여 조회합니다.
     // keyword 없는 경우에만 Redis 캐싱을 적용합니다 (keyword 검색은 무한 조합으로 캐시 효율이 낮음).
     @Transactional(readOnly = true)
-    public PublicMapPageResponse getPublicMaps(
+    public MapPageResponse getPublicMaps(
             Integer page, Integer size, String keyword, MapCategory category, MapSortType sort
     ) {
         int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
@@ -105,7 +105,7 @@ public class MapService {
                 try {
                     return jsonMapper.readValue(
                             cachedValue,
-                            new TypeReference<PublicMapPageResponse>() {
+                            new TypeReference<MapPageResponse>() {
                             }
                     );
                 } catch (Exception e) {
@@ -117,7 +117,7 @@ public class MapService {
             log.warn("공개 맵 목록 캐시 조회 실패 - key: {}. DB fallback", cacheKey, e);
         }
 
-        PublicMapPageResponse response =
+        MapPageResponse response =
                 queryPublicMaps(null, category, normalizedPage, normalizedSize, normalizedSort);
 
         safeWriteCache(cacheKey, response);
@@ -125,7 +125,7 @@ public class MapService {
         return response;
     }
 
-    private PublicMapPageResponse queryPublicMaps(
+    private MapPageResponse queryPublicMaps(
             String keyword, MapCategory category, int page, int size, MapSortType sort
     ) {
         Specification<QuizMap> spec = Specification
@@ -141,7 +141,7 @@ public class MapService {
                 .map(this::toSummaryResponse)
                 .toList();
 
-        return PublicMapPageResponse.builder()
+        return MapPageResponse.builder()
                 .content(content)
                 .page(pageResult.getNumber())
                 .size(pageResult.getSize())
@@ -154,7 +154,7 @@ public class MapService {
     // 로그인한 사용자의 맵 목록(공개/비공개 모두, 삭제 제외)을 페이징하여 조회합니다.
     // 개인 데이터이므로 Redis 캐시를 적용하지 않습니다.
     @Transactional(readOnly = true)
-    public PublicMapPageResponse getMyMaps(Integer page, Integer size, CustomPrincipal principal) {
+    public MapPageResponse getMyMaps(Integer page, Integer size, CustomPrincipal principal) {
         validatePrincipal(principal);
 
         int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
@@ -176,7 +176,7 @@ public class MapService {
                 .map(this::toSummaryResponse)
                 .toList();
 
-        return PublicMapPageResponse.builder()
+        return MapPageResponse.builder()
                 .content(content)
                 .page(pageResult.getNumber())
                 .size(pageResult.getSize())

@@ -42,6 +42,24 @@ class AuthControllerTest {
     }
 
     @Test
+    void logout_nullPrincipalAndMissingAuthorization_returnsUnauthenticatedAuthErrorFirst() {
+        AuthController controller = new AuthController(
+                mock(GuestAuthService.class),
+                mock(RegisterAuthService.class),
+                mock(LoginAuthService.class),
+                mock(RefreshAuthService.class),
+                mock(LogoutAuthService.class)
+        );
+
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> controller.logout(null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_UNAUTHENTICATED, exception.getErrorCode());
+    }
+
+    @Test
     void guestLogin_whenTrustForwardedHeadersFalse_usesRemoteAddr() {
         GuestAuthService guestAuthService = mock(GuestAuthService.class);
 

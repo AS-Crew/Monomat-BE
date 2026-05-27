@@ -5,7 +5,9 @@ import io.github.ascrew.monomatbe.domain.auth.dto.AuthErrorResponse;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -13,7 +15,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.List;
 
 /**
- * 인증 API 전용 예외 핸들러
+ * 인증 API 전용 예외 핸들러.
  *
  * [적용 범위]
  * - AuthController에서 발생한 예외만 처리한다.
@@ -63,6 +65,40 @@ public class AuthExceptionHandler {
         AuthErrorCode errorCode = resolveAuthErrorCode(
                 exception.getBindingResult().getFieldErrors()
         );
+
+        return ResponseEntity
+                .status(errorCode.getHttpStatus())
+                .body(AuthErrorResponse.from(errorCode));
+    }
+
+    /**
+     * Authorization 헤더 누락을 인증 API 표준 응답으로 변환한다.
+     *
+     * 로그아웃처럼 Authorization 헤더가 필요한 API에서
+     * 컨트롤러 진입 전에 Spring MVC가 MissingRequestHeaderException을 던지는 경우를 방어한다.
+     */
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<AuthErrorResponse> handleMissingRequestHeaderException(
+            MissingRequestHeaderException exception
+    ) {
+        AuthErrorCode errorCode = AuthErrorCode.AUTH_INVALID_AUTHORIZATION;
+
+        return ResponseEntity
+                .status(errorCode.getHttpStatus())
+                .body(AuthErrorResponse.from(errorCode));
+    }
+
+    /**
+     * JSON body 파싱 실패를 인증 API 표준 응답으로 변환한다.
+     *
+     * 현재 #128 권장 에러 코드에 요청 본문 형식 오류 전용 코드가 없으므로
+     * 기존 AUTH_TEMPORARY_UNAVAILABLE을 사용한다.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<AuthErrorResponse> handleHttpMessageNotReadableException(
+            HttpMessageNotReadableException exception
+    ) {
+        AuthErrorCode errorCode = AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
 
         return ResponseEntity
                 .status(errorCode.getHttpStatus())

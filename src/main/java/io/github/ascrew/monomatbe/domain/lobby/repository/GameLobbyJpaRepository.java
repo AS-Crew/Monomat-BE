@@ -89,4 +89,23 @@ public interface GameLobbyJpaRepository extends JpaRepository<GameLobby, Long> {
             @Param("code") String code,
             @Param("mapId") Long mapId,
             @Param("status") LobbyStatus status);
+
+    /**
+     * status가 지정한 값인 경우에만 map_id와 question_count를 함께 갱신한다.
+     *
+     * 맵 변경 시 새 맵의 numOfSong으로 questionCount를 재설정할 때 사용한다.
+     *
+     * @param code          로비 초대 코드
+     * @param mapId         새 맵 ID (null이면 맵 미선택 상태로 복원)
+     * @param questionCount 새 문제 갯수 (새 맵의 numOfSong)
+     * @param status        갱신을 허용할 현재 상태 (호출 측에서 LobbyStatus.WAITING 전달)
+     * @return 갱신된 행 수 (0 또는 1)
+     */
+    @Modifying
+    @Query("UPDATE GameLobby g SET g.mapId = :mapId, g.questionCount = :questionCount WHERE g.inviteCode = :code AND g.status = :status")
+    int updateMapAndQuestionCountIfWaiting(
+            @Param("code") String code,
+            @Param("mapId") Long mapId,
+            @Param("questionCount") Integer questionCount,
+            @Param("status") LobbyStatus status);
 }

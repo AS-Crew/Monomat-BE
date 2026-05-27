@@ -118,7 +118,7 @@ class LobbyStartServiceTest {
         GameLobby gameLobby = GameLobby.builder()
                 .inviteCode(LOBBY_CODE)
                 .mapId(null)
-                .roundCount(ROUND_COUNT)
+                .questionCount(ROUND_COUNT)
                 .build();
 
         when(lobbyRepository.findByInviteCode(LOBBY_CODE))
@@ -221,7 +221,7 @@ class LobbyStartServiceTest {
         return GameLobby.builder()
                 .inviteCode(LOBBY_CODE)
                 .mapId(MAP_ID)
-                .roundCount(ROUND_COUNT)
+                .questionCount(ROUND_COUNT)
                 .build();
     }
 

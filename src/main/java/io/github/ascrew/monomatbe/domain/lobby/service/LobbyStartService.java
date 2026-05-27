@@ -162,11 +162,11 @@ public class LobbyStartService {
         registerGameStartedEventAfterCommit(code, requesterIdentifier, firstRound);
 
         log.info(
-                "게임 시작 처리 완료 - code: {}, requester: {}, mapId: {}, roundCount: {}",
+                "게임 시작 처리 완료 - code: {}, requester: {}, mapId: {}, questionCount: {}",
                 code,
                 requesterIdentifier,
                 quizMap.getId(),
-                gameLobby.getRoundCount()
+                gameLobby.getQuestionCount()
         );
     }
 

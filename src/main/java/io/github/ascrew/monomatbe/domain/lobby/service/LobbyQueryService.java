@@ -704,7 +704,7 @@ public class LobbyQueryService {
                 .mapId(lobbyInfo.mapId())
                 .mapTitle(lobbyInfo.mapTitle())
                 .mapCategory(lobbyInfo.mapCategory())
-                .roundCount(gameLobby != null ? gameLobby.getRoundCount() : null)
+                .questionCount(gameLobby != null ? gameLobby.getQuestionCount() : null)
                 .timeLimitSeconds(gameLobby != null ? gameLobby.getTimeLimitSeconds() : null)
                 .players(players)
                 .canStart(canStart)

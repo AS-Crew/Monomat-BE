@@ -341,7 +341,7 @@ class ReportServiceTest {
                 .inviteCode(inviteCode)
                 .title("테스트 로비")
                 .maxPlayers(8)
-                .roundCount(5)
+                .questionCount(5)
                 .timeLimitSeconds(30)
                 .isPrivate(false)
                 .isDeleted(isDeleted)

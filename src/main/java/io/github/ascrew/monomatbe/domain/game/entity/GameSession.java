@@ -29,8 +29,8 @@ public class GameSession {
     @Column(name = "current_round_no", nullable = false)
     private Integer currentRoundNo;
 
-    @Column(name = "total_round_count", nullable = false)
-    private Integer totalRoundCount;
+    @Column(name = "total_question_count", nullable = false)
+    private Integer totalQuestionCount;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)

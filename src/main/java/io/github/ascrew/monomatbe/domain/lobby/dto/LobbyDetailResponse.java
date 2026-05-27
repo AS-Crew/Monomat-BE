@@ -27,7 +27,7 @@ public record LobbyDetailResponse(
         Long mapId,
         String mapTitle,
         String mapCategory,
-        Integer roundCount,
+        Integer questionCount,
         Integer timeLimitSeconds,
         List<LobbyPlayerResponse> players,
         boolean canStart

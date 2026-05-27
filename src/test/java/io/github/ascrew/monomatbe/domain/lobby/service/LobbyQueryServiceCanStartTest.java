@@ -155,7 +155,7 @@ class LobbyQueryServiceCanStartTest {
                 .mapId(2L)
                 .title("테스트 로비")
                 .maxPlayers(4)
-                .roundCount(5)
+                .questionCount(5)
                 .timeLimitSeconds(30)
                 .isPrivate(false)
                 .build();

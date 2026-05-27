@@ -143,14 +143,14 @@ class LobbyCanStartPolicyTest {
         );
     }
 
-    private GameLobby gameLobbyWithRoundCount(int roundCount) {
+    private GameLobby gameLobbyWithRoundCount(int questionCount) {
         return GameLobby.builder()
                 .id(1L)
                 .mapId(MAP_ID)
                 .inviteCode(LOBBY_CODE)
                 .title("테스트 로비")
                 .maxPlayers(4)
-                .roundCount(roundCount)
+                .questionCount(questionCount)
                 .timeLimitSeconds(30)
                 .isPrivate(false)
                 .status(LobbyStatus.WAITING)

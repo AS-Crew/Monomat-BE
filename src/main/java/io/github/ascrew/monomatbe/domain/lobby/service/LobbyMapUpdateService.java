@@ -43,6 +43,8 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -98,6 +100,7 @@ public class LobbyMapUpdateService {
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyMapPolicy lobbyMapPolicy;
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
+    private final QuizMapJpaRepository quizMapJpaRepository;
 
     /**
      * 로비 대기실에서 방장의 맵 변경 요청을 처리한다.
@@ -164,9 +167,12 @@ public class LobbyMapUpdateService {
         lobbyRepository.updateMapMetadata(code, newMetadata);
 
         Long newMapId = newMetadata != null ? newMetadata.mapId() : null;
+        int newQuestionCount = resolveNewQuestionCount(gameLobby, newMetadata);
+
         int updated;
         try {
-            updated = gameLobbyJpaRepository.updateMapIdIfWaiting(code, newMapId, LobbyStatus.WAITING);
+            updated = gameLobbyJpaRepository.updateMapAndQuestionCountIfWaiting(
+                    code, newMapId, newQuestionCount, LobbyStatus.WAITING);
         } catch (Exception e) {
             log.error(LOG_DB_UPDATE_FAILED, code, e);
             compensateRedisMapMetadata(code, oldMetadata);
@@ -175,7 +181,7 @@ public class LobbyMapUpdateService {
 
         if (updated == 0) {
             log.error(
-                    "{} 락 보유 중에 updateMapIdIfWaiting이 0행 반환 - 정합성 이상. code: {}",
+                    "{} 락 보유 중에 updateMapAndQuestionCountIfWaiting이 0행 반환 - 정합성 이상. code: {}",
                     LOG_MONITORING_REQUIRED,
                     code
             );
@@ -184,11 +190,12 @@ public class LobbyMapUpdateService {
         }
 
         log.info(
-                "로비 맵 변경 완료 - code: {}, host: {}, oldMapId: {}, newMapId: {}",
+                "로비 맵 변경 완료 - code: {}, host: {}, oldMapId: {}, newMapId: {}, newQuestionCount: {}",
                 code,
                 principal.userIdentifier(),
                 oldMetadata != null ? oldMetadata.mapId() : null,
-                newMapId
+                newMapId,
+                newQuestionCount
         );
 
         registerMapChangedEventAfterCommit(code);
@@ -289,6 +296,22 @@ public class LobbyMapUpdateService {
                     e
             );
         }
+    }
+
+    /**
+     * 맵 변경 후 새 questionCount를 결정한다.
+     *
+     * 새 맵이 선택된 경우 해당 맵의 numOfSong으로 재설정한다.
+     * 맵이 해제된 경우(newMetadata == null) 기존 questionCount를 유지한다.
+     *
+     * LobbyMapPolicy가 이미 맵 존재·삭제·권한을 검증했으므로 findById는 항상 성공한다.
+     */
+    private int resolveNewQuestionCount(GameLobby gameLobby, LobbyMapMetadata newMetadata) {
+        if (newMetadata != null && newMetadata.mapId() != null) {
+            QuizMap newMap = quizMapJpaRepository.findById(newMetadata.mapId()).orElseThrow();
+            return newMap.getNumOfSong();
+        }
+        return gameLobby.getQuestionCount();
     }
 
     private void registerMapChangedEventAfterCommit(String code) {

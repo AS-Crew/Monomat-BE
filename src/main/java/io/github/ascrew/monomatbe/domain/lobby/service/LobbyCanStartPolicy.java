@@ -109,7 +109,7 @@ public class LobbyCanStartPolicy {
      * @return 맵 문제 수가 라운드 수 이상이면 true
      */
     private boolean hasEnoughSongsForRound(GameLobby gameLobby) {
-        if (gameLobby == null || gameLobby.getMapId() == null || gameLobby.getRoundCount() == null) {
+        if (gameLobby == null || gameLobby.getMapId() == null || gameLobby.getQuestionCount() == null) {
             return false;
         }
 
@@ -117,7 +117,7 @@ public class LobbyCanStartPolicy {
                 .filter(quizMap -> !Boolean.TRUE.equals(quizMap.getIsDeleted()))
                 .map(quizMap -> {
                     Integer numOfSong = quizMap.getNumOfSong();
-                    return numOfSong != null && numOfSong >= gameLobby.getRoundCount();
+                    return numOfSong != null && numOfSong >= gameLobby.getQuestionCount();
                 })
                 .orElse(false);
     }

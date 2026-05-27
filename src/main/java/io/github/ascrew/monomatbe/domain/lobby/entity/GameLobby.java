@@ -80,8 +80,8 @@ public class GameLobby {
     @Column(name = "max_players", nullable = false)
     private Integer maxPlayers;
 
-    @Column(name = "round_count", nullable = false)
-    private Integer roundCount;
+    @Column(name = "question_count", nullable = false)
+    private Integer questionCount;
 
     @Column(name = "time_limit_seconds", nullable = false)
     private Integer timeLimitSeconds;

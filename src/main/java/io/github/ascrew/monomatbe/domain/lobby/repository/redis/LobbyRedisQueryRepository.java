@@ -76,6 +76,23 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
+     * 해당 유저가 로비에서 강퇴된 유저인지 확인한다.
+     *
+     * [조회 기준]
+     * kick_lobby.lua는 강퇴된 사용자를 lobby:{code}:kicked Set에 저장한다.
+     * 로비 채팅 전송 시 이 Set을 확인하여 강퇴된 사용자의 메시지 전송을 차단한다.
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return kicked Set 포함 여부
+     */
+    public boolean isKicked(String code, String userIdentifier) {
+        return Boolean.TRUE.equals(
+                redisTemplate.opsForSet().isMember(RedisKeys.lobbyKickedKey(code), userIdentifier)
+        );
+    }
+
+    /**
      * 로비 참여자 목록을 입장 순서 기준으로 조회한다.
      *
      * [조회 전략]

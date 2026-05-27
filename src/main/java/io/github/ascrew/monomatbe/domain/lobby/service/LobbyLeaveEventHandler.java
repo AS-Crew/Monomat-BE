@@ -5,6 +5,7 @@
  * - PlayerLeaveEvent 수신
  * - leave_lobby.lua 실행 위임
  * - 퇴장 결과에 따른 실시간 알림 발행
+ * - 방장 위임 시 HOST_CHANGED 시스템 메시지 발행
  *
  * [설계 의도]
  * WebSocket DISCONNECT 자체는 global.websocket 계층에서 감지한다.
@@ -38,7 +39,7 @@ public class LobbyLeaveEventHandler {
      *
      * [처리 분기]
      * - Destroyed : 마지막 유저 퇴장으로 로비 폭파 -> 전역 로비 목록 refresh
-     * - Delegated : 방장 퇴장으로 방장 위임 -> 로비 내부 refresh
+     * - Delegated : 방장 퇴장으로 방장 위임 -> HOST_CHANGED 메시지 + 로비 내부 refresh
      * - Left      : 일반 퇴장 -> 로비 내부 refresh
      * - Error     : 처리 실패 -> 브로드캐스트 없이 로그만 기록
      */
@@ -65,6 +66,20 @@ public class LobbyLeaveEventHandler {
                         delegated.lobbyCode(),
                         delegated.newHostId()
                 );
+
+                boolean messagePublished = lobbyRealtimeNotifier.notifyHostChangedMessage(
+                        delegated.lobbyCode(),
+                        delegated.newHostId()
+                );
+
+                if (!messagePublished) {
+                    log.error(
+                            "[ALERT_REQUIRED] HOST_CHANGED 메시지 발행 실패 - code: {}, newHostId: {}",
+                            delegated.lobbyCode(),
+                            delegated.newHostId()
+                    );
+                }
+
                 lobbyRealtimeNotifier.notifyLobbyInfoRefresh(delegated.lobbyCode());
             }
 

@@ -34,7 +34,8 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   ├── controller/
 │   │   │   └── ChatController.java
 │   │   └── service/
-│   │       └── ChatService.java
+│   │       ├── ChatService.java
+│   │       └── LobbyChatRateLimitService.java       # Redis 기반 로비 채팅 제한 정책
 │   │
 │   ├── lobby/                                      # 로비 도메인
 │   │   ├── KickLobbyResult.java
@@ -57,6 +58,7 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   │   ├── LobbyRedisDto.java
 │   │   │   ├── LobbySearchCondition.java
 │   │   │   ├── LobbySortType.java
+│   │   │   ├── UpdateLobbyMapRequest.java
 │   │   │   └── UpdateLobbyReadyRequest.java
 │   │   ├── entity/
 │   │   │   ├── GameLobby.java
@@ -67,6 +69,7 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   │   ├── LobbyRepository.java
 │   │   │   ├── LobbyRepositoryImpl.java
 │   │   │   └── redis/
+│   │   │       ├── LobbyInviteCodeGenerator.java
 │   │   │       ├── LobbyLuaScriptExecutor.java
 │   │   │       ├── LobbyLuaResultMapper.java
 │   │   │       ├── LobbyRedisCommandRepository.java
@@ -76,10 +79,15 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │       ├── LobbyCanStartPolicy.java
 │   │       ├── LobbyCreateService.java
 │   │       ├── LobbyJoinService.java
+│   │       ├── LobbyLeaveEventHandler.java
+│   │       ├── LobbyMapPolicy.java
+│   │       ├── LobbyMapUpdateService.java
+│   │       ├── LobbyPlayerNicknameResolver.java
 │   │       ├── LobbyQueryService.java
 │   │       ├── LobbyReadyService.java
-│   │       ├── LobbyStartService.java
 │   │       ├── LobbyRealtimeNotifier.java
+│   │       ├── LobbyStartPolicy.java
+│   │       ├── LobbyStartService.java
 │   │       └── LobbyStartReconciliationService.java
 │   │
 │   ├── map/                                        # 퀴즈 맵 도메인
@@ -89,11 +97,31 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   │   └── ...
 │   │   ├── entity/
 │   │   │   ├── QuizMap.java
+│   │   │   ├── MapItem.java
 │   │   │   └── MapCategory.java
 │   │   ├── repository/
-│   │   │   └── QuizMapJpaRepository.java
+│   │   │   ├── QuizMapJpaRepository.java
+│   │   │   └── MapItemJpaRepository.java
 │   │   └── service/
-│   │       └── MapService.java
+│   │       ├── MapService.java
+│   │       ├── MapCacheEvictor.java
+│   │       ├── MapItemPersistenceService.java
+│   │       └── MapPublicationValidator.java
+│   │
+│   ├── youtube/                                    # YouTube oEmbed 검증 도메인
+│   │   ├── client/
+│   │   │   └── YoutubeOEmbedClient.java
+│   │   ├── model/
+│   │   │   └── YoutubeMetadata.java
+│   │   └── service/
+│   │       └── YoutubeValidationService.java
+│   │
+│   ├── report/                                     # 신고 도메인
+│   │   ├── controller/
+│   │   ├── dto/
+│   │   ├── entity/
+│   │   ├── repository/
+│   │   └── service/
 │   │
 │   └── game/                                       # 인게임 도메인
 │       ├── controller/
@@ -168,7 +196,7 @@ global  →  domain  (금지)
 global/WebSocketEventListener
     │ publishEvent(PlayerLeaveEvent)
     ▼
-domain/LobbyEventService @EventListener
+domain/LobbyLeaveEventHandler @EventListener
 ```
 
 ### 도메인 간 의존 규칙
@@ -255,10 +283,21 @@ Redis
 ChatController
     ▼
 ChatService
-    │ sender 위변조 방지
-    │ 클라이언트 sender 무시, 세션 식별자로 교체
-    ▼
-RedisPublisher.publish()
+    │ 1. STOMP 세션에서 userIdentifier 추출
+    │ 2. 클라이언트 sender / roomId / timestamp 무시
+    │ 3. content null / blank / length 검증
+    │ 4. 일반 사용자 메시지는 CHAT 타입만 허용
+    │
+    ├─ [global chat]
+    │      RedisPublisher.publish(/topic/chat/global)
+    │
+    └─ [lobby chat]
+           1. 로비 존재 여부 검증
+           2. 강퇴 유저 차단
+           3. 로비 참여자 여부 검증
+           4. Redis 기반 쿨타임 검증
+           5. Redis 기반 반복 메시지 검증
+           6. RedisPublisher.publish(/topic/lobby/{code})
     ▼
 Redis Pub/Sub
     ▼
@@ -267,6 +306,142 @@ RedisSubscriber.onMessage()
 SimpMessagingTemplate.convertAndSend()
     ▼
 클라이언트
+```
+
+#### 로비 채팅 송신 destination
+
+| 구분 | STOMP destination | 설명 |
+| --- | --- | --- |
+| 전체 채팅 송신 | `/app/chat/global` | 전체 채팅 메시지 송신 |
+| 로비 채팅 송신 | `/app/chat/lobby/{code}` | 특정 로비 채팅 메시지 송신 |
+
+#### 로비 채팅 수신 destination
+
+| 구분 | STOMP destination | 설명 |
+| --- | --- | --- |
+| 전체 채팅 수신 | `/topic/chat/global` | 전체 채팅 메시지 수신 |
+| 로비 채팅 수신 | `/topic/lobby/{code}` | 로비 채팅 및 로비 시스템 메시지 수신 |
+| 로비 정보 refresh | `/topic/lobby/{code}/refresh` | 로비 상세 정보 재조회 신호 |
+| 게임 시작 이벤트 | `/topic/lobby/{code}/game` | 대기실 → 인게임 전환 신호 |
+
+#### 클라이언트 송신 payload
+
+클라이언트는 일반 채팅만 보낼 수 있습니다.
+
+```json
+{
+  "type": "CHAT",
+  "content": "안녕하세요"
+}
+```
+
+서버는 클라이언트가 보낸 `sender`, `roomId`, `timestamp`를 신뢰하지 않습니다.  
+해당 값들은 서버에서 다음 기준으로 다시 구성합니다.
+
+| 필드 | 서버 처리 |
+| --- | --- |
+| `type` | 일반 사용자 송신은 `CHAT`만 허용 |
+| `roomId` | STOMP destination의 `{code}` 또는 `"global"` 값으로 덮어씀 |
+| `sender` | STOMP 세션의 `userIdentifier`로 덮어씀 |
+| `content` | trim 후 blank / length 검증 |
+| `timestamp` | 서버 시각으로 생성 |
+
+#### 서버 송신 payload 공통 구조
+
+```json
+{
+  "type": "CHAT",
+  "roomId": "ABC123",
+  "sender": "user-identifier",
+  "content": "안녕하세요",
+  "timestamp": "2026-05-26T12:00:00"
+}
+```
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `type` | string | 메시지 타입 |
+| `roomId` | string | `"global"` 또는 로비 코드 |
+| `sender` | string | 메시지 주체 userIdentifier |
+| `content` | string | 표시할 메시지 본문 |
+| `timestamp` | string | 서버 발행 시각 |
+
+#### 메시지 타입 계약
+
+| type | 발행 주체 | destination | 설명 | FE 처리 기준 |
+| --- | --- | --- | --- | --- |
+| `CHAT` | 사용자 | `/topic/chat/global`, `/topic/lobby/{code}` | 일반 채팅 | 일반 말풍선 |
+| `SYSTEM` | 서버 | `/topic/lobby/{code}` | 범용 시스템 안내 | 시스템 안내 스타일 |
+| `ENTER` | 서버 | `/topic/lobby/{code}` | 로비 입장 알림 | 입장 안내 |
+| `LEAVE` | 서버 | `/topic/lobby/{code}` | 로비 퇴장 알림 | 퇴장 안내 |
+| `KICK` | 서버 | `/topic/lobby/{code}` | 강퇴 알림 | 강퇴 안내 또는 모달 |
+| `READY_CHANGED` | 서버 | `/topic/lobby/{code}` | ready 상태 변경 알림 | ready 변경 안내 |
+| `HOST_CHANGED` | 서버 | `/topic/lobby/{code}` | 방장 위임 알림 | 방장 변경 안내 |
+
+FE는 `content` 문자열을 파싱하지 않습니다.  
+화면 분기는 반드시 `type` 기준으로 처리합니다.
+
+#### 로비 채팅 검증 정책
+
+로비 채팅은 다음 조건을 모두 만족해야 전송됩니다.
+
+| 검증 | 실패 시 처리 |
+| --- | --- |
+| 로비가 Redis에 존재해야 함 | 404 |
+| 송신자가 `lobby:{code}:kicked`에 없어야 함 | 403 |
+| 송신자가 `lobby:{code}:participants`에 있어야 함 | 403 |
+| `content`가 null 또는 blank가 아니어야 함 | 400 |
+| `content`가 500자 이하여야 함 | 400 |
+| 사용자 송신 타입은 `CHAT`이어야 함 | 400 |
+| 1초 쿨타임을 통과해야 함 | 429 |
+| 5초 이내 동일 메시지 반복이 아니어야 함 | 429 |
+
+#### 로비 채팅 제한 Redis Key
+
+| Redis Key | Type | Value | TTL | 설명 |
+| --- | --- | --- | --- | --- |
+| `chat:lobby:{code}:cooldown:{userIdentifier}` | String | `"1"` | 1초 | 같은 사용자의 로비 채팅 연속 전송 제한 |
+| `chat:lobby:{code}:recent:{userIdentifier}` | String | SHA-256(content) | 5초 | 같은 메시지 단기 반복 전송 제한 |
+
+반복 메시지 제한은 원문이 아니라 SHA-256 해시를 저장합니다.  
+채팅 본문에 개인정보가 포함될 수 있으므로 제한 검증 목적에는 해시만 저장합니다.
+
+#### 서버 시스템 메시지 예시
+
+READY_CHANGED:
+
+```json
+{
+  "type": "READY_CHANGED",
+  "roomId": "ABC123",
+  "sender": "user-identifier",
+  "content": "user-identifier님이 준비 완료 상태로 변경했습니다.",
+  "timestamp": "2026-05-26T12:00:00"
+}
+```
+
+HOST_CHANGED:
+
+```json
+{
+  "type": "HOST_CHANGED",
+  "roomId": "ABC123",
+  "sender": "new-host-identifier",
+  "content": "new-host-identifier님이 새로운 방장이 되었습니다.",
+  "timestamp": "2026-05-26T12:00:00"
+}
+```
+
+KICK:
+
+```json
+{
+  "type": "KICK",
+  "roomId": "ABC123",
+  "sender": "target-user-identifier",
+  "content": "target-user-identifier님이 강퇴되었습니다.",
+  "timestamp": "2026-05-26T12:00:00"
+}
 ```
 
 ---
@@ -398,11 +573,11 @@ WebSocketEventListener.handleDisconnectEvent()
     │ 4. LEAVE 메시지 브로드캐스트
     │ 5. Redis 키 정리
     ▼
-LobbyEventService.handlePlayerLeave(@EventListener)
+LobbyLeaveEventHandler.handlePlayerLeave(@EventListener)
     ▼
 leave_lobby.lua
     ├── DESTROYED → 전역 로비 리스트 새로고침
-    ├── DELEGATED → 로비 내부 새로고침
+    ├── DELEGATED → HOST_CHANGED 메시지 브로드캐스트 + 로비 내부 새로고침
     └── LEFT      → 로비 내부 새로고침
 ```
 
@@ -458,9 +633,10 @@ LobbyEventService.handleKickSuccess()
 LobbyStartService
     │ 1. 인증 정보 확인
     │ 2. Redis 로비 존재 여부 확인
-    │ 3. DB GAME_LOBBY 스냅샷 조회
+    │ 3. DB GAME_LOBBY 스냅샷 조회 및 PESSIMISTIC_WRITE 락 획득
     │ 4. 선택된 맵 존재/삭제 여부 확인
     │ 5. 맵 문제 수 >= roundCount 검증
+    │ 6. 트랜잭션 동기화 활성 여부 확인
     ▼
 LobbyRepositoryImpl.executeStartLobbyProcess()
     │ 1. start_lobby.lua 실행 전 stale ready 데이터 정리
@@ -480,12 +656,18 @@ start_lobby.lua
     ▼
 DB GAME_LOBBY.status = PLAYING 저장
     ▼
+GameSessionCreateService.createGameSession()
+    ├── MapItem 조회 및 셔플
+    ├── DB GameSession, GameSessionPlayer 스냅샷 생성
+    └── init_game_session.lua 로 Redis 인게임 세션 초기화
+    ▼
 afterCommit
     ├── /topic/lobby/{code}/game → GAME_STARTED
+    ├── /topic/lobby/{code}/refresh → REFRESH_LOBBY_INFO
     └── /topic/game/{code}/round → RoundStartDto
 ```
 
-`GAME_STARTED` 이벤트는 DB 트랜잭션 커밋 이후에만 발행합니다.  
+`GAME_STARTED` 이벤트와 첫 라운드 이벤트는 DB 트랜잭션 커밋 이후에만 발행합니다.  
 트랜잭션 동기화가 비활성인 경우 즉시 발행하지 않고 서버 오류로 처리하여 DB 커밋 전 이벤트 발행을 방지합니다.
 
 ---
@@ -533,14 +715,23 @@ GameRealtimeNotifier / LobbyRealtimeNotifier
 | `lobby:public:most_players` | ZSET | 공개 로비 현재 인원순 정렬 인덱스 |
 | `lobby:public:most_available` | ZSET | 공개 로비 빈자리순 정렬 인덱스 |
 | `lobby:start:reconciliation` | List | 게임 시작 Redis-DB 상태 불일치 재처리 큐 |
+| `chat:lobby:{code}:cooldown:{userIdentifier}` | String | 로비 채팅 쿨타임 제한 |
+| `chat:lobby:{code}:recent:{userIdentifier}` | String | 로비 채팅 동일 메시지 반복 제한 |
 | `auth:guest:session:{token}` | Hash | 게스트 세션 정보 |
 | `auth:refresh:{sessionId}` | String | Refresh Token |
+| `auth:session:active:{sessionId}` | String | 활성 세션 |
+| `auth:blacklist:access:{accessTokenHash}` | String | Access Token 블랙리스트 |
 | `user_status:{userIdentifier}` | String | 사용자 온라인 상태 |
 | `user_status:{userIdentifier}:sessions` | Set | 사용자별 활성 WebSocket 세션 목록 |
 | `ws:connection:{wsSessionId}` | Hash | WebSocket 세션 → userId, lobbyCode 매핑 |
 | `map:public:list:v:{version}:p:{page}:s:{size}` | String | 공개 맵 목록 페이지 캐시 |
 | `map:public:{mapId}` | String | 공개 맵 단건 캐시 |
 | `map:public:list:version` | String | 공개 맵 목록 캐시 버전 |
+| `youtube:oembed:success:{videoId}` | String | YouTube oEmbed 성공 캐시 |
+| `youtube:oembed:failure:{videoId}` | String | YouTube oEmbed 실패 negative cache |
+| `game:session:{lobbyCode}` | Hash | 인게임 세션 메타데이터 |
+| `game:session:{lobbyCode}:rounds` | List | 출제된 라운드 목록 |
+| `game:session:{lobbyCode}:players` | Hash | 인게임 플레이어 점수 |
 
 ### `lobby:{code}` Hash 구조
 
@@ -575,9 +766,10 @@ lobby:{code}:ready
 1. 방장은 ready 대상에서 제외한다.
 2. 일반 참여자만 ready 상태를 변경할 수 있다.
 3. ready 변경은 PATCH /api/lobbies/{code}/ready에서 처리한다.
-4. ready 변경 성공 시 /topic/lobby/{code}/refresh로 REFRESH_LOBBY_INFO를 브로드캐스트한다.
-5. 퇴장/강퇴 시 ready Set에서 해당 userIdentifier를 제거한다.
-6. 게임 시작 직전 ready Set에는 있지만 participants Set에는 없는 stale ready 데이터를 정리한다.
+4. ready 변경 성공 시 /topic/lobby/{code}로 READY_CHANGED 시스템 메시지를 브로드캐스트한다.
+5. ready 변경 성공 시 /topic/lobby/{code}/refresh로 REFRESH_LOBBY_INFO를 브로드캐스트한다.
+6. 퇴장/강퇴 시 ready Set에서 해당 userIdentifier를 제거한다.
+7. 게임 시작 직전 ready Set에는 있지만 participants Set에는 없는 stale ready 데이터를 정리한다.
 ```
 
 ---
@@ -617,6 +809,17 @@ ws:connection은 있지만 participants에는 없음
 ```
 
 이를 방지하기 위해 상태 변경을 Lua 내부에서 하나의 원자 연산으로 처리합니다.
+
+### Redis 기반 로비 채팅 제한
+
+로비 채팅 제한은 서버 메모리가 아니라 Redis에 저장합니다.
+
+```text
+chat:lobby:{code}:cooldown:{userIdentifier}
+chat:lobby:{code}:recent:{userIdentifier}
+```
+
+이 구조는 WebSocket 서버가 여러 인스턴스로 늘어나도 동일 사용자에 대한 제한을 일관되게 적용할 수 있습니다.
 
 ---
 
@@ -665,6 +868,7 @@ DISCONNECT 처리 → decrement
 | 인증 refresh 저장소 | `503 Service Unavailable` |
 | WebSocket CONNECT 온라인 상태 저장 실패 | STOMP ERROR `CONNECT_ONLINE_STATUS_FAILED` |
 | 로비 입장 Lua 실패 | STOMP ERROR `LOBBY_ENTER_TEMPORARILY_UNAVAILABLE` |
+| 로비 채팅 제한 Redis 처리 실패 | `503 Service Unavailable` |
 | Pub/Sub 발행 실패 | 로컬 WebSocket fallback 또는 로그/관측성 처리 |
 | 게임 시작 Redis-DB 불일치 | 보상 롤백 또는 reconciliation 큐 적재 |
 
@@ -675,6 +879,7 @@ DISCONNECT 처리 → decrement
 | Lua 알 수 없는 반환값 | `error` + monitoring required |
 | Redis-DB 게임 시작 불일치 | `error` + reconciliation enqueue |
 | 최대 재시도 초과 | `error` + alert required |
+| READY_CHANGED / HOST_CHANGED / KICK 메시지 발행 실패 | `error` + alert required |
 | stale 세션 disconnect | `info` |
 | 중복 구독 | `info` |
 
@@ -701,6 +906,23 @@ FE는 REST join 성공만으로 사용자를 로비 참여자로 확정하면 �
 
 `canStart`는 snapshot 값입니다.  
 실제 시작 가능 여부는 `POST /api/lobbies/{code}/start`에서 최종 검증됩니다.
+
+### 로비 채팅
+
+FE는 로비 채팅 수신 시 `type` 기준으로 UI를 분기해야 합니다.
+
+```text
+CHAT          → 일반 채팅 말풍선
+SYSTEM        → 시스템 안내
+ENTER         → 입장 안내
+LEAVE         → 퇴장 안내
+KICK          → 강퇴 안내
+READY_CHANGED → ready 상태 변경 안내
+HOST_CHANGED  → 방장 변경 안내
+```
+
+FE는 `content` 문자열을 파싱하지 않습니다.  
+서버가 내려준 `type`을 기준으로 스타일과 동작을 결정합니다.
 
 ### STOMP ERROR
 

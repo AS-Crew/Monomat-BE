@@ -23,6 +23,8 @@
 -- ARGV[6] = oldMapId or ""
 -- ARGV[7] = oldMapTitle or ""
 -- ARGV[8] = oldMapCategory or ""
+-- ARGV[9] = fieldQuestionCount
+-- ARGV[10] = oldQuestionCount
 
 local lobbyKey = KEYS[1]
 
@@ -34,6 +36,8 @@ local waitingStatus = ARGV[5]
 local oldMapId = ARGV[6]
 local oldMapTitle = ARGV[7]
 local oldMapCategory = ARGV[8]
+local fieldQuestionCount = ARGV[9]
+local oldQuestionCount = ARGV[10]
 
 if redis.call('EXISTS', lobbyKey) == 0 then
     return 'LOBBY_NOT_FOUND'
@@ -50,5 +54,7 @@ if oldMapId == nil or oldMapId == '' then
 else
     redis.call('HSET', lobbyKey, fieldMapId, oldMapId, fieldMapTitle, oldMapTitle, fieldMapCategory, oldMapCategory)
 end
+
+redis.call('HSET', lobbyKey, fieldQuestionCount, oldQuestionCount)
 
 return 'COMPENSATED'

@@ -24,20 +24,20 @@ public class QuizMapSpecification {
         );
     }
 
-    /** title LIKE %keyword% (null/blank → null → no-op) */
+    /** title LIKE %keyword% (null/blank → no-op) */
     public static Specification<QuizMap> withKeyword(String keyword) {
         if (keyword == null || keyword.isBlank()) {
-            return null;
+            return (root, query, cb) -> null;
         }
-        String pattern = "%" + keyword + "%";
+        String pattern = "%" + keyword.toLowerCase() + "%";
         return (root, query, cb) ->
                 cb.like(cb.lower(root.get("title")), pattern);
     }
 
-    /** category = ? (null → null → no-op) */
+    /** category = ? (null → no-op) */
     public static Specification<QuizMap> withCategory(MapCategory category) {
         if (category == null) {
-            return null;
+            return (root, query, cb) -> null;
         }
         return (root, query, cb) -> cb.equal(root.get("category"), category);
     }

@@ -5,6 +5,7 @@
  * - 인증 주체 검증
  * - 방장 User 조회
  * - 선택된 맵 접근 가능 여부 검증 위임
+ * - questionCount 자동 설정 (맵 선택 시 numOfSong 기준)
  * - Redis 로비 상태 생성
  * - DB GAME_LOBBY 스냅샷 저장
  * - DB 저장 실패 시 Redis 보상 삭제
@@ -20,8 +21,11 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -64,6 +68,7 @@ public class LobbyCreateService {
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final UserRepository userRepository;
     private final LobbyMapPolicy lobbyMapPolicy;
+    private final QuizMapJpaRepository quizMapJpaRepository;
 
     /**
      * 로비를 생성한다.
@@ -72,9 +77,12 @@ public class LobbyCreateService {
      * 1. principal null 및 userId null 검증
      * 2. JWT에서 추출한 userId로 User 엔티티 조회
      * 3. 선택된 mapId가 있으면 LobbyMapPolicy로 맵 존재/삭제/권한 검증
-     * 4. Lua 스크립트로 초대 코드 선점 및 Redis 로비 데이터 원자 저장
-     * 5. DB에 GAME_LOBBY 스냅샷 저장
-     * 6. DB 저장 실패 시 Redis 보상 삭제
+     * 4. questionCount 자동 설정:
+     *    - mapId 있음: min(request.questionCount ?: numOfSong, numOfSong)
+     *    - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * 5. Lua 스크립트로 초대 코드 선점 및 Redis 로비 데이터 원자 저장
+     * 6. DB에 GAME_LOBBY 스냅샷 저장
+     * 7. DB 저장 실패 시 Redis 보상 삭제
      *
      * [트랜잭션 경계]
      * 로비 생성은 Redis와 DB를 함께 다룬다.
@@ -106,18 +114,20 @@ public class LobbyCreateService {
          * - mapId가 없으면 맵 미선택 로비로 생성한다.
          * - mapId가 있으면 LobbyMapPolicy에서 존재 여부, 삭제 여부, 접근 권한을 검증한다.
          * - 검증된 최소 맵 정보만 Redis 저장 계층으로 전달한다.
-         *
-         * 이 정책은 향후 "방장 로비 설정 변경 API"에서도 동일하게 재사용할 수 있다.
          */
         LobbyMapMetadata mapMetadata = lobbyMapPolicy.resolveLobbyMapMetadata(
                 request.mapId(),
                 principal.userId()
         );
 
+        int effectiveQuestionCount = resolveQuestionCount(request, mapMetadata);
+
         String inviteCode = lobbyRepository.saveToRedis(
                 request,
                 principal.userIdentifier(),
-                mapMetadata
+                mapMetadata,
+                effectiveQuestionCount,
+                request.timeLimitSeconds()
         );
 
         try {
@@ -127,16 +137,17 @@ public class LobbyCreateService {
                     .inviteCode(inviteCode)
                     .title(request.title())
                     .maxPlayers(request.maxPlayers())
-                    .roundCount(request.roundCount())
+                    .questionCount(effectiveQuestionCount)
                     .timeLimitSeconds(request.timeLimitSeconds())
                     .isPrivate(request.isPrivate())
                     .build());
 
             log.info(
-                    "로비 생성 완료 - 코드: {}, 방장: {}, mapId: {}",
+                    "로비 생성 완료 - 코드: {}, 방장: {}, mapId: {}, questionCount: {}",
                     inviteCode,
                     principal.userIdentifier(),
-                    mapMetadata != null ? mapMetadata.mapId() : null
+                    mapMetadata != null ? mapMetadata.mapId() : null,
+                    effectiveQuestionCount
             );
 
             return CreateLobbyResponse.builder()
@@ -172,5 +183,41 @@ public class LobbyCreateService {
                     ERROR_CREATE_LOBBY_FAILED
             );
         }
+    }
+
+    /**
+     * 유효한 questionCount를 결정한다.
+     *
+     * [결정 규칙]
+     * - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * - mapId 있음:
+     *   - request.questionCount == null → numOfSong (맵 전체 문제 수로 자동 설정)
+     *   - request.questionCount > numOfSong → 400 BAD_REQUEST
+     *   - request.questionCount <= numOfSong → request.questionCount 그대로 사용
+     *
+     * LobbyMapPolicy가 이미 맵 존재·삭제·권한을 검증했으므로 findById는 항상 성공한다.
+     */
+    private int resolveQuestionCount(CreateLobbyRequest request, LobbyMapMetadata mapMetadata) {
+        if (mapMetadata == null || mapMetadata.mapId() == null) {
+            return (request.questionCount() == null)
+                    ? LobbyDefaults.DEFAULT_QUESTION_COUNT
+                    : request.questionCount();
+        }
+
+        QuizMap map = quizMapJpaRepository.findById(mapMetadata.mapId()).orElseThrow();
+        int numOfSong = map.getNumOfSong();
+
+        if (request.questionCount() == null) {
+            return numOfSong;
+        }
+
+        if (request.questionCount() > numOfSong) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "설정한 문제 수(" + request.questionCount() + ")가 맵의 등록 곡 수(" + numOfSong + ")보다 많습니다."
+            );
+        }
+
+        return request.questionCount();
     }
 }

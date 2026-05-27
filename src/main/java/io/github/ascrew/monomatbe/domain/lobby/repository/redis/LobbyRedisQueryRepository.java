@@ -656,6 +656,8 @@ public class LobbyRedisQueryRepository {
                         inviteCode,
                         (String) data.get(RedisKeys.FIELD_MAP_CATEGORY)
                 ))
+                .questionCount(parseNullableInt(data.get(RedisKeys.FIELD_QUESTION_COUNT)))
+                .timeLimitSeconds(parseNullableInt(data.get(RedisKeys.FIELD_TIME_LIMIT_SECONDS)))
                 .build());
     }
 

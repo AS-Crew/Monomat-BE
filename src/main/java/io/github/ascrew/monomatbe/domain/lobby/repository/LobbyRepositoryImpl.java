@@ -168,16 +168,17 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   @Override
-  public void updateMapMetadata(String code, LobbyMapMetadata metadata) {
-    lobbyRedisCommandRepository.updateMapMetadata(code, metadata);
+  public void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount) {
+    lobbyRedisCommandRepository.updateMapMetadata(code, metadata, questionCount);
   }
 
   @Override
   public LobbyMapCompensationResult compensateMapMetadataIfWaiting(
           String code,
-          LobbyMapMetadata oldMetadata
+          LobbyMapMetadata oldMetadata,
+          int oldQuestionCount
   ) {
-    String result = lobbyLuaScriptExecutor.executeCompensateLobbyMap(code, oldMetadata);
+    String result = lobbyLuaScriptExecutor.executeCompensateLobbyMap(code, oldMetadata, oldQuestionCount);
     return lobbyLuaResultMapper.toLobbyMapCompensationResult(result, code);
   }
 
@@ -189,7 +190,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   public String saveToRedis(
           CreateLobbyRequest request,
           String userIdentifier,
-          LobbyMapMetadata mapMetadata
+          LobbyMapMetadata mapMetadata,
+          int effectiveQuestionCount,
+          int timeLimitSeconds
   ) {
     for (int attempt = 0; attempt < LobbyDefaults.INVITE_CODE_MAX_RETRY; attempt++) {
       String candidate = lobbyInviteCodeGenerator.generate();
@@ -198,7 +201,9 @@ public class LobbyRepositoryImpl implements LobbyRepository {
               candidate,
               request,
               userIdentifier,
-              mapMetadata
+              mapMetadata,
+              effectiveQuestionCount,
+              timeLimitSeconds
       );
 
       if (result == null) {

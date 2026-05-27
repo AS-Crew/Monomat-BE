@@ -231,6 +231,12 @@ public final class RedisKeys {
     /** 로비 Hash의 상태 필드. 저장 값: "WAITING" / "PLAYING" */
     public static final String FIELD_STATUS = "status";
 
+    /** 로비 Hash의 문제 수 필드 */
+    public static final String FIELD_QUESTION_COUNT = "question_count";
+
+    /** 로비 Hash의 제한 시간(초) 필드 */
+    public static final String FIELD_TIME_LIMIT_SECONDS = "time_limit_seconds";
+
     /**
      * 로비 Hash의 생성 시각 필드
      * 저장 값 : System.currentTimeMillis() 기준 epoch milliseconds 문자열

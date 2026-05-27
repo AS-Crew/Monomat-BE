@@ -75,7 +75,7 @@ class GameSessionCreateServiceTest {
         GameLobby lobby = GameLobby.builder()
                 .inviteCode("ABC1234")
                 .mapId(1L)
-                .roundCount(1)
+                .questionCount(1)
                 .timeLimitSeconds(30)
                 .status(LobbyStatus.PLAYING)
                 .build();
@@ -124,7 +124,7 @@ class GameSessionCreateServiceTest {
         verify(gameSessionJpaRepository).save(sessionCaptor.capture());
         GameSession savedSession = sessionCaptor.getValue();
         assertThat(savedSession.getCurrentRoundNo()).isEqualTo(1);
-        assertThat(savedSession.getTotalRoundCount()).isEqualTo(1);
+        assertThat(savedSession.getTotalQuestionCount()).isEqualTo(1);
 
         // 2. DB Player 생성 확인
         ArgumentCaptor<List<GameSessionPlayer>> playersCaptor = ArgumentCaptor.forClass(List.class);
@@ -138,7 +138,7 @@ class GameSessionCreateServiceTest {
         assertThat(result.videoId()).isEqualTo("vId");
         assertThat(result.youtubeUrl()).isEqualTo("https://youtube.com/vId");
         assertThat(result.startTime()).isEqualTo(10);
-        assertThat(result.endTime()).isEqualTo(20);
+        assertThat(result.endTime()).isEqualTo(40); // startTime(10) + timeLimitSeconds(30)
         assertThat(result.timeLimitSeconds()).isEqualTo(30);
         assertThat(result.roundNo()).isEqualTo(1);
         assertThat(result.serverStartedAt()).isGreaterThan(0L);
@@ -153,7 +153,7 @@ class GameSessionCreateServiceTest {
         GameLobby lobby = GameLobby.builder()
                 .inviteCode("ABC1234")
                 .mapId(1L)
-                .roundCount(1)
+                .questionCount(1)
                 .timeLimitSeconds(30)
                 .status(LobbyStatus.PLAYING)
                 .build();

@@ -1,6 +1,8 @@
 package io.github.ascrew.monomatbe.domain.auth.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.ForbiddenNicknameWord;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.repository.ForbiddenNicknameWordRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,11 +13,10 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -102,24 +103,24 @@ class ForbiddenNicknameServiceTest {
     @Test
     @DisplayName("공백 금칙어는 등록할 수 없다")
     void addBlankForbiddenWord() {
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> forbiddenNicknameService.addForbiddenWord("   ")
         );
 
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED, exception.getErrorCode());
         verify(forbiddenNicknameWordRepository, never()).saveAndFlush(any());
     }
 
     @Test
     @DisplayName("정규화 결과가 공백이면 금칙어로 등록할 수 없다")
     void addForbiddenWordWithOnlyWhitespaceAfterNormalization() {
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> forbiddenNicknameService.addForbiddenWord("\t\n ")
         );
 
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED, exception.getErrorCode());
         verify(forbiddenNicknameWordRepository, never()).saveAndFlush(any());
     }
 
@@ -128,28 +129,28 @@ class ForbiddenNicknameServiceTest {
     void addDuplicatedForbiddenWord() {
         when(forbiddenNicknameWordRepository.existsByNormalizedWord("admin")).thenReturn(true);
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> forbiddenNicknameService.addForbiddenWord("a d m i n")
         );
 
-        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_DUPLICATED, exception.getErrorCode());
         verify(forbiddenNicknameWordRepository, never()).saveAndFlush(any());
     }
 
     @Test
-    @DisplayName("동시 등록 경쟁으로 DB unique 제약이 발생하면 409로 변환한다")
+    @DisplayName("동시 등록 경쟁으로 DB unique 제약이 발생하면 중복 에러로 변환한다")
     void addForbiddenWordWithDataIntegrityViolation() {
         when(forbiddenNicknameWordRepository.existsByNormalizedWord("admin")).thenReturn(false);
         when(forbiddenNicknameWordRepository.saveAndFlush(any()))
                 .thenThrow(new DataIntegrityViolationException("duplicated normalized word"));
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> forbiddenNicknameService.addForbiddenWord("admin")
         );
 
-        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_DUPLICATED, exception.getErrorCode());
     }
 
     @Test
@@ -158,7 +159,7 @@ class ForbiddenNicknameServiceTest {
         ForbiddenNicknameWord forbiddenWord = ForbiddenNicknameWord.create("관리자", "관리자");
 
         when(forbiddenNicknameWordRepository.findById(1L))
-                .thenReturn(java.util.Optional.of(forbiddenWord));
+                .thenReturn(Optional.of(forbiddenWord));
 
         forbiddenNicknameService.deleteForbiddenWord(1L);
 
@@ -169,31 +170,31 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 금칙어 삭제 요청은 404를 반환한다")
+    @DisplayName("존재하지 않는 금칙어 삭제 요청은 미존재 에러를 반환한다")
     void deleteNotFoundForbiddenWord() {
         when(forbiddenNicknameWordRepository.findById(1L))
-                .thenReturn(java.util.Optional.empty());
+                .thenReturn(Optional.empty());
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> forbiddenNicknameService.deleteForbiddenWord(1L)
         );
 
-        assertEquals(HttpStatus.NOT_FOUND, exception.getStatusCode());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_NOT_FOUND, exception.getErrorCode());
         verify(forbiddenNicknameWordRepository).findById(1L);
         verify(forbiddenNicknameWordRepository, never()).delete(any());
         verify(stringRedisTemplate, never()).delete(anyCollection());
     }
 
     @Test
-    @DisplayName("null ID로 금칙어 삭제 요청 시 400을 반환한다")
+    @DisplayName("null ID로 금칙어 삭제 요청 시 미존재 에러를 반환한다")
     void deleteForbiddenWordWithNullId() {
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
+        AuthException exception = assertThrows(
+                AuthException.class,
                 () -> forbiddenNicknameService.deleteForbiddenWord(null)
         );
 
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_NOT_FOUND, exception.getErrorCode());
         verify(forbiddenNicknameWordRepository, never()).findById(any());
         verify(forbiddenNicknameWordRepository, never()).delete(any());
         verify(stringRedisTemplate, never()).delete(anyCollection());
@@ -242,7 +243,7 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("DB 금칙어 목록이 비어 있어도 loaded marker를 캐싱하여 반복 DB 조회를 줄인다")
+    @DisplayName("DB 금칙어 목록이 비어 있어도 loaded marker를 저장한다")
     void cacheEmptyForbiddenWordsWithLoadedMarker() {
         when(stringRedisTemplate.hasKey(CACHE_LOADED_KEY)).thenReturn(false);
         when(forbiddenNicknameWordRepository.findAllNormalizedWords())
@@ -317,6 +318,7 @@ class ForbiddenNicknameServiceTest {
         boolean result = forbiddenNicknameService.containsForbiddenWord("정상닉네임");
 
         assertFalse(result);
+        verify(forbiddenNicknameWordRepository).findAllNormalizedWords();
     }
 
     @Test
@@ -363,7 +365,7 @@ class ForbiddenNicknameServiceTest {
         ForbiddenNicknameWord forbiddenWord = ForbiddenNicknameWord.create("관리자", "관리자");
 
         when(forbiddenNicknameWordRepository.findById(1L))
-                .thenReturn(java.util.Optional.of(forbiddenWord));
+                .thenReturn(Optional.of(forbiddenWord));
         when(stringRedisTemplate.delete(anyCollection()))
                 .thenThrow(new RedisConnectionFailureException("redis evict down"));
 

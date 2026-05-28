@@ -1,15 +1,15 @@
 package io.github.ascrew.monomatbe.domain.auth.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.ForbiddenNicknameWord;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.repository.ForbiddenNicknameWordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.util.List;
@@ -33,13 +33,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class ForbiddenNicknameService {
-
-    private static final String ERROR_FORBIDDEN_WORD_REQUIRED =
-            "금칙어는 비어 있을 수 없습니다.";
-    private static final String ERROR_FORBIDDEN_WORD_DUPLICATED =
-            "이미 등록된 금칙어입니다.";
-    private static final String ERROR_FORBIDDEN_WORD_NOT_FOUND =
-            "존재하지 않는 금칙어입니다.";
 
     private static final String FORBIDDEN_NICKNAME_WORDS_CACHE_KEY =
             "auth:forbidden_nickname_words:normalized";
@@ -66,11 +59,11 @@ public class ForbiddenNicknameService {
         String normalizedWord = nicknameNormalizer.normalizeForComparison(word);
 
         if (normalizedWord.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_FORBIDDEN_WORD_REQUIRED);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED);
         }
 
         if (forbiddenNicknameWordRepository.existsByNormalizedWord(normalizedWord)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_FORBIDDEN_WORD_DUPLICATED);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_DUPLICATED);
         }
 
         try {
@@ -82,21 +75,18 @@ public class ForbiddenNicknameService {
 
             return savedWord;
         } catch (DataIntegrityViolationException e) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_FORBIDDEN_WORD_DUPLICATED, e);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_DUPLICATED, e);
         }
     }
 
     @Transactional
     public void deleteForbiddenWord(Long id) {
         if (id == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_FORBIDDEN_WORD_NOT_FOUND);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_NOT_FOUND);
         }
 
         ForbiddenNicknameWord forbiddenWord = forbiddenNicknameWordRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        ERROR_FORBIDDEN_WORD_NOT_FOUND
-                ));
+                .orElseThrow(() -> new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_NOT_FOUND));
 
         forbiddenNicknameWordRepository.delete(forbiddenWord);
         forbiddenNicknameWordRepository.flush();
@@ -154,10 +144,6 @@ public class ForbiddenNicknameService {
         Set<String> cachedWords = stringRedisTemplate.opsForSet()
                 .members(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
 
-        /*
-         * loaded marker는 있지만 Set이 비어 있으면 Redis eviction/부분 삭제 가능성이 있다.
-         * 이 경우 빈 금칙어 목록으로 신뢰하지 않고 cache miss로 판단하여 DB에서 재조회한다.
-         */
         if (cachedWords == null || cachedWords.isEmpty()) {
             return null;
         }
@@ -213,13 +199,13 @@ public class ForbiddenNicknameService {
 
     private String normalizeRequiredWord(String rawWord) {
         if (rawWord == null || rawWord.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_FORBIDDEN_WORD_REQUIRED);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED);
         }
 
         String word = rawWord.trim();
 
         if (word.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_FORBIDDEN_WORD_REQUIRED);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED);
         }
 
         return word;

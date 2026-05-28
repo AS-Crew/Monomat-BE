@@ -109,6 +109,28 @@ public enum AuthErrorCode {
     ),
 
     // =========================================================
+    // Forbidden Nickname Admin
+    // =========================================================
+
+    AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED(
+            HttpStatus.BAD_REQUEST,
+            "금칙어는 비어 있을 수 없습니다.",
+            "word"
+    ),
+
+    AUTH_FORBIDDEN_NICKNAME_WORD_DUPLICATED(
+            HttpStatus.CONFLICT,
+            "이미 등록된 금칙어입니다.",
+            "word"
+    ),
+
+    AUTH_FORBIDDEN_NICKNAME_WORD_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "존재하지 않는 금칙어입니다.",
+            null
+    ),
+
+    // =========================================================
     // Login / Session
     // =========================================================
 

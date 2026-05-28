@@ -26,9 +26,25 @@ class NicknameNormalizerTest {
     }
 
     @Test
+    @DisplayName("탭과 줄바꿈도 공백으로 판단해 제거한다")
+    void normalizeWhitespaceCharacters() {
+        String result = nicknameNormalizer.normalizeForComparison("A\tD\nM I N");
+
+        assertEquals("admin", result);
+    }
+
+    @Test
     @DisplayName("null 입력은 빈 문자열로 정규화한다")
     void normalizeNull() {
         String result = nicknameNormalizer.normalizeForComparison(null);
+
+        assertEquals("", result);
+    }
+
+    @Test
+    @DisplayName("공백만 있는 입력은 빈 문자열로 정규화한다")
+    void normalizeBlank() {
+        String result = nicknameNormalizer.normalizeForComparison("   \t\n  ");
 
         assertEquals("", result);
     }

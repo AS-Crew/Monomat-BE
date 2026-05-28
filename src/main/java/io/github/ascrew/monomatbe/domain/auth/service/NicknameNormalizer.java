@@ -11,7 +11,6 @@ import java.util.Locale;
  * - 닉네임과 금칙어를 동일한 기준으로 비교할 수 있도록 정규화한다.
  *
  * [정규화 정책]
- * - 앞뒤 공백 제거
  * - 대소문자 차이 제거
  * - 모든 공백 문자 제거
  *
@@ -32,8 +31,17 @@ public class NicknameNormalizer {
             return "";
         }
 
-        return value.trim()
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("\\s+", "");
+        String lowerCasedValue = value.toLowerCase(Locale.ROOT);
+        StringBuilder normalizedValue = new StringBuilder(lowerCasedValue.length());
+
+        for (int i = 0; i < lowerCasedValue.length(); i++) {
+            char current = lowerCasedValue.charAt(i);
+
+            if (!Character.isWhitespace(current)) {
+                normalizedValue.append(current);
+            }
+        }
+
+        return normalizedValue.toString();
     }
 }

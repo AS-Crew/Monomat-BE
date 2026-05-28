@@ -90,6 +90,57 @@ class LoginAuthServiceTest {
     }
 
     @Test
+    void login_legacyLoginIdWithUnderscore_success() {
+        String loginId = "legacy_" + System.nanoTime();
+        String password = "password123";
+        String nickname = uniqueNickname();
+
+        UserCredential credential = createCredential(loginId, password, nickname);
+
+        LoginResponse response = loginAuthService.login(
+                loginId,
+                password,
+                "127.0.0.1",
+                "JUnit-Agent"
+        );
+
+        assertEquals(credential.getUser().getId(), response.userId());
+        assertEquals(loginId, response.loginId());
+        assertEquals(nickname, response.nickname());
+        assertEquals(UserType.REGISTERED, response.userType());
+    }
+
+    @Test
+    void login_legacyLoginIdWithSpecialCharacter_success() {
+        String loginId = "legacy-" + System.nanoTime();
+        String password = "password123";
+        String nickname = uniqueNickname();
+
+        UserCredential credential = createCredential(loginId, password, nickname);
+
+        LoginResponse response = loginAuthService.login(
+                loginId,
+                password,
+                "127.0.0.1",
+                "JUnit-Agent"
+        );
+
+        assertEquals(credential.getUser().getId(), response.userId());
+        assertEquals(loginId, response.loginId());
+        assertEquals(nickname, response.nickname());
+        assertEquals(UserType.REGISTERED, response.userType());
+    }
+
+    @Test
+    void login_unknownLoginId_returnsInvalidCredentials() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login("unknown!", "password123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
+    }
+
+    @Test
     void login_wrongPassword_incrementsFailedCount() {
         String loginId = uniqueLoginId();
 
@@ -175,21 +226,43 @@ class LoginAuthServiceTest {
     }
 
     @Test
-    void login_loginIdInvalidFormat_throwsLoginIdInvalidFormatError() {
+    void login_nullLoginId_throwsLoginIdRequiredError() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login("abcd!", "password123", null, null)
+                loginAuthService.login(null, "password123", null, null)
         );
 
-        assertEquals(AuthErrorCode.AUTH_LOGIN_ID_INVALID_FORMAT, exception.getErrorCode());
+        assertEquals(AuthErrorCode.AUTH_LOGIN_ID_REQUIRED, exception.getErrorCode());
     }
 
     @Test
-    void login_passwordWithWhitespace_throwsPasswordWhitespaceError() {
+    void login_blankPassword_throwsPasswordRequiredError() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(uniqueLoginId(), "pass word123", null, null)
+                loginAuthService.login(uniqueLoginId(), "   ", null, null)
         );
 
-        assertEquals(AuthErrorCode.AUTH_PASSWORD_CONTAINS_WHITESPACE, exception.getErrorCode());
+        assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_nullPassword_throwsPasswordRequiredError() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(uniqueLoginId(), null, null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_passwordWithWhitespace_isHandledAsInvalidCredentialsAfterLookup() {
+        String loginId = uniqueLoginId();
+
+        createCredential(loginId, "password123", uniqueNickname());
+
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(loginId, "pass word123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
     }
 
     private UserCredential createCredential(String loginId, String rawPassword, String nickname) {

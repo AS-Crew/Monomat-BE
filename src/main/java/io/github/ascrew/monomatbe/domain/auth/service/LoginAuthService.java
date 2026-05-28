@@ -37,13 +37,6 @@ public class LoginAuthService {
     private static final int LOCK_THRESHOLD = 5;
     private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
 
-    private static final int MIN_LOGIN_ID_LENGTH = 4;
-    private static final int MAX_LOGIN_ID_LENGTH = 50;
-    private static final int MIN_PASSWORD_LENGTH = 8;
-    private static final int MAX_PASSWORD_LENGTH = 100;
-
-    private static final String LOGIN_ID_PATTERN = "^[A-Za-z0-9]+$";
-
     private final UserCredentialRepository userCredentialRepository;
     private final UserSessionRepository userSessionRepository;
     private final PasswordEncoder passwordEncoder;
@@ -55,8 +48,19 @@ public class LoginAuthService {
     private boolean refreshStoreEnabled;
 
     /**
+     * 자체 로그인
+     *
+     * [중요]
      * 로그인 실패 시 failedLoginCount 증가를 커밋해야 하므로
-     * 인증 실패 예외(AuthException)는 트랜잭션 롤백 대상에서 제외한다.
+     * AuthException은 트랜잭션 롤백 대상에서 제외한다.
+     *
+     * [호환성 정책]
+     * 회원가입 정책과 로그인 정책은 분리한다.
+     * 회원가입에서는 신규 loginId 포맷을 강제할 수 있지만,
+     * 로그인에서는 과거에 생성된 계정의 호환성을 위해 loginId 포맷 검증을 하지 않는다.
+     *
+     * 따라서 loginId는 null/blank만 차단하고,
+     * DB 조회 실패 또는 비밀번호 불일치는 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
      */
     @Transactional(noRollbackFor = AuthException.class)
     public LoginResponse login(String rawLoginId, String rawPassword, String ipAddress, String userAgent) {
@@ -165,35 +169,19 @@ public class LoginAuthService {
     }
 
     private String normalizeLoginId(String value) {
-        String loginId = normalizeRequiredWithTrim(value, AuthErrorCode.AUTH_LOGIN_ID_REQUIRED);
-
-        if (containsWhitespace(loginId)) {
-            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_CONTAINS_WHITESPACE);
-        }
-
-        if (loginId.length() < MIN_LOGIN_ID_LENGTH || loginId.length() > MAX_LOGIN_ID_LENGTH) {
-            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_INVALID_LENGTH);
-        }
-
-        if (!loginId.matches(LOGIN_ID_PATTERN)) {
-            throw new AuthException(AuthErrorCode.AUTH_LOGIN_ID_INVALID_FORMAT);
-        }
-
-        return loginId;
+        return normalizeRequiredWithTrim(value, AuthErrorCode.AUTH_LOGIN_ID_REQUIRED);
     }
 
+    /**
+     * 로그인 비밀번호는 null/blank만 차단한다.
+     *
+     * [이유]
+     * 로그인 시점에 비밀번호 길이/포맷을 과하게 검증하면
+     * 기존 계정 호환성 또는 정책 변경 전 계정의 로그인을 막을 수 있다.
+     * 실제 인증 실패는 passwordEncoder.matches() 결과를 통해 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
+     */
     private String normalizePassword(String value) {
-        String password = normalizeRequired(value, AuthErrorCode.AUTH_PASSWORD_REQUIRED);
-
-        if (containsWhitespace(password)) {
-            throw new AuthException(AuthErrorCode.AUTH_PASSWORD_CONTAINS_WHITESPACE);
-        }
-
-        if (password.length() < MIN_PASSWORD_LENGTH || password.length() > MAX_PASSWORD_LENGTH) {
-            throw new AuthException(AuthErrorCode.AUTH_PASSWORD_INVALID_LENGTH);
-        }
-
-        return password;
+        return normalizeRequired(value, AuthErrorCode.AUTH_PASSWORD_REQUIRED);
     }
 
     private String normalizeRequiredWithTrim(String value, AuthErrorCode requiredErrorCode) {
@@ -212,10 +200,6 @@ public class LoginAuthService {
         }
 
         return value;
-    }
-
-    private boolean containsWhitespace(String value) {
-        return value.chars().anyMatch(Character::isWhitespace);
     }
 
     private String normalizeOptionalLength(String value, int maxLength) {

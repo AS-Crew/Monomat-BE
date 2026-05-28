@@ -104,12 +104,9 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 | 상황 | code |
 |---|---|
 | 로그인 ID 누락 | `AUTH_LOGIN_ID_REQUIRED` |
-| 로그인 ID 길이 오류 | `AUTH_LOGIN_ID_INVALID_LENGTH` |
-| 로그인 ID 형식 오류 | `AUTH_LOGIN_ID_INVALID_FORMAT` |
 | 로그인 ID 공백 포함 | `AUTH_LOGIN_ID_CONTAINS_WHITESPACE` |
 | 로그인 ID 중복 | `AUTH_LOGIN_ID_DUPLICATED` |
 | 비밀번호 누락 | `AUTH_PASSWORD_REQUIRED` |
-| 비밀번호 길이 오류 | `AUTH_PASSWORD_INVALID_LENGTH` |
 | 비밀번호 공백 포함 | `AUTH_PASSWORD_CONTAINS_WHITESPACE` |
 | 닉네임 누락 | `AUTH_NICKNAME_REQUIRED` |
 | 닉네임 길이 오류 | `AUTH_NICKNAME_INVALID_LENGTH` |

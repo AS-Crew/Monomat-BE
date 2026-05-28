@@ -14,13 +14,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class AdminAccessValidatorTest {
 
     @Test
-    @DisplayName("설정된 관리자 userIdentifier이면 접근을 허용한다")
-    void validateAdminUserIdentifier() {
-        AdminAccessValidator validator = new AdminAccessValidator("admin-uuid");
+    @DisplayName("설정된 관리자 userId이면 접근을 허용한다")
+    void validateAdminUserId() {
+        AdminAccessValidator validator = new AdminAccessValidator("1");
 
         CustomPrincipal principal = new CustomPrincipal(
                 1L,
-                "admin-uuid",
+                "any-session-identifier",
                 UserType.REGISTERED
         );
 
@@ -28,13 +28,13 @@ class AdminAccessValidatorTest {
     }
 
     @Test
-    @DisplayName("설정되지 않은 userIdentifier이면 403으로 차단한다")
-    void rejectNonAdminUserIdentifier() {
-        AdminAccessValidator validator = new AdminAccessValidator("admin-uuid");
+    @DisplayName("설정되지 않은 userId이면 403으로 차단한다")
+    void rejectNonAdminUserId() {
+        AdminAccessValidator validator = new AdminAccessValidator("1");
 
         CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                "normal-user-uuid",
+                2L,
+                "normal-user-identifier",
                 UserType.REGISTERED
         );
 
@@ -49,7 +49,7 @@ class AdminAccessValidatorTest {
     @Test
     @DisplayName("인증 정보가 없으면 401로 차단한다")
     void rejectUnauthenticatedPrincipal() {
-        AdminAccessValidator validator = new AdminAccessValidator("admin-uuid");
+        AdminAccessValidator validator = new AdminAccessValidator("1");
 
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,
@@ -60,13 +60,13 @@ class AdminAccessValidatorTest {
     }
 
     @Test
-    @DisplayName("관리자 식별자는 콤마 구분 목록으로 여러 개 설정할 수 있다")
-    void validateMultipleAdminUserIdentifiers() {
-        AdminAccessValidator validator = new AdminAccessValidator("admin-uuid-1, admin-uuid-2");
+    @DisplayName("관리자 userId는 콤마 구분 목록으로 여러 개 설정할 수 있다")
+    void validateMultipleAdminUserIds() {
+        AdminAccessValidator validator = new AdminAccessValidator("1, 2");
 
         CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                "admin-uuid-2",
+                2L,
+                "any-session-identifier",
                 UserType.REGISTERED
         );
 

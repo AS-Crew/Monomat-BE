@@ -136,6 +136,12 @@ public enum AuthErrorCode {
             null
     ),
 
+    AUTH_REFRESH_TOKEN_REQUIRED(
+            HttpStatus.BAD_REQUEST,
+            "Refresh Token은 비어 있을 수 없습니다.",
+            AuthErrorFields.REFRESH_TOKEN
+    ),
+
     AUTH_INVALID_REFRESH_TOKEN(
             HttpStatus.UNAUTHORIZED,
             "Refresh Token이 유효하지 않습니다.",
@@ -197,6 +203,7 @@ public enum AuthErrorCode {
         private static final String LOGIN_ID = "loginId";
         private static final String PASSWORD = "password";
         private static final String NICKNAME = "nickname";
+        private static final String REFRESH_TOKEN = "refreshToken";
 
         private AuthErrorFields() {
         }

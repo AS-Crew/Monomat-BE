@@ -80,13 +80,60 @@ class AuthExceptionHandlerTest {
         assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.getField(), response.getBody().field());
     }
 
+    @Test
+    void handleValidationException_blankRefreshToken_returnsRefreshTokenRequiredWithBadRequest()
+            throws NoSuchMethodException {
+        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(
+                new TestRefreshTokenRequest(""),
+                "testRefreshTokenRequest"
+        );
+
+        bindingResult.addError(new FieldError(
+                "testRefreshTokenRequest",
+                "refreshToken",
+                "",
+                false,
+                null,
+                null,
+                "AUTH_REFRESH_TOKEN_REQUIRED"
+        ));
+
+        Method method = TestAuthController.class.getDeclaredMethod(
+                "refresh",
+                TestRefreshTokenRequest.class
+        );
+
+        MethodParameter methodParameter = new MethodParameter(method, 0);
+
+        MethodArgumentNotValidException exception = new MethodArgumentNotValidException(
+                methodParameter,
+                bindingResult
+        );
+
+        ResponseEntity<AuthErrorResponse> response =
+                authExceptionHandler.handleValidationException(exception);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED.name(), response.getBody().code());
+        assertEquals(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED.getMessage(), response.getBody().message());
+        assertEquals(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED.getField(), response.getBody().field());
+    }
+
     private record TestAuthRequest(String loginId) {
+    }
+
+    private record TestRefreshTokenRequest(String refreshToken) {
     }
 
     private static final class TestAuthController {
 
         @SuppressWarnings("unused")
         void test(TestAuthRequest request) {
+        }
+
+        @SuppressWarnings("unused")
+        void refresh(TestRefreshTokenRequest request) {
         }
     }
 

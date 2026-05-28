@@ -169,13 +169,13 @@ public class RefreshAuthService {
 
     private String normalizeRequired(String value) {
         if (value == null) {
-            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED);
         }
 
         String normalized = value.trim();
 
         if (normalized.isBlank()) {
-            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED);
         }
 
         return normalized;

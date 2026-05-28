@@ -181,7 +181,7 @@ public class AuthExceptionHandler {
             case FIELD_LOGIN_ID -> AuthErrorCode.AUTH_LOGIN_ID_REQUIRED;
             case FIELD_PASSWORD -> AuthErrorCode.AUTH_PASSWORD_REQUIRED;
             case FIELD_NICKNAME -> AuthErrorCode.AUTH_NICKNAME_REQUIRED;
-            case FIELD_REFRESH_TOKEN -> AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN;
+            case FIELD_REFRESH_TOKEN -> AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED;
             default -> {
                 log.warn("Unknown required auth field - field: {}", field);
                 yield AuthErrorCode.AUTH_INVALID_REQUEST_BODY;
@@ -201,7 +201,7 @@ public class AuthExceptionHandler {
     }
 
     /**
-     * 여러 FieldError가 동시에 발생했을 때 사용자에게 가장 정확한 에러를 먼저 반환하기 위한 우선순위
+     * 여러 FieldError가 동시에 발생했을 때 사용자에게 가장 정확한 에러를 먼저 반환하기 위한 우선순위.
      */
     private static final class AuthValidationErrorPriority {
 
@@ -217,7 +217,7 @@ public class AuthExceptionHandler {
                 case AUTH_LOGIN_ID_REQUIRED,
                      AUTH_PASSWORD_REQUIRED,
                      AUTH_NICKNAME_REQUIRED,
-                     AUTH_INVALID_REFRESH_TOKEN -> 1;
+                     AUTH_REFRESH_TOKEN_REQUIRED -> 1;
 
                 case AUTH_LOGIN_ID_CONTAINS_WHITESPACE,
                      AUTH_PASSWORD_CONTAINS_WHITESPACE -> 2;

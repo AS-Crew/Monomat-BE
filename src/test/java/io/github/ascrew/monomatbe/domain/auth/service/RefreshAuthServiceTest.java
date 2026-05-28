@@ -227,6 +227,26 @@ class RefreshAuthServiceTest {
     }
 
     @Test
+    void refresh_nullRefreshToken_throwsRefreshTokenRequiredError() {
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> refreshAuthService.refresh(null, null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void refresh_blankRefreshToken_throwsRefreshTokenRequiredError() {
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> refreshAuthService.refresh("   ", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
     void refresh_redisFailure_throwsTemporaryUnavailableError() {
         String requestRefreshToken = "refresh-token-old";
         String sessionId = "session-123";

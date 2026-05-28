@@ -91,6 +91,7 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 | `AUTH_ACCOUNT_LOCKED` | 로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요. | `null` | 423 |
 | `AUTH_UNAUTHENTICATED` | 인증 정보가 없습니다. | `null` | 401 |
 | `AUTH_INVALID_AUTHORIZATION` | Authorization 헤더가 유효하지 않습니다. | `null` | 401 |
+| `AUTH_REFRESH_TOKEN_REQUIRED` | Refresh Token은 비어 있을 수 없습니다. | `refreshToken` | 400 |
 | `AUTH_INVALID_REFRESH_TOKEN` | Refresh Token이 유효하지 않습니다. | `null` | 401 |
 | `AUTH_SESSION_EXPIRED` | 세션이 만료되었습니다. | `null` | 401 |
 | `AUTH_TEMPORARY_UNAVAILABLE` | 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요. | `null` | 503 |
@@ -144,7 +145,8 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 
 | 상황 | code |
 |---|---|
-| Refresh Token 누락 | `AUTH_INVALID_REFRESH_TOKEN` |
+| Refresh Token 누락 | `AUTH_REFRESH_TOKEN_REQUIRED` |
+| Refresh Token 빈 값 | `AUTH_REFRESH_TOKEN_REQUIRED` |
 | Refresh Token 형식 오류 | `AUTH_INVALID_REFRESH_TOKEN` |
 | Refresh Token 불일치 | `AUTH_INVALID_REFRESH_TOKEN` |
 | 세션 만료 | `AUTH_SESSION_EXPIRED` |

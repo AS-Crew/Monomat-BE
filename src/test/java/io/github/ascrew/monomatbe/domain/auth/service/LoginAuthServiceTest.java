@@ -7,6 +7,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthLoginFailureException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
@@ -250,6 +251,19 @@ class LoginAuthServiceTest {
         );
 
         assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_wrongPassword_throwsLoginFailureExceptionForNoRollback() {
+        String loginId = uniqueLoginId();
+
+        createCredential(loginId, "password123", uniqueNickname());
+
+        AuthLoginFailureException exception = assertThrows(AuthLoginFailureException.class, () ->
+                loginAuthService.login(loginId, "wrong-password", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
     }
 
     @Test

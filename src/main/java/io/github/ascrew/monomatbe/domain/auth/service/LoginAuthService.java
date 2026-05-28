@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthLoginFailureException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
@@ -50,9 +51,15 @@ public class LoginAuthService {
     /**
      * 자체 로그인
      *
-     * [중요]
-     * 로그인 실패 시 failedLoginCount 증가를 커밋해야 하므로
-     * AuthException은 트랜잭션 롤백 대상에서 제외한다.
+     * [트랜잭션 정책]
+     * 비밀번호 불일치 시 failedLoginCount 증가와 lockedUntil 설정은 반드시 커밋되어야 한다.
+     * 따라서 해당 상태 변경 이후에는 AuthLoginFailureException을 던지고,
+     * 이 예외만 noRollbackFor 대상으로 제한한다.
+     *
+     * [주의]
+     * AuthException 전체를 noRollbackFor로 지정하지 않는다.
+     * AuthException은 계정 잠금, 인증 정보 없음, refresh token 오류 등 다양한 인증 예외를 포괄하므로,
+     * 향후 login() 내부에서 DB write 이후 다른 AuthException이 추가될 경우 의도하지 않은 부분 커밋이 발생할 수 있다.
      *
      * [호환성 정책]
      * 회원가입 정책과 로그인 정책은 분리한다.
@@ -62,7 +69,7 @@ public class LoginAuthService {
      * 따라서 loginId는 null/blank만 차단하고,
      * DB 조회 실패 또는 비밀번호 불일치는 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
      */
-    @Transactional(noRollbackFor = AuthException.class)
+    @Transactional(noRollbackFor = AuthLoginFailureException.class)
     public LoginResponse login(String rawLoginId, String rawPassword, String ipAddress, String userAgent) {
         String loginId = normalizeLoginId(rawLoginId);
         String password = normalizePassword(rawPassword);
@@ -83,7 +90,7 @@ public class LoginAuthService {
                 credential.lockUntil(now.plus(LOCK_DURATION));
             }
 
-            throw new AuthException(AuthErrorCode.AUTH_INVALID_CREDENTIALS);
+            throw new AuthLoginFailureException(AuthErrorCode.AUTH_INVALID_CREDENTIALS);
         }
 
         credential.resetFailedLoginState();

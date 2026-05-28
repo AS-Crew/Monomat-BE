@@ -3,13 +3,17 @@ package io.github.ascrew.monomatbe.domain.auth.controller;
 import io.github.ascrew.monomatbe.domain.auth.dto.ForbiddenNicknameCreateRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.ForbiddenNicknameResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.ForbiddenNicknameWord;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.service.ForbiddenNicknameService;
+import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.core.Authentication;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -27,11 +31,15 @@ class ForbiddenNicknameAdminControllerTest {
 
     private ForbiddenNicknameService forbiddenNicknameService;
     private ForbiddenNicknameAdminController controller;
+    private Authentication authentication;
 
     @BeforeEach
     void setUp() {
         forbiddenNicknameService = mock(ForbiddenNicknameService.class);
         controller = new ForbiddenNicknameAdminController(forbiddenNicknameService);
+        authentication = authenticatedToken(
+                new CustomPrincipal(1L, "admin-session-identifier", UserType.REGISTERED)
+        );
     }
 
     @Test
@@ -64,7 +72,7 @@ class ForbiddenNicknameAdminControllerTest {
                 .thenReturn(savedWord);
 
         ResponseEntity<ForbiddenNicknameResponse> response =
-                controller.createForbiddenNickname(request);
+                controller.createForbiddenNickname(request, authentication);
 
         assertEquals(HttpStatus.CREATED, response.getStatusCode());
         assertNotNull(response.getBody());
@@ -78,7 +86,7 @@ class ForbiddenNicknameAdminControllerTest {
     @DisplayName("관리자 금칙어를 삭제한다")
     void deleteForbiddenNickname() {
         ResponseEntity<Void> response =
-                controller.deleteForbiddenNickname(1L);
+                controller.deleteForbiddenNickname(1L, authentication);
 
         assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
 
@@ -98,7 +106,8 @@ class ForbiddenNicknameAdminControllerTest {
     void createForbiddenNicknameHasAdminPreAuthorize() throws NoSuchMethodException {
         Method method = ForbiddenNicknameAdminController.class.getMethod(
                 "createForbiddenNickname",
-                ForbiddenNicknameCreateRequest.class
+                ForbiddenNicknameCreateRequest.class,
+                Authentication.class
         );
 
         assertAdminPreAuthorize(method);
@@ -109,7 +118,8 @@ class ForbiddenNicknameAdminControllerTest {
     void deleteForbiddenNicknameHasAdminPreAuthorize() throws NoSuchMethodException {
         Method method = ForbiddenNicknameAdminController.class.getMethod(
                 "deleteForbiddenNickname",
-                Long.class
+                Long.class,
+                Authentication.class
         );
 
         assertAdminPreAuthorize(method);
@@ -120,5 +130,13 @@ class ForbiddenNicknameAdminControllerTest {
 
         assertNotNull(preAuthorize);
         assertEquals(ADMIN_PRE_AUTHORIZE_EXPRESSION, preAuthorize.value());
+    }
+
+    private Authentication authenticatedToken(Object principal) {
+        return new TestingAuthenticationToken(
+                principal,
+                null,
+                "ROLE_USER"
+        );
     }
 }

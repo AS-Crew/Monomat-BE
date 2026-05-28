@@ -204,20 +204,28 @@ Access Token 기반으로 요청자를 식별하여 로그아웃 처리합니다
 
 닉네임 금칙어 목록을 관리자 API로 조회, 추가, 삭제합니다.
 
-현재 프로젝트에는 별도 `ROLE_ADMIN` 권한 체계가 없으므로, 임시로 설정 기반 관리자 `userIdentifier` allow-list를 사용합니다.
+현재 프로젝트에는 별도 `ROLE_ADMIN` 권한 체계가 없으므로, 임시로 설정 기반 관리자 `users.id` allow-list를 사용합니다.
 
 관리자 API를 호출하려면 다음 조건을 모두 만족해야 합니다.
 
 - JWT Access Token이 유효해야 합니다.
-- JWT에서 추출한 `userIdentifier`가 `monomat.admin.user-identifiers` 설정에 포함되어 있어야 합니다.
+- JWT에서 추출한 `userId`가 `monomat.admin.user-ids` 설정에 포함되어 있어야 합니다.
 
 운영 설정 예시:
 
 ```properties
-MONOMAT_ADMIN_USER_IDENTIFIERS=uuid-1,uuid-2
-````
+MONOMAT_ADMIN_USER_IDS=1,2
+```
 
-> 추후 관리자 권한 체계가 추가되면 `ROLE_ADMIN` 기반 접근 제어로 교체할 수 있습니다.
+Spring 설정 키:
+
+```env
+monomat.admin.user-ids=${MONOMAT_ADMIN_USER_IDS:}
+```
+
+> userIdentifier는 로그인/세션 식별자 성격이 강하므로 관리자 권한 기준으로 사용하지 않습니다.
+> 관리자 API 접근 기준은 DB users.id입니다.
+> 추후 관리자 권한 체계가 추가되면 ROLE_ADMIN 기반 접근 제어로 교체할 수 있습니다.
 
 ---
 
@@ -252,8 +260,7 @@ GET /api/admin/forbidden-nicknames
 | 상태 코드              | 설명                               |
 | ------------------ | -------------------------------- |
 | `401 Unauthorized` | 인증 정보 없음 또는 유효하지 않은 Access Token |
-| `403 Forbidden`    | 관리자 allow-list에 포함되지 않은 사용자      |
-
+| `403 Forbidden`    | `users.id`가 관리자 allow-list에 포함되지 않은 사용자 |
 ---
 
 #### 금칙어 추가
@@ -311,7 +318,7 @@ POST /api/admin/forbidden-nicknames
 | ------------------ | -------------------------------- |
 | `400 Bad Request`  | 금칙어가 비어 있음 또는 요청 형식 오류           |
 | `401 Unauthorized` | 인증 정보 없음 또는 유효하지 않은 Access Token |
-| `403 Forbidden`    | 관리자 allow-list에 포함되지 않은 사용자      |
+| `403 Forbidden`    | `users.id`가 관리자 allow-list에 포함되지 않은 사용자 |
 | `409 Conflict`     | 이미 등록된 금칙어                       |
 
 ---
@@ -343,7 +350,7 @@ DELETE /api/admin/forbidden-nicknames/{id}
 | 상태 코드              | 설명                               |
 | ------------------ | -------------------------------- |
 | `401 Unauthorized` | 인증 정보 없음 또는 유효하지 않은 Access Token |
-| `403 Forbidden`    | 관리자 allow-list에 포함되지 않은 사용자      |
+| `403 Forbidden`    | `users.id`가 관리자 allow-list에 포함되지 않은 사용자 |
 | `404 Not Found`    | 존재하지 않는 금칙어                      |
 
 ---

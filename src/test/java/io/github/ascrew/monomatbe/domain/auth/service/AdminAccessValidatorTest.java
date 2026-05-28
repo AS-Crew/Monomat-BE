@@ -4,92 +4,90 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.authentication.TestingAuthenticationToken;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AdminAccessValidatorTest {
 
     @Test
-    @DisplayName("설정된 관리자 userId이면 접근을 허용한다")
-    void validateAdminUserId() {
+    @DisplayName("설정된 관리자 userId이면 true를 반환한다")
+    void isAdminWithAdminUserId() {
         AdminAccessValidator validator = new AdminAccessValidator("1");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(1L, "any-session-identifier", UserType.REGISTERED)
         );
 
-        assertDoesNotThrow(() -> validator.validate(principal));
+        assertTrue(validator.isAdmin(authentication));
     }
 
     @Test
-    @DisplayName("설정되지 않은 userId이면 403으로 차단한다")
-    void rejectNonAdminUserId() {
+    @DisplayName("설정되지 않은 userId이면 false를 반환한다")
+    void isAdminRejectsNonAdminUserId() {
         AdminAccessValidator validator = new AdminAccessValidator("1");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                2L,
-                "normal-user-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(2L, "normal-user-identifier", UserType.REGISTERED)
         );
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
-                () -> validator.validate(principal)
-        );
-
-        assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+        assertFalse(validator.isAdmin(authentication));
     }
 
     @Test
-    @DisplayName("인증 정보가 없으면 401로 차단한다")
-    void rejectUnauthenticatedPrincipal() {
+    @DisplayName("Authentication이 null이면 false를 반환한다")
+    void isAdminRejectsNullAuthentication() {
         AdminAccessValidator validator = new AdminAccessValidator("1");
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
-                () -> validator.validate(null)
-        );
-
-        assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatusCode());
+        assertFalse(validator.isAdmin(null));
     }
 
     @Test
-    @DisplayName("principal의 userId가 null이면 401로 차단한다")
-    void rejectPrincipalWithNullUserId() {
+    @DisplayName("인증되지 않은 Authentication이면 false를 반환한다")
+    void isAdminRejectsUnauthenticatedAuthentication() {
         AdminAccessValidator validator = new AdminAccessValidator("1");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                null,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(1L, "any-session-identifier", UserType.REGISTERED)
+        );
+        authentication.setAuthenticated(false);
+
+        assertFalse(validator.isAdmin(authentication));
+    }
+
+    @Test
+    @DisplayName("principal이 CustomPrincipal이 아니면 false를 반환한다")
+    void isAdminRejectsUnsupportedPrincipal() {
+        AdminAccessValidator validator = new AdminAccessValidator("1");
+
+        TestingAuthenticationToken authentication = authenticatedToken("anonymousUser");
+
+        assertFalse(validator.isAdmin(authentication));
+    }
+
+    @Test
+    @DisplayName("principal의 userId가 null이면 false를 반환한다")
+    void isAdminRejectsNullUserId() {
+        AdminAccessValidator validator = new AdminAccessValidator("1");
+
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(null, "any-session-identifier", UserType.REGISTERED)
         );
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
-                () -> validator.validate(principal)
-        );
-
-        assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatusCode());
+        assertFalse(validator.isAdmin(authentication));
     }
 
     @Test
     @DisplayName("관리자 userId는 콤마 구분 목록으로 여러 개 설정할 수 있다")
-    void validateMultipleAdminUserIds() {
+    void isAdminWithMultipleAdminUserIds() {
         AdminAccessValidator validator = new AdminAccessValidator("1, 2");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                2L,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(2L, "any-session-identifier", UserType.REGISTERED)
         );
 
-        assertDoesNotThrow(() -> validator.validate(principal));
+        assertTrue(validator.isAdmin(authentication));
     }
 
     @Test
@@ -97,51 +95,35 @@ class AdminAccessValidatorTest {
     void ignoreInvalidAdminUserIdSetting() {
         AdminAccessValidator validator = new AdminAccessValidator("1, abc, 2");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                2L,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(2L, "any-session-identifier", UserType.REGISTERED)
         );
 
-        assertDoesNotThrow(() -> validator.validate(principal));
+        assertTrue(validator.isAdmin(authentication));
     }
 
     @Test
-    @DisplayName("관리자 userId 설정이 모두 잘못된 값이면 allow-list는 비어 있고 접근은 403으로 차단된다")
+    @DisplayName("관리자 userId 설정이 모두 잘못된 값이면 allow-list는 비어 있고 false를 반환한다")
     void rejectWhenAllAdminUserIdSettingsAreInvalid() {
         AdminAccessValidator validator = new AdminAccessValidator("abc, def");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(1L, "any-session-identifier", UserType.REGISTERED)
         );
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
-                () -> validator.validate(principal)
-        );
-
-        assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+        assertFalse(validator.isAdmin(authentication));
     }
 
     @Test
-    @DisplayName("관리자 userId 설정이 비어 있으면 모든 사용자의 관리자 API 접근을 403으로 차단한다")
+    @DisplayName("관리자 userId 설정이 비어 있으면 모든 사용자를 false로 판단한다")
     void rejectWhenAdminUserIdSettingIsEmpty() {
         AdminAccessValidator validator = new AdminAccessValidator("");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(1L, "any-session-identifier", UserType.REGISTERED)
         );
 
-        ResponseStatusException exception = assertThrows(
-                ResponseStatusException.class,
-                () -> validator.validate(principal)
-        );
-
-        assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+        assertFalse(validator.isAdmin(authentication));
     }
 
     @Test
@@ -149,12 +131,19 @@ class AdminAccessValidatorTest {
     void ignoreBlankTokensInAdminUserIdSetting() {
         AdminAccessValidator validator = new AdminAccessValidator("1, , 2,   ");
 
-        CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                "any-session-identifier",
-                UserType.REGISTERED
+        TestingAuthenticationToken authentication = authenticatedToken(
+                new CustomPrincipal(1L, "any-session-identifier", UserType.REGISTERED)
         );
 
-        assertDoesNotThrow(() -> validator.validate(principal));
+        assertTrue(validator.isAdmin(authentication));
+    }
+
+    private TestingAuthenticationToken authenticatedToken(Object principal) {
+        TestingAuthenticationToken authentication = new TestingAuthenticationToken(
+                principal,
+                null
+        );
+        authentication.setAuthenticated(true);
+        return authentication;
     }
 }

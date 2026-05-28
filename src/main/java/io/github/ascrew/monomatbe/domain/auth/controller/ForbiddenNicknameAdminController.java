@@ -2,9 +2,7 @@ package io.github.ascrew.monomatbe.domain.auth.controller;
 
 import io.github.ascrew.monomatbe.domain.auth.dto.ForbiddenNicknameCreateRequest;
 import io.github.ascrew.monomatbe.domain.auth.dto.ForbiddenNicknameResponse;
-import io.github.ascrew.monomatbe.domain.auth.service.AdminAccessValidator;
 import io.github.ascrew.monomatbe.domain.auth.service.ForbiddenNicknameService;
-import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -12,7 +10,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,12 +24,13 @@ import java.util.List;
  * 관리자 닉네임 금칙어 관리 API
  *
  * [현재 권한 정책]
- * - JWT 인증은 Spring Security @PreAuthorize로 1차 확인한다.
- * - 관리자 여부는 AdminAccessValidator가 설정 기반 allow-list로 2차 확인한다.
+ * - 현재 프로젝트에 ROLE_ADMIN 권한 체계가 없으므로 users.id allow-list 기반으로 관리자 접근을 제한한다.
+ * - 관리자 여부는 @PreAuthorize("@adminAccessValidator.isAdmin(authentication)")에서 중앙집중적으로 판단한다.
  *
  * [주의]
- * - 현재 프로젝트에 ROLE_ADMIN 권한 체계가 없으므로 hasRole('ADMIN')을 사용하지 않는다.
- * - 추후 관리자 권한 체계가 추가되면 AdminAccessValidator 내부 구현을 교체한다.
+ * - Controller 내부에서 수동으로 관리자 검증 메서드를 호출하지 않는다.
+ * - 관리자 검증을 수동 호출로 분산하면 새 엔드포인트 추가 시 누락 위험이 생긴다.
+ * - 추후 ROLE_ADMIN 권한 체계가 추가되면 AdminAccessValidator 내부 구현만 교체한다.
  */
 @Tag(name = "Forbidden Nickname Admin", description = "관리자 닉네임 금칙어 관리 API")
 @RestController
@@ -41,16 +39,11 @@ import java.util.List;
 public class ForbiddenNicknameAdminController {
 
     private final ForbiddenNicknameService forbiddenNicknameService;
-    private final AdminAccessValidator adminAccessValidator;
 
     @Operation(summary = "닉네임 금칙어 목록 조회")
     @GetMapping
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<ForbiddenNicknameResponse>> getForbiddenNicknames(
-            @AuthenticationPrincipal CustomPrincipal principal
-    ) {
-        adminAccessValidator.validate(principal);
-
+    @PreAuthorize("@adminAccessValidator.isAdmin(authentication)")
+    public ResponseEntity<List<ForbiddenNicknameResponse>> getForbiddenNicknames() {
         List<ForbiddenNicknameResponse> response = forbiddenNicknameService.getForbiddenWords()
                 .stream()
                 .map(ForbiddenNicknameResponse::from)
@@ -61,13 +54,10 @@ public class ForbiddenNicknameAdminController {
 
     @Operation(summary = "닉네임 금칙어 추가")
     @PostMapping
-    @PreAuthorize("isAuthenticated()")
+    @PreAuthorize("@adminAccessValidator.isAdmin(authentication)")
     public ResponseEntity<ForbiddenNicknameResponse> createForbiddenNickname(
-            @Valid @RequestBody ForbiddenNicknameCreateRequest request,
-            @AuthenticationPrincipal CustomPrincipal principal
+            @Valid @RequestBody ForbiddenNicknameCreateRequest request
     ) {
-        adminAccessValidator.validate(principal);
-
         ForbiddenNicknameResponse response = ForbiddenNicknameResponse.from(
                 forbiddenNicknameService.addForbiddenWord(request.word())
         );
@@ -77,13 +67,8 @@ public class ForbiddenNicknameAdminController {
 
     @Operation(summary = "닉네임 금칙어 삭제")
     @DeleteMapping("/{id}")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Void> deleteForbiddenNickname(
-            @PathVariable Long id,
-            @AuthenticationPrincipal CustomPrincipal principal
-    ) {
-        adminAccessValidator.validate(principal);
-
+    @PreAuthorize("@adminAccessValidator.isAdmin(authentication)")
+    public ResponseEntity<Void> deleteForbiddenNickname(@PathVariable Long id) {
         forbiddenNicknameService.deleteForbiddenWord(id);
 
         return ResponseEntity.noContent().build();

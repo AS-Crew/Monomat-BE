@@ -3,9 +3,8 @@ package io.github.ascrew.monomatbe.domain.auth.service;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Arrays;
 import java.util.Set;
@@ -16,7 +15,7 @@ import java.util.stream.Collectors;
  *
  * [현재 정책]
  * - 프로젝트에 ROLE_ADMIN 권한 체계가 아직 없으므로 설정 기반 allow-list로 관리자 접근을 제한한다.
- * - principal.userId()가 monomat.admin.user-ids 설정에 포함되어 있어야 한다.
+ * - Authentication principal의 CustomPrincipal.userId()가 monomat.admin.user-ids 설정에 포함되어 있어야 한다.
  *
  * [설정 예시]
  * monomat.admin.user-ids=1,2
@@ -30,18 +29,18 @@ import java.util.stream.Collectors;
  * - 환경변수 오타 때문에 전체 애플리케이션이 부팅 실패하면 안 된다.
  * - 잘못된 값은 warn 로그만 남기고 무시한다.
  *
+ * [인가 정책]
+ * - Controller에서 수동으로 validate()를 호출하지 않는다.
+ * - @PreAuthorize("@adminAccessValidator.isAdmin(authentication)")로 중앙집중화한다.
+ * - 새 관리자 API가 추가되어도 동일한 어노테이션만 붙이면 인가 정책을 일관되게 적용할 수 있다.
+ *
  * [확장 방향]
  * - 추후 users 테이블 또는 별도 role 테이블에 관리자 권한이 추가되면
  *   이 컴포넌트 내부 구현만 ROLE_ADMIN 검증으로 교체한다.
  */
 @Slf4j
-@Component
+@Component("adminAccessValidator")
 public class AdminAccessValidator {
-
-    private static final String ERROR_UNAUTHENTICATED =
-            "인증 정보가 없습니다.";
-    private static final String ERROR_ADMIN_FORBIDDEN =
-            "관리자 권한이 필요합니다.";
 
     private final Set<Long> adminUserIds;
 
@@ -51,14 +50,29 @@ public class AdminAccessValidator {
         this.adminUserIds = parseAdminUserIds(adminUserIds);
     }
 
-    public void validate(CustomPrincipal principal) {
-        if (principal == null || principal.userId() == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_UNAUTHENTICATED);
+    /**
+     * Spring Method Security SpEL에서 호출하는 관리자 여부 판단 메서드
+     *
+     * 사용 예:
+     * @PreAuthorize("@adminAccessValidator.isAdmin(authentication)")
+     *
+     * @param authentication Spring Security 인증 객체
+     * @return 관리자 접근 가능 여부
+     */
+    public boolean isAdmin(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
         }
 
-        if (!adminUserIds.contains(principal.userId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_ADMIN_FORBIDDEN);
+        Object principal = authentication.getPrincipal();
+
+        if (!(principal instanceof CustomPrincipal customPrincipal)) {
+            return false;
         }
+
+        Long userId = customPrincipal.userId();
+
+        return userId != null && adminUserIds.contains(userId);
     }
 
     private Set<Long> parseAdminUserIds(String value) {

@@ -2,14 +2,19 @@ package io.github.ascrew.monomatbe.domain.auth.exception;
 
 import io.github.ascrew.monomatbe.domain.auth.dto.AuthErrorResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -33,6 +38,56 @@ class AuthExceptionHandlerTest {
         assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.name(), response.getBody().code());
         assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.getMessage(), response.getBody().message());
         assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.getField(), response.getBody().field());
+    }
+
+    @Test
+    void handleValidationException_unknownValidationCode_returnsInvalidRequestBodyWithBadRequest()
+            throws NoSuchMethodException {
+        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(
+                new TestAuthRequest("test"),
+                "testAuthRequest"
+        );
+
+        bindingResult.addError(new FieldError(
+                "testAuthRequest",
+                "loginId",
+                "test",
+                false,
+                null,
+                null,
+                "AUTH_LOGINID_REQUIRED"
+        ));
+
+        Method method = TestAuthController.class.getDeclaredMethod(
+                "test",
+                TestAuthRequest.class
+        );
+
+        MethodParameter methodParameter = new MethodParameter(method, 0);
+
+        MethodArgumentNotValidException exception = new MethodArgumentNotValidException(
+                methodParameter,
+                bindingResult
+        );
+
+        ResponseEntity<AuthErrorResponse> response =
+                authExceptionHandler.handleValidationException(exception);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.name(), response.getBody().code());
+        assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.getMessage(), response.getBody().message());
+        assertEquals(AuthErrorCode.AUTH_INVALID_REQUEST_BODY.getField(), response.getBody().field());
+    }
+
+    private record TestAuthRequest(String loginId) {
+    }
+
+    private static final class TestAuthController {
+
+        @SuppressWarnings("unused")
+        void test(TestAuthRequest request) {
+        }
     }
 
     private static final class TestHttpInputMessage implements HttpInputMessage {

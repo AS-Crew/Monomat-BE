@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.auth.exception;
 
 import io.github.ascrew.monomatbe.domain.auth.dto.AuthErrorResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -22,6 +23,7 @@ import java.util.List;
  * - 로비/맵/신고 등 다른 도메인의 기존 에러 응답 포맷에 영향을 주지 않는다.
  * - #128 범위에서는 인증 API의 에러 응답만 code/message/field 포맷으로 표준화한다.
  */
+@Slf4j
 @RestControllerAdvice(basePackages = AuthExceptionHandler.AUTH_BASE_PACKAGE)
 public class AuthExceptionHandler {
 
@@ -51,6 +53,10 @@ public class AuthExceptionHandler {
      * 1. 빈 값(null, blank)은 REQUIRED 계열로 처리
      * 2. 로그인 ID/비밀번호의 순수 공백 포함은 CONTAINS_WHITESPACE로 처리
      * 3. 그 외에는 DTO annotation message에 지정된 AuthErrorCode를 사용
+     *
+     * [주의]
+     * DTO annotation message가 AuthErrorCode enum 이름과 일치하지 않으면
+     * 5xx가 아니라 AUTH_INVALID_REQUEST_BODY(400)로 fallback하고 warn 로그를 남긴다.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<AuthErrorResponse> handleValidationException(
@@ -101,18 +107,20 @@ public class AuthExceptionHandler {
 
     private AuthErrorCode resolveAuthErrorCode(List<FieldError> fieldErrors) {
         if (fieldErrors == null || fieldErrors.isEmpty()) {
-            return AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+            log.warn("Auth validation failed but field errors are empty");
+            return AuthErrorCode.AUTH_INVALID_REQUEST_BODY;
         }
 
         return fieldErrors.stream()
                 .map(this::resolveAuthErrorCode)
                 .min(AuthValidationErrorPriority::compare)
-                .orElse(AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE);
+                .orElse(AuthErrorCode.AUTH_INVALID_REQUEST_BODY);
     }
 
     private AuthErrorCode resolveAuthErrorCode(FieldError fieldError) {
         if (fieldError == null) {
-            return AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+            log.warn("Auth validation field error is null");
+            return AuthErrorCode.AUTH_INVALID_REQUEST_BODY;
         }
 
         String field = fieldError.getField();
@@ -126,7 +134,23 @@ public class AuthExceptionHandler {
             return resolveWhitespaceErrorCode(field);
         }
 
-        return AuthErrorCode.fromCode(fieldError.getDefaultMessage());
+        return resolveDefinedAuthErrorCode(fieldError);
+    }
+
+    private AuthErrorCode resolveDefinedAuthErrorCode(FieldError fieldError) {
+        String rawCode = fieldError.getDefaultMessage();
+        AuthErrorCode errorCode = AuthErrorCode.fromCode(rawCode);
+
+        if (errorCode == AuthErrorCode.AUTH_INVALID_REQUEST_BODY) {
+            log.warn(
+                    "Unknown auth validation error code - field: {}, rejectedValue: {}, defaultMessage: {}",
+                    fieldError.getField(),
+                    fieldError.getRejectedValue(),
+                    rawCode
+            );
+        }
+
+        return errorCode;
     }
 
     private boolean isBlankValue(Object rejectedValue) {
@@ -176,7 +200,10 @@ public class AuthExceptionHandler {
             case FIELD_PASSWORD -> AuthErrorCode.AUTH_PASSWORD_REQUIRED;
             case FIELD_NICKNAME -> AuthErrorCode.AUTH_NICKNAME_REQUIRED;
             case FIELD_REFRESH_TOKEN -> AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN;
-            default -> AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+            default -> {
+                log.warn("Unknown required auth field - field: {}", field);
+                yield AuthErrorCode.AUTH_INVALID_REQUEST_BODY;
+            }
         };
     }
 
@@ -184,7 +211,10 @@ public class AuthExceptionHandler {
         return switch (field) {
             case FIELD_LOGIN_ID -> AuthErrorCode.AUTH_LOGIN_ID_CONTAINS_WHITESPACE;
             case FIELD_PASSWORD -> AuthErrorCode.AUTH_PASSWORD_CONTAINS_WHITESPACE;
-            default -> AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+            default -> {
+                log.warn("Unknown whitespace auth field - field: {}", field);
+                yield AuthErrorCode.AUTH_INVALID_REQUEST_BODY;
+            }
         };
     }
 
@@ -215,6 +245,8 @@ public class AuthExceptionHandler {
                      AUTH_NICKNAME_INVALID_LENGTH -> 3;
 
                 case AUTH_LOGIN_ID_INVALID_FORMAT -> 4;
+
+                case AUTH_INVALID_REQUEST_BODY -> 90;
 
                 default -> 100;
             };

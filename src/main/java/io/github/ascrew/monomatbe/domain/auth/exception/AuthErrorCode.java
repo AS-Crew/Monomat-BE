@@ -5,10 +5,10 @@ import org.springframework.http.HttpStatus;
 import java.util.Arrays;
 
 /**
- * 인증 도메인 전용 에러 코드.
+ * 인증 도메인 전용 에러 코드
  *
  * [설계 의도]
- * - FE는 message 문자열이 아니라 code와 field를 기준으로 에러 UI를 제어한다.
+ * - 프론트엔드는 message 문자열이 아니라 code와 field를 기준으로 에러 UI를 제어한다.
  * - 사용자 표시 메시지는 서버에서 관리하되, FE 분기 기준은 안정적인 code 값으로 고정한다.
  * - field가 null인 에러는 특정 입력 필드가 아니라 인증/세션 전체 상태와 관련된 에러다.
  */
@@ -178,17 +178,18 @@ public enum AuthErrorCode {
 
     public static AuthErrorCode fromCode(String code) {
         if (code == null || code.isBlank()) {
-            return AUTH_TEMPORARY_UNAVAILABLE;
+            return AUTH_INVALID_REQUEST_BODY;
         }
 
         return Arrays.stream(values())
                 .filter(errorCode -> errorCode.name().equals(code))
                 .findFirst()
-                .orElse(AUTH_TEMPORARY_UNAVAILABLE);
+                .orElse(AUTH_INVALID_REQUEST_BODY);
     }
 
     /**
      * 인증 API field 이름 상수
+     *
      * DTO field 이름과 프론트엔드 form field 이름을 동일하게 유지하기 위해 문자열을 한 곳에서만 관리한다.
      */
     private static final class AuthErrorFields {

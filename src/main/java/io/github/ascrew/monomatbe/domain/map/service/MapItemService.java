@@ -3,6 +3,7 @@ package io.github.ascrew.monomatbe.domain.map.service;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapItemResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.ReorderMapItemsRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.support.HintTextGenerator;
@@ -127,6 +128,14 @@ public class MapItemService {
         validateRegisteredPrincipal(principal);
 
         persistenceService.delete(mapId, itemId, principal.userId());
+
+        mapCacheEvictor.evictPublicMapCaches(mapId);
+    }
+
+    public void reorderMapItems(Long mapId, ReorderMapItemsRequest request, CustomPrincipal principal) {
+        validateRegisteredPrincipal(principal);
+
+        persistenceService.reorder(mapId, principal.userId(), request.itemIds());
 
         mapCacheEvictor.evictPublicMapCaches(mapId);
     }

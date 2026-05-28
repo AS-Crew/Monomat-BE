@@ -4,6 +4,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.ReorderMapItemsRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
@@ -163,6 +164,30 @@ class MapItemServiceTest {
 
         assertThat(response).hasSize(1);
         assertThat(response.get(0).id()).isEqualTo(50L);
+    }
+
+    @Test
+    void reorderMapItems_success_callsPersistenceThenEvictsCache() {
+        ReorderMapItemsRequest request = new ReorderMapItemsRequest(List.of(3L, 1L, 2L));
+
+        mapItemService.reorderMapItems(1L, request, principal(10L));
+
+        InOrder inOrder = inOrder(persistenceService, mapCacheEvictor);
+        inOrder.verify(persistenceService).reorder(1L, 10L, List.of(3L, 1L, 2L));
+        inOrder.verify(mapCacheEvictor).evictPublicMapCaches(1L);
+    }
+
+    @Test
+    void reorderMapItems_guestPrincipal_throwsForbiddenBeforePersistence() {
+        ReorderMapItemsRequest request = new ReorderMapItemsRequest(List.of(1L, 2L));
+        CustomPrincipal guest = new CustomPrincipal(10L, "u-10", UserType.GUEST);
+
+        assertThatThrownBy(() -> mapItemService.reorderMapItems(1L, request, guest))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("정식 회원만 맵 문제를 관리할 수 있습니다.");
+
+        verify(persistenceService, never()).reorder(any(), any(), any());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
     }
 
     private User owner(Long id) {

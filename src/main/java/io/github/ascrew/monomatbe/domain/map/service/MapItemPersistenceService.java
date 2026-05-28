@@ -12,16 +12,26 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class MapItemPersistenceService {
+
+    private static final int TEMP_ORDER_OFFSET = 10_000;
 
     private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 문제를 관리할 수 있습니다.";
     private static final String ERROR_MAP_ITEM_NOT_FOUND = "문제를 찾을 수 없습니다.";
     private static final String ERROR_DUPLICATE_ORDER = "이미 사용 중인 문제 순서입니다.";
+    private static final String ERROR_DUPLICATE_ITEM_ID = "중복된 문제 ID가 있습니다.";
+    private static final String ERROR_MISSING_ITEMS = "모든 문제의 순서를 지정해야 합니다.";
+    private static final String ERROR_INVALID_ITEM_ID = "유효하지 않은 문제 ID가 포함되어 있습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
@@ -116,6 +126,28 @@ public class MapItemPersistenceService {
     }
 
     @Transactional
+    public void reorder(Long mapId, Long ownerId, List<Long> orderedItemIds) {
+        getOwnedMapOrThrow(mapId, ownerId);
+
+        List<MapItem> activeItems = mapItemJpaRepository
+                .findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId);
+
+        validateReorderRequest(activeItems, orderedItemIds);
+
+        // Phase 1: 임시 고유값으로 일괄 변경 (UNIQUE(map_id, active_order_num) 충돌 방지)
+        mapItemJpaRepository.setTemporaryOrderNums(mapId, TEMP_ORDER_OFFSET);
+
+        // Phase 2: L1 캐시 클리어 후 재조회, 최종 orderNum 할당
+        Map<Long, MapItem> itemById = mapItemJpaRepository
+                .findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId)
+                .stream().collect(Collectors.toMap(MapItem::getId, Function.identity()));
+
+        for (int i = 0; i < orderedItemIds.size(); i++) {
+            itemById.get(orderedItemIds.get(i)).reorder(i + 1);
+        }
+    }
+
+    @Transactional
     public void delete(Long mapId, Long itemId, Long ownerId) {
         QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
 
@@ -161,6 +193,22 @@ public class MapItemPersistenceService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
         }
         return quizMap;
+    }
+
+    private void validateReorderRequest(List<MapItem> activeItems, List<Long> orderedItemIds) {
+        Set<Long> deduplicated = new HashSet<>(orderedItemIds);
+        if (deduplicated.size() != orderedItemIds.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_DUPLICATE_ITEM_ID);
+        }
+        if (orderedItemIds.size() != activeItems.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_MISSING_ITEMS);
+        }
+        Set<Long> activeIds = activeItems.stream().map(MapItem::getId).collect(Collectors.toSet());
+        for (Long id : orderedItemIds) {
+            if (!activeIds.contains(id)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_ITEM_ID);
+            }
+        }
     }
 
     private void validateOrderDuplicatedOnCreate(Long mapId, Integer orderNum) {

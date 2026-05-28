@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapItemResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.ReorderMapItemsRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.service.MapItemService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -63,6 +64,18 @@ public class MapItemController {
             @AuthenticationPrincipal CustomPrincipal principal
     ) {
         return ResponseEntity.ok(mapItemService.updateMapItem(mapId, itemId, request, principal));
+    }
+
+    @Operation(summary = "맵 문제 순서 재정렬", description = "맵 소유자만 변경할 수 있으며 활성 문제 전체의 ID를 원하는 순서대로 전달해야 합니다.")
+    @PutMapping("/order")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> reorderMapItems(
+            @PathVariable Long mapId,
+            @Valid @RequestBody ReorderMapItemsRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        mapItemService.reorderMapItems(mapId, request, principal);
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "맵 문제 삭제", description = "맵 소유자만 삭제할 수 있으며 soft delete 처리됩니다.")

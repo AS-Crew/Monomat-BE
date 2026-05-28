@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.auth.service;
 
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -24,10 +25,16 @@ import java.util.stream.Collectors;
  * - userIdentifier는 로그인/세션 식별자 성격이 강하므로 관리자 권한 기준으로 부적절하다.
  * - users.id는 계정 기준 식별자이므로 임시 관리자 allow-list 기준으로 더 안정적이다.
  *
+ * [운영 안전성]
+ * - 관리자 allow-list는 부가 기능 설정이다.
+ * - 환경변수 오타 때문에 전체 애플리케이션이 부팅 실패하면 안 된다.
+ * - 잘못된 값은 warn 로그만 남기고 무시한다.
+ *
  * [확장 방향]
  * - 추후 users 테이블 또는 별도 role 테이블에 관리자 권한이 추가되면
  *   이 컴포넌트 내부 구현만 ROLE_ADMIN 검증으로 교체한다.
  */
+@Slf4j
 @Component
 public class AdminAccessValidator {
 
@@ -62,18 +69,28 @@ public class AdminAccessValidator {
         return Arrays.stream(value.split(","))
                 .map(String::trim)
                 .filter(userId -> !userId.isBlank())
-                .map(this::parseUserId)
+                .map(this::parseUserIdOrNull)
+                .filter(userId -> userId != null)
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    private Long parseUserId(String value) {
+    /**
+     * 관리자 userId 설정값을 Long으로 변환한다.
+     *
+     * [정책]
+     * - 숫자가 아닌 값은 전체 서버 부팅을 막지 않는다.
+     * - 잘못된 값은 warn 로그만 남기고 무시한다.
+     * - 결과적으로 잘못 설정된 관리자 ID는 관리자 API에 접근할 수 없다.
+     */
+    private Long parseUserIdOrNull(String value) {
         try {
             return Long.parseLong(value);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(
-                    "관리자 userId 설정은 숫자만 사용할 수 있습니다. value=" + value,
-                    e
+            log.warn(
+                    "관리자 userId 설정값이 숫자가 아니어서 무시합니다. value={}",
+                    value
             );
+            return null;
         }
     }
 }

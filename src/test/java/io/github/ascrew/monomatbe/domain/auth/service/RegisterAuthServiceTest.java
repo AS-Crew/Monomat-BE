@@ -180,4 +180,13 @@ class RegisterAuthServiceTest {
 
         assertEquals(AuthErrorCode.AUTH_NICKNAME_INVALID_LENGTH, exception.getErrorCode());
     }
+
+    @Test
+    void register_nullLoginId_throwsLoginIdRequiredError() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                registerAuthService.register(null, "password123", uniqueNickname())
+        );
+
+        assertEquals(AuthErrorCode.AUTH_LOGIN_ID_REQUIRED, exception.getErrorCode());
+    }
 }

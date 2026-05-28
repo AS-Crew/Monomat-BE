@@ -30,13 +30,13 @@ public enum AuthErrorCode {
 
     AUTH_LOGIN_ID_REQUIRED(
             HttpStatus.BAD_REQUEST,
-            "로그인 ID는 비어 있을 수 없습니다.",
+            "로그인 ID를 입력해주세요.",
             AuthErrorFields.LOGIN_ID
     ),
 
     AUTH_LOGIN_ID_INVALID_LENGTH(
             HttpStatus.BAD_REQUEST,
-            "로그인 ID는 4자 이상 50자 이하여야 합니다.",
+            "로그인 ID는 4자 이상 50자 이하로 입력해주세요.",
             AuthErrorFields.LOGIN_ID
     ),
 

@@ -317,7 +317,7 @@ class MapItemPersistenceServiceTest {
         // [3, 1, 2] 순서로 재정렬 요청
         persistenceService.reorder(1L, 10L, List.of(3L, 1L, 2L));
 
-        verify(mapItemJpaRepository).setTemporaryOrderNums(eq(1L), anyInt());
+        verify(mapItemJpaRepository).setTemporaryOrderNums(eq(1L));
         assertThat(item3.getOrderNum()).isEqualTo(1);
         assertThat(item1.getOrderNum()).isEqualTo(2);
         assertThat(item2.getOrderNum()).isEqualTo(3);
@@ -350,7 +350,7 @@ class MapItemPersistenceServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("본인 소유의 맵만 문제를 관리할 수 있습니다.");
 
-        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any(), anyInt());
+        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any());
     }
 
     @Test
@@ -367,7 +367,7 @@ class MapItemPersistenceServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("중복된 문제 ID가 있습니다.");
 
-        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any(), anyInt());
+        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any());
     }
 
     @Test
@@ -386,7 +386,7 @@ class MapItemPersistenceServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("모든 문제의 순서를 지정해야 합니다.");
 
-        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any(), anyInt());
+        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any());
     }
 
     @Test
@@ -404,7 +404,7 @@ class MapItemPersistenceServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("유효하지 않은 문제 ID가 포함되어 있습니다.");
 
-        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any(), anyInt());
+        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(any());
     }
 
     private MapItem mapItem(Long id, QuizMap quizMap, int orderNum) {

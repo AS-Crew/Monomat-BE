@@ -29,8 +29,8 @@ public interface MapItemJpaRepository extends JpaRepository<MapItem, Long> {
     Long sumPlayTimeByMapId(@Param("mapId") Long mapId);
 
     // 순서 재배치 시 UNIQUE(map_id, active_order_num) 제약 충돌을 피하기 위해
-    // 1단계에서 임시 고유값(id + offset)으로 일괄 변경한다.
+    // 1단계에서 -id(음수)로 일괄 변경한다. 최종 orderNum은 양수(1~N)이므로 겹칠 수 없다.
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE MapItem mi SET mi.orderNum = mi.id + :offset WHERE mi.map.id = :mapId AND mi.isDeleted = false")
-    void setTemporaryOrderNums(@Param("mapId") Long mapId, @Param("offset") int offset);
+    @Query("UPDATE MapItem mi SET mi.orderNum = -mi.id WHERE mi.map.id = :mapId AND mi.isDeleted = false")
+    void setTemporaryOrderNums(@Param("mapId") Long mapId);
 }

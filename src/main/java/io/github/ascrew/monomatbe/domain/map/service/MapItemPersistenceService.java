@@ -23,8 +23,6 @@ import java.util.stream.Collectors;
 @Service
 public class MapItemPersistenceService {
 
-    private static final int TEMP_ORDER_OFFSET = 10_000;
-
     private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 문제를 관리할 수 있습니다.";
     private static final String ERROR_MAP_ITEM_NOT_FOUND = "문제를 찾을 수 없습니다.";
@@ -134,8 +132,8 @@ public class MapItemPersistenceService {
 
         validateReorderRequest(activeItems, orderedItemIds);
 
-        // Phase 1: 임시 고유값으로 일괄 변경 (UNIQUE(map_id, active_order_num) 충돌 방지)
-        mapItemJpaRepository.setTemporaryOrderNums(mapId, TEMP_ORDER_OFFSET);
+        // Phase 1: -id(음수)로 일괄 변경 (최종값 1~N과 겹치지 않아 UNIQUE 충돌 없음)
+        mapItemJpaRepository.setTemporaryOrderNums(mapId);
 
         // Phase 2: L1 캐시 클리어 후 재조회, 최종 orderNum 할당
         Map<Long, MapItem> itemById = mapItemJpaRepository

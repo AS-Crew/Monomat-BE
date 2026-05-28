@@ -6,6 +6,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ReorderMapItemsRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import org.springframework.dao.DataIntegrityViolationException;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
@@ -175,6 +176,19 @@ class MapItemServiceTest {
         InOrder inOrder = inOrder(persistenceService, mapCacheEvictor);
         inOrder.verify(persistenceService).reorder(1L, 10L, List.of(3L, 1L, 2L));
         inOrder.verify(mapCacheEvictor).evictPublicMapCaches(1L);
+    }
+
+    @Test
+    void reorderMapItems_dataIntegrityViolation_throwsConflict() {
+        ReorderMapItemsRequest request = new ReorderMapItemsRequest(List.of(1L, 2L));
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("unique"))
+                .when(persistenceService).reorder(1L, 10L, List.of(1L, 2L));
+
+        assertThatThrownBy(() -> mapItemService.reorderMapItems(1L, request, principal(10L)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("이미 사용 중인 문제 순서입니다.");
+
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
     }
 
     @Test

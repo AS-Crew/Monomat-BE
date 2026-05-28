@@ -147,6 +147,7 @@ public class MapItem {
 
     public void reorder(int newOrderNum) {
         this.orderNum = newOrderNum;
+        this.updatedAt = LocalDateTime.now();
     }
 
     public void softDelete() {

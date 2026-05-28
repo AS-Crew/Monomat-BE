@@ -310,10 +310,9 @@ class MapItemPersistenceServiceTest {
         MapItem item1 = mapItem(1L, quizMap, 1);
         MapItem item2 = mapItem(2L, quizMap, 2);
         MapItem item3 = mapItem(3L, quizMap, 3);
-        // 첫 번째 조회: active items 반환
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item1, item2, item3))  // Phase 1 전 조회
-                .thenReturn(List.of(item1, item2, item3)); // Phase 2 재조회
+                .thenReturn(List.of(item1, item2, item3))
+                .thenReturn(List.of(item1, item2, item3));
 
         // [3, 1, 2] 순서로 재정렬 요청
         persistenceService.reorder(1L, 10L, List.of(3L, 1L, 2L));
@@ -322,6 +321,24 @@ class MapItemPersistenceServiceTest {
         assertThat(item3.getOrderNum()).isEqualTo(1);
         assertThat(item1.getOrderNum()).isEqualTo(2);
         assertThat(item2.getOrderNum()).isEqualTo(3);
+    }
+
+    @Test
+    void reorder_success_updatesUpdatedAt() {
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+
+        java.time.LocalDateTime past = java.time.LocalDateTime.now().minusSeconds(10);
+        MapItem item1 = mapItemWithUpdatedAt(1L, quizMap, 1, past);
+        MapItem item2 = mapItemWithUpdatedAt(2L, quizMap, 2, past);
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
+                .thenReturn(List.of(item1, item2))
+                .thenReturn(List.of(item1, item2));
+
+        persistenceService.reorder(1L, 10L, List.of(2L, 1L));
+
+        assertThat(item1.getUpdatedAt()).isAfter(past);
+        assertThat(item2.getUpdatedAt()).isAfter(past);
     }
 
     @Test
@@ -391,6 +408,10 @@ class MapItemPersistenceServiceTest {
     }
 
     private MapItem mapItem(Long id, QuizMap quizMap, int orderNum) {
+        return mapItemWithUpdatedAt(id, quizMap, orderNum, java.time.LocalDateTime.now());
+    }
+
+    private MapItem mapItemWithUpdatedAt(Long id, QuizMap quizMap, int orderNum, java.time.LocalDateTime updatedAt) {
         return MapItem.builder()
                 .id(id)
                 .map(quizMap)
@@ -407,6 +428,7 @@ class MapItemPersistenceServiceTest {
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
+                .updatedAt(updatedAt)
                 .build();
     }
 

@@ -135,7 +135,11 @@ public class MapItemService {
     public void reorderMapItems(Long mapId, ReorderMapItemsRequest request, CustomPrincipal principal) {
         validateRegisteredPrincipal(principal);
 
-        persistenceService.reorder(mapId, principal.userId(), request.itemIds());
+        try {
+            persistenceService.reorder(mapId, principal.userId(), request.itemIds());
+        } catch (DataIntegrityViolationException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ORDER, e);
+        }
 
         mapCacheEvictor.evictPublicMapCaches(mapId);
     }

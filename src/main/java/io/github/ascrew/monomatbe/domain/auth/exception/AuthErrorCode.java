@@ -92,7 +92,7 @@ public enum AuthErrorCode {
 
     AUTH_NICKNAME_INVALID_LENGTH(
             HttpStatus.BAD_REQUEST,
-            "닉네임은 2자 이상 12자 이하여야 합니다.",
+            "닉네임은 2자 이상 12자 이하로 입력해주세요.",
             AuthErrorFields.NICKNAME
     ),
 
@@ -104,7 +104,7 @@ public enum AuthErrorCode {
 
     AUTH_NICKNAME_FORBIDDEN_WORD(
             HttpStatus.BAD_REQUEST,
-            "사용할 수 없는 닉네임입니다.",
+            "금칙어가 포함된 닉네임은 사용할 수 없습니다.",
             AuthErrorFields.NICKNAME
     ),
 

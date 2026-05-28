@@ -56,6 +56,7 @@ public class GuestAuthService {
     private final StringRedisTemplate redisTemplate;
     private final JwtTokenProvider jwtTokenProvider;
     private final UserSessionLifecycleService userSessionLifecycleService;
+    private final NicknamePolicyValidator nicknamePolicyValidator;
 
     /**
      * 게스트 로그인 메인 플로우
@@ -67,6 +68,7 @@ public class GuestAuthService {
     @Transactional
     public GuestLoginResponse loginAsGuest(String rawNickname, String ipAddress, String userAgent) {
         String nickname = normalizeNickname(rawNickname);
+        nicknamePolicyValidator.validate(nickname);
         validateNicknameAvailability(nickname);
 
         LocalDateTime now = LocalDateTime.now();

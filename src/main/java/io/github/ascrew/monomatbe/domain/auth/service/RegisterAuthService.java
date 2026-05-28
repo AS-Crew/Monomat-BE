@@ -38,6 +38,7 @@ public class RegisterAuthService {
     private final UserRepository userRepository;
     private final UserCredentialRepository userCredentialRepository;
     private final PasswordEncoder passwordEncoder;
+    private final NicknamePolicyValidator nicknamePolicyValidator;
 
     @Transactional
     public RegisterResponse register(String rawLoginId, String rawPassword, String rawNickname) {
@@ -45,6 +46,7 @@ public class RegisterAuthService {
         String password = normalizePassword(rawPassword);
         String nickname = normalizeNickname(rawNickname);
 
+        nicknamePolicyValidator.validate(nickname);
         validateDuplicate(loginId, nickname);
 
         User savedUser;

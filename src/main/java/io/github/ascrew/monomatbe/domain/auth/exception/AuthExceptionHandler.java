@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
-import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -65,23 +64,6 @@ public class AuthExceptionHandler {
         AuthErrorCode errorCode = resolveAuthErrorCode(
                 exception.getBindingResult().getFieldErrors()
         );
-
-        return ResponseEntity
-                .status(errorCode.getHttpStatus())
-                .body(AuthErrorResponse.from(errorCode));
-    }
-
-    /**
-     * Authorization 헤더 누락을 인증 API 표준 응답으로 변환한다.
-     *
-     * 로그아웃처럼 Authorization 헤더가 필요한 API에서
-     * 컨트롤러 진입 전에 Spring MVC가 MissingRequestHeaderException을 던지는 경우를 방어한다.
-     */
-    @ExceptionHandler(MissingRequestHeaderException.class)
-    public ResponseEntity<AuthErrorResponse> handleMissingRequestHeaderException(
-            MissingRequestHeaderException exception
-    ) {
-        AuthErrorCode errorCode = AuthErrorCode.AUTH_INVALID_AUTHORIZATION;
 
         return ResponseEntity
                 .status(errorCode.getHttpStatus())

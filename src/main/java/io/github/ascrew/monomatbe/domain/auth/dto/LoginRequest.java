@@ -1,21 +1,22 @@
 package io.github.ascrew.monomatbe.domain.auth.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 
 /**
- * 자체 로그인 요청 DTO.
+ * 자체 로그인 요청 DTO
+ *
+ * [Validation message 정책]
+ * message에는 사용자 표시 문구가 아니라 AuthErrorCode enum 이름을 넣는다.
+ *
+ * [주의]
+ * 로그인 API에서는 기존 회원 호환성을 위해 loginId 포맷 검증을 수행하지 않는다.
+ * 포맷이 신규 정책과 다르더라도 DB 조회 후 인증 실패 시 AUTH_INVALID_CREDENTIALS로 처리한다.
  */
 public record LoginRequest(
-        @NotBlank(message = "로그인 ID는 비어 있을 수 없습니다.")
-        @Size(max = 50, message = "로그인 ID는 50자를 초과할 수 없습니다.")
-        @Pattern(regexp = "^\\S+$", message = "로그인 ID에는 공백을 포함할 수 없습니다.")
+        @NotBlank(message = "AUTH_LOGIN_ID_REQUIRED")
         String loginId,
 
-        @NotBlank(message = "비밀번호는 비어 있을 수 없습니다.")
-        @Size(min = 8, max = 100, message = "비밀번호는 8자 이상 100자 이하여야 합니다.")
-        @Pattern(regexp = "^\\S+$", message = "비밀번호에는 공백을 포함할 수 없습니다.")
+        @NotBlank(message = "AUTH_PASSWORD_REQUIRED")
         String password
 ) {
 }

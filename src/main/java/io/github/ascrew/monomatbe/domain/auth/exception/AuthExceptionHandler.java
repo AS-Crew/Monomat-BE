@@ -1,9 +1,6 @@
-package io.github.ascrew.monomatbe.global.exception;
+package io.github.ascrew.monomatbe.domain.auth.exception;
 
-import io.github.ascrew.monomatbe.domain.auth.controller.AuthController;
 import io.github.ascrew.monomatbe.domain.auth.dto.AuthErrorResponse;
-import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
-import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -15,17 +12,20 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.List;
 
 /**
- * 인증 API 전용 예외 핸들러.
+ * 인증 API 전용 예외 핸들러
  *
  * [적용 범위]
- * - AuthController에서 발생한 예외만 처리한다.
+ * - io.github.ascrew.monomatbe.domain.auth 패키지 하위 컨트롤러에서 발생한 예외만 처리한다.
  *
  * [설계 의도]
+ * - global 패키지가 domain.auth를 직접 의존하지 않도록 인증 도메인 내부에 위치시킨다.
  * - 로비/맵/신고 등 다른 도메인의 기존 에러 응답 포맷에 영향을 주지 않는다.
  * - #128 범위에서는 인증 API의 에러 응답만 code/message/field 포맷으로 표준화한다.
  */
-@RestControllerAdvice(assignableTypes = AuthController.class)
+@RestControllerAdvice(basePackages = AuthExceptionHandler.AUTH_BASE_PACKAGE)
 public class AuthExceptionHandler {
+
+    static final String AUTH_BASE_PACKAGE = "io.github.ascrew.monomatbe.domain.auth";
 
     private static final String FIELD_LOGIN_ID = "loginId";
     private static final String FIELD_PASSWORD = "password";

@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 닉네임 금칙어 관리 서비스
+ * 닉네임 금칙어 관리 서비스.
  *
  * [책임]
  * - 금칙어 목록 조회
@@ -120,24 +120,27 @@ public class ForbiddenNicknameService {
     }
 
     private List<String> getNormalizedForbiddenWords() {
+        List<String> cachedWords = getNormalizedForbiddenWordsSafely();
+
+        if (cachedWords != null) {
+            return cachedWords;
+        }
+
+        List<String> dbWords = forbiddenNicknameWordRepository.findAllNormalizedWords();
+        cacheNormalizedForbiddenWordsSafely(dbWords);
+
+        return dbWords;
+    }
+
+    private List<String> getNormalizedForbiddenWordsSafely() {
         try {
-            List<String> cachedWords = getNormalizedForbiddenWordsFromCache();
-
-            if (cachedWords != null) {
-                return cachedWords;
-            }
-
-            List<String> dbWords = forbiddenNicknameWordRepository.findAllNormalizedWords();
-            cacheNormalizedForbiddenWords(dbWords);
-
-            return dbWords;
+            return getNormalizedForbiddenWordsFromCache();
         } catch (RuntimeException e) {
             log.warn(
-                    "닉네임 금칙어 Redis 캐시 조회/저장 실패 - DB 직접 조회로 대체합니다.",
+                    "닉네임 금칙어 Redis 캐시 조회 실패 - DB 직접 조회로 대체합니다.",
                     e
             );
-
-            return forbiddenNicknameWordRepository.findAllNormalizedWords();
+            return null;
         }
     }
 
@@ -151,11 +154,26 @@ public class ForbiddenNicknameService {
         Set<String> cachedWords = stringRedisTemplate.opsForSet()
                 .members(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
 
+        /*
+         * loaded marker는 있지만 Set이 비어 있으면 Redis eviction/부분 삭제 가능성이 있다.
+         * 이 경우 빈 금칙어 목록으로 신뢰하지 않고 cache miss로 판단하여 DB에서 재조회한다.
+         */
         if (cachedWords == null || cachedWords.isEmpty()) {
-            return List.of();
+            return null;
         }
 
         return List.copyOf(cachedWords);
+    }
+
+    private void cacheNormalizedForbiddenWordsSafely(List<String> normalizedWords) {
+        try {
+            cacheNormalizedForbiddenWords(normalizedWords);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "닉네임 금칙어 Redis 캐시 저장 실패 - DB 조회 결과로 검증을 계속합니다.",
+                    e
+            );
+        }
     }
 
     private void cacheNormalizedForbiddenWords(List<String> normalizedWords) {

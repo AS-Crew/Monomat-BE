@@ -260,15 +260,21 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("Redis 캐시에 loaded marker는 있지만 Set이 비어 있으면 DB를 조회하지 않고 false를 반환한다")
-    void loadedMarkerExistsButSetIsEmpty() {
+    @DisplayName("Redis loaded marker는 있지만 Set이 비어 있으면 cache miss로 보고 DB를 재조회한다")
+    void loadedMarkerExistsButSetIsEmptyReloadsFromDatabase() {
         when(stringRedisTemplate.hasKey(CACHE_LOADED_KEY)).thenReturn(true);
         when(setOperations.members(CACHE_KEY)).thenReturn(Set.of());
+        when(forbiddenNicknameWordRepository.findAllNormalizedWords())
+                .thenReturn(List.of("관리자"));
 
-        boolean result = forbiddenNicknameService.containsForbiddenWord("정상닉네임");
+        boolean result = forbiddenNicknameService.containsForbiddenWord("최고관리자");
 
-        assertFalse(result);
-        verify(forbiddenNicknameWordRepository, never()).findAllNormalizedWords();
+        assertTrue(result);
+        verify(forbiddenNicknameWordRepository).findAllNormalizedWords();
+        verify(stringRedisTemplate).delete(CACHE_KEY);
+        verify(setOperations).add(eq(CACHE_KEY), eq("관리자"));
+        verify(stringRedisTemplate).expire(eq(CACHE_KEY), any(Duration.class));
+        verify(valueOperations).set(eq(CACHE_LOADED_KEY), eq("1"), any(Duration.class));
     }
 
     @Test
@@ -286,8 +292,8 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("Redis 캐시 저장 실패 시 DB 조회 결과로 금칙어 포함 여부를 판단한다")
-    void containsForbiddenWordFallbackToDatabaseWhenRedisWriteFails() {
+    @DisplayName("Redis 캐시 저장 실패 시 DB 조회 결과를 재사용하고 DB를 중복 조회하지 않는다")
+    void containsForbiddenWordUsesDbResultWhenRedisWriteFails() {
         when(stringRedisTemplate.hasKey(CACHE_LOADED_KEY)).thenReturn(false);
         when(forbiddenNicknameWordRepository.findAllNormalizedWords())
                 .thenReturn(List.of("관리자"));
@@ -297,14 +303,7 @@ class ForbiddenNicknameServiceTest {
         boolean result = forbiddenNicknameService.containsForbiddenWord("최고관리자");
 
         assertTrue(result);
-
-        /*
-         * 현재 ForbiddenNicknameService는 Redis read/write 전체를 try-catch로 감싸고,
-         * 예외 발생 시 DB 직접 조회를 한 번 더 수행한다.
-         * 따라서 findAllNormalizedWords()는 캐시 적재 시도 1회 + fallback 1회로 총 2회 호출된다.
-         */
-        verify(forbiddenNicknameWordRepository, org.mockito.Mockito.times(2))
-                .findAllNormalizedWords();
+        verify(forbiddenNicknameWordRepository).findAllNormalizedWords();
     }
 
     @Test

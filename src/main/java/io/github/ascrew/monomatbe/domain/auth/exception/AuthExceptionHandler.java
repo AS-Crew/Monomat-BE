@@ -51,12 +51,6 @@ public class AuthExceptionHandler {
      * 1. 빈 값(null, blank)은 REQUIRED 계열로 처리
      * 2. 로그인 ID/비밀번호의 순수 공백 포함은 CONTAINS_WHITESPACE로 처리
      * 3. 그 외에는 DTO annotation message에 지정된 AuthErrorCode를 사용
-     *
-     * [이유]
-     * 하나의 값이 여러 제약을 동시에 위반할 수 있다.
-     * 예: loginId="" 는 @NotBlank와 @Size를 동시에 위반한다.
-     * Spring Validation의 FieldError 순서에 의존하면 REQUIRED 대신 INVALID_LENGTH가 내려갈 수 있으므로,
-     * 인증 API에서는 서버가 명시적으로 우선순위를 결정한다.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<AuthErrorResponse> handleValidationException(
@@ -91,14 +85,14 @@ public class AuthExceptionHandler {
     /**
      * JSON body 파싱 실패를 인증 API 표준 응답으로 변환한다.
      *
-     * 현재 #128 권장 에러 코드에 요청 본문 형식 오류 전용 코드가 없으므로
-     * 기존 AUTH_TEMPORARY_UNAVAILABLE을 사용한다.
+     * 잘못된 JSON은 서버 장애가 아니라 클라이언트 요청 오류이므로
+     * 503이 아니라 400 BAD_REQUEST를 반환한다.
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<AuthErrorResponse> handleHttpMessageNotReadableException(
             HttpMessageNotReadableException exception
     ) {
-        AuthErrorCode errorCode = AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE;
+        AuthErrorCode errorCode = AuthErrorCode.AUTH_INVALID_REQUEST_BODY;
 
         return ResponseEntity
                 .status(errorCode.getHttpStatus())
@@ -195,7 +189,7 @@ public class AuthExceptionHandler {
     }
 
     /**
-     * 여러 FieldError가 동시에 발생했을 때 사용자에게 가장 정확한 에러를 먼저 반환하기 위한 우선순위.
+     * 여러 FieldError가 동시에 발생했을 때 사용자에게 가장 정확한 에러를 먼저 반환하기 위한 우선순위
      */
     private static final class AuthValidationErrorPriority {
 

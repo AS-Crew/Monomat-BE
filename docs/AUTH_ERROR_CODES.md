@@ -94,6 +94,7 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 | `AUTH_INVALID_REFRESH_TOKEN` | Refresh Token이 유효하지 않습니다. | `null` | 401 |
 | `AUTH_SESSION_EXPIRED` | 세션이 만료되었습니다. | `null` | 401 |
 | `AUTH_TEMPORARY_UNAVAILABLE` | 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요. | `null` | 503 |
+| `AUTH_INVALID_REQUEST_BODY` | 요청 본문 형식이 올바르지 않습니다. | `null` | 400 |
 
 ---
 
@@ -159,6 +160,14 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 | Authorization 헤더 누락 | `AUTH_INVALID_AUTHORIZATION` |
 | Authorization 헤더 형식 오류 | `AUTH_INVALID_AUTHORIZATION` |
 | Access Token 파싱 실패 | `AUTH_INVALID_AUTHORIZATION` |
+
+---
+
+### 공통 요청 오류
+
+| 상황 | code |
+|---|---|
+| JSON body 형식 오류 | `AUTH_INVALID_REQUEST_BODY` |
 
 ---
 

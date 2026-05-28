@@ -153,13 +153,17 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("금칙어 삭제 시 DB에서 삭제하고 캐시를 무효화한다")
+    @DisplayName("금칙어 삭제 시 엔티티를 조회한 뒤 삭제하고 캐시를 무효화한다")
     void deleteForbiddenWord() {
-        when(forbiddenNicknameWordRepository.existsById(1L)).thenReturn(true);
+        ForbiddenNicknameWord forbiddenWord = ForbiddenNicknameWord.create("관리자", "관리자");
+
+        when(forbiddenNicknameWordRepository.findById(1L))
+                .thenReturn(java.util.Optional.of(forbiddenWord));
 
         forbiddenNicknameService.deleteForbiddenWord(1L);
 
-        verify(forbiddenNicknameWordRepository).deleteById(1L);
+        verify(forbiddenNicknameWordRepository).findById(1L);
+        verify(forbiddenNicknameWordRepository).delete(forbiddenWord);
         verify(forbiddenNicknameWordRepository).flush();
         verify(stringRedisTemplate).delete(List.of(CACHE_KEY, CACHE_LOADED_KEY));
     }
@@ -167,7 +171,8 @@ class ForbiddenNicknameServiceTest {
     @Test
     @DisplayName("존재하지 않는 금칙어 삭제 요청은 404를 반환한다")
     void deleteNotFoundForbiddenWord() {
-        when(forbiddenNicknameWordRepository.existsById(1L)).thenReturn(false);
+        when(forbiddenNicknameWordRepository.findById(1L))
+                .thenReturn(java.util.Optional.empty());
 
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,
@@ -175,7 +180,8 @@ class ForbiddenNicknameServiceTest {
         );
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatusCode());
-        verify(forbiddenNicknameWordRepository, never()).deleteById(any());
+        verify(forbiddenNicknameWordRepository).findById(1L);
+        verify(forbiddenNicknameWordRepository, never()).delete(any());
         verify(stringRedisTemplate, never()).delete(anyCollection());
     }
 
@@ -188,7 +194,8 @@ class ForbiddenNicknameServiceTest {
         );
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        verify(forbiddenNicknameWordRepository, never()).deleteById(any());
+        verify(forbiddenNicknameWordRepository, never()).findById(any());
+        verify(forbiddenNicknameWordRepository, never()).delete(any());
         verify(stringRedisTemplate, never()).delete(anyCollection());
     }
 
@@ -354,13 +361,17 @@ class ForbiddenNicknameServiceTest {
     @Test
     @DisplayName("금칙어 삭제 후 캐시 무효화 실패가 발생해도 삭제 요청은 실패하지 않는다")
     void deleteForbiddenWordEvenIfCacheEvictFails() {
-        when(forbiddenNicknameWordRepository.existsById(1L)).thenReturn(true);
+        ForbiddenNicknameWord forbiddenWord = ForbiddenNicknameWord.create("관리자", "관리자");
+
+        when(forbiddenNicknameWordRepository.findById(1L))
+                .thenReturn(java.util.Optional.of(forbiddenWord));
         when(stringRedisTemplate.delete(anyCollection()))
                 .thenThrow(new RedisConnectionFailureException("redis evict down"));
 
         forbiddenNicknameService.deleteForbiddenWord(1L);
 
-        verify(forbiddenNicknameWordRepository).deleteById(1L);
+        verify(forbiddenNicknameWordRepository).findById(1L);
+        verify(forbiddenNicknameWordRepository).delete(forbiddenWord);
         verify(forbiddenNicknameWordRepository).flush();
     }
 }

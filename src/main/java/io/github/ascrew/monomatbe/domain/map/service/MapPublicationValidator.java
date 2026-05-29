@@ -3,13 +3,13 @@ package io.github.ascrew.monomatbe.domain.map.service;
 import io.github.ascrew.monomatbe.domain.map.MapPublicationPolicy;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
+import io.github.ascrew.monomatbe.domain.youtube.YoutubeVideoId;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
-import java.util.regex.Pattern;
 
 @Component
 public class MapPublicationValidator {
@@ -25,9 +25,6 @@ public class MapPublicationValidator {
     private static final String ERROR_BLANK_YOUTUBE_URL = "%d번 문제의 YouTube 주소가 비어 있습니다.";
     private static final String ERROR_INVALID_VIDEO_ID = "%d번 문제의 YouTube 영상 ID가 올바르지 않습니다.";
     private static final String ERROR_BLANK_ANSWER = "%d번 문제의 정답이 비어 있습니다.";
-
-    // YoutubeValidationService.VIDEO_ID_PATTERN 과 동일한 규칙. 한쪽을 바꾸면 함께 동기화한다.
-    private static final Pattern VIDEO_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{11}$");
 
     private final MapItemJpaRepository mapItemJpaRepository;
 
@@ -79,7 +76,7 @@ public class MapPublicationValidator {
             if (youtubeUrl == null || youtubeUrl.isBlank()) {
                 return String.format(ERROR_BLANK_YOUTUBE_URL, item.getOrderNum());
             }
-            if (videoId == null || !VIDEO_ID_PATTERN.matcher(videoId).matches()) {
+            if (!YoutubeVideoId.isValid(videoId)) {
                 return String.format(ERROR_INVALID_VIDEO_ID, item.getOrderNum());
             }
             if (answer == null || answer.isBlank()) {

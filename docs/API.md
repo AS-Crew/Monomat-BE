@@ -14,189 +14,78 @@
 
 ### 인증 (Auth)
 
-#### 게스트 로그인
+인증 API는 게스트 로그인, 회원가입, 자체 로그인, 토큰 재발급, 로그아웃을 제공합니다.
 
-```http
-POST /api/auth/guest
-```
+상세 요청/응답, 에러 코드, 필드별 에러 메시지, 프론트엔드 표시 문구 매핑 기준은 별도 문서를 기준으로 관리합니다.
 
-닉네임 입력만으로 게스트 계정을 생성하고 `UUID(userIdentifier)` 기반 세션을 발급합니다.
-응답으로 Access/Refresh 토큰이 함께 반환되며, 게스트 세션 정보는 Redis에 30일 TTL로 저장됩니다.
+- [인증 API 상세 문서](./AUTH_API.md)
 
-**Request**
+#### 인증 API 목록
 
-```json
-{
-  "nickname": "게스트닉네임"
-}
-```
+| 기능 | Method | Endpoint | 인증 필요 | 성공 상태 |
+| --- | --- | --- | --- | --- |
+| 게스트 로그인 | `POST` | `/api/auth/guest` | ❌ | `200 OK` |
+| 회원가입 | `POST` | `/api/auth/register` | ❌ | `201 Created` |
+| 자체 로그인 | `POST` | `/api/auth/login` | ❌ | `200 OK` |
+| 토큰 재발급 | `POST` | `/api/auth/refresh` | ❌ | `200 OK` |
+| 로그아웃 | `POST` | `/api/auth/logout` | ✅ | `200 OK` |
 
-**Response `200 OK`**
+#### 인증 API 공통 에러 응답
 
-```json
-{
-  "userId": 1,
-  "nickname": "게스트닉네임",
-  "userType": "GUEST",
-  "userIdentifier": "f8f6aa1b-3dd8-4b20-8ec8-9f7c7e0dd0fc",
-  "accessToken": "eyJhbGciOi...",
-  "accessTokenExpiresAt": "2026-05-03T07:45:00Z",
-  "refreshToken": "eyJhbGciOi...",
-  "refreshTokenExpiresAt": "2026-06-02T07:30:00Z"
-}
-```
-
-**Error `409 CONFLICT`**
-
-* 정식 회원 닉네임과 충돌: `정식 회원이 이미 사용 중인 닉네임입니다.`
-* 기존 사용자 닉네임과 충돌: `이미 사용 중인 닉네임입니다.`
-
----
-
-#### 회원가입
-
-```http
-POST /api/auth/register
-```
-
-로그인 ID/비밀번호/닉네임으로 정식 회원 계정을 생성합니다.
-회원가입 API는 계정 생성만 수행하며 토큰 발급은 로그인 API에서 처리됩니다.
-
-**Request**
+인증 API의 표준 에러 응답 body는 다음 형식을 따릅니다.
 
 ```json
 {
-  "loginId": "member01",
-  "password": "password123",
-  "nickname": "registered-user"
+  "code": "AUTH_INVALID_CREDENTIALS",
+  "message": "로그인 ID 또는 비밀번호가 올바르지 않습니다.",
+  "field": null
 }
+````
+
+| 필드        | 타입            | 설명                                      |
+| --------- | ------------- | --------------------------------------- |
+| `code`    | string        | 프론트엔드 분기 기준이 되는 인증 에러 코드                |
+| `message` | string        | 사용자 표시용 메시지                             |
+| `field`   | string | null | 특정 입력 필드와 연결되는 경우 해당 필드명, 전역 에러면 `null` |
+
+> 현재 구현 기준 `httpStatus`는 응답 body에 포함하지 않습니다.
+> HTTP 상태는 response status line을 기준으로 판단합니다.
+
+#### 프론트엔드 에러 처리 기준
+
+프론트엔드는 인증 API 에러 처리 시 `message` 문자열에 의존하지 않습니다.
+
+에러 UI 분기 기준은 다음 순서를 따릅니다.
+
+1. HTTP Status Code
+2. `code`
+3. `field`
+4. `message`
+
+처리 기준은 다음과 같습니다.
+
+| 조건                | 처리 방식                             |
+| ----------------- | --------------------------------- |
+| `field`가 존재함      | 해당 입력 필드 하단에 메시지 표시               |
+| `field`가 `null`임  | form 상단 또는 toast/global alert로 표시 |
+| `code`를 알고 있음     | FE에서 정의한 표시 정책 우선 적용 가능           |
+| `code`를 모름        | 서버 `message`를 fallback으로 표시       |
+| HTTP Status `401` | 인증 실패 또는 세션 만료 처리                 |
+| HTTP Status `423` | 계정 잠금 안내                          |
+| HTTP Status `503` | 일시 장애 안내                          |
+
+#### 비밀번호 확인 정책
+
+`passwordConfirm`은 백엔드 API 요청 필드가 아닙니다.
+
+프론트엔드는 회원가입 요청 전 `password`와 `passwordConfirm`의 일치 여부를 자체 검증합니다.
+두 값이 일치하지 않으면 백엔드 요청을 보내지 않고 화면에서 즉시 안내합니다.
+
+권장 사용자 표시 문구:
+
+```text
+비밀번호가 일치하지 않습니다.
 ```
-
-**Response `201 Created`**
-
-```json
-{
-  "userId": 2,
-  "loginId": "member01",
-  "nickname": "registered-user",
-  "userType": "REGISTERED"
-}
-```
-
-**Error**
-
-* `400 Bad Request`: 필수값 누락 / 비밀번호 길이 조건 불만족 / 비밀번호 공백 포함 / 닉네임 8자 초과
-* `409 Conflict`: 로그인 ID 또는 닉네임 중복
-
----
-
-#### 자체 로그인
-
-```http
-POST /api/auth/login
-```
-
-가입한 로그인 ID/비밀번호로 인증 후 Access/Refresh 토큰을 발급합니다.
-로그인 성공 시 `user_sessions`에 세션 추적 정보를 저장하며, Refresh Token은 Redis에 저장됩니다.
-
-**Request**
-
-```json
-{
-  "loginId": "member01",
-  "password": "password123"
-}
-```
-
-**Response `200 OK`**
-
-```json
-{
-  "userId": 2,
-  "loginId": "member01",
-  "nickname": "registered-user",
-  "userType": "REGISTERED",
-  "userIdentifier": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
-  "accessToken": "eyJhbGciOi...",
-  "accessTokenExpiresAt": "2026-05-03T07:45:00Z",
-  "refreshToken": "eyJhbGciOi...",
-  "refreshTokenExpiresAt": "2026-06-02T07:30:00Z"
-}
-```
-
-**Error**
-
-* `400 Bad Request`: 필수값 누락 / 공백 포함
-* `401 Unauthorized`: 로그인 ID 또는 비밀번호 불일치
-* `423 Locked`: 로그인 실패 5회 누적 계정 잠금 (15분)
-
----
-
-#### 토큰 재발급 (RTR)
-
-```http
-POST /api/auth/refresh
-```
-
-Refresh Token을 검증하고 `Refresh Token Rotation` 정책으로 Access/Refresh 토큰을 재발급합니다.  
-유효하지 않거나 재사용이 감지된 Refresh Token 요청은 거부되며, 보안 위협으로 판단될 경우 사용자 활성 세션이 서버에서 강제 종료됩니다.
-
-**Request**
-
-```json
-{
-  "refreshToken": "eyJhbGciOi..."
-}
-```
-
-**Response `200 OK`**
-
-```json
-{
-  "userId": 2,
-  "userType": "REGISTERED",
-  "userIdentifier": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
-  "accessToken": "eyJhbGciOi...",
-  "accessTokenExpiresAt": "2026-05-03T07:45:00Z",
-  "refreshToken": "eyJhbGciOi...",
-  "refreshTokenExpiresAt": "2026-06-02T07:30:00Z"
-}
-```
-
-**Error**
-
-- `400 Bad Request`: `refreshToken` 누락/공백
-- `401 Unauthorized`: 유효하지 않거나 만료된 Refresh Token
-- `503 Service Unavailable`: 세션 저장소(Redis) 일시 장애
-
----
-
-#### 로그아웃
-
-```http
-POST /api/auth/logout
-```
-
-Access Token 기반으로 요청자를 식별하여 로그아웃 처리합니다.  
-요청에 사용된 Access Token은 블랙리스트 처리되고, 현재 세션의 Refresh Token은 즉시 폐기됩니다.
-
-**Request Header**
-
-| 헤더 | 필수 | 설명 |
-|---|---|---|
-| `Authorization` | ✅ | `Bearer {accessToken}` |
-
-**Response `200 OK`**
-
-```json
-{
-  "message": "로그아웃이 완료되었습니다."
-}
-```
-
-**Error**
-
-- `401 Unauthorized`: 인증 실패 또는 잘못된 Authorization 헤더
 
 ---
 

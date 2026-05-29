@@ -6,6 +6,9 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserCredential;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthLoginFailureException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
@@ -16,13 +19,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -37,9 +38,6 @@ public class LoginAuthService {
     private static final int LOCK_THRESHOLD = 5;
     private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
 
-    private static final String ERR_INVALID_CREDENTIALS = "로그인 ID 또는 비밀번호가 올바르지 않습니다.";
-    private static final String ERR_ACCOUNT_LOCKED = "로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요.";
-
     private final UserCredentialRepository userCredentialRepository;
     private final UserSessionRepository userSessionRepository;
     private final PasswordEncoder passwordEncoder;
@@ -50,45 +48,71 @@ public class LoginAuthService {
     @Value("${auth.redis.refresh-store-enabled:true}")
     private boolean refreshStoreEnabled;
 
-    @Transactional(noRollbackFor = ResponseStatusException.class)
+    /**
+     * 자체 로그인
+     *
+     * [트랜잭션 정책]
+     * 비밀번호 불일치 시 failedLoginCount 증가와 lockedUntil 설정은 반드시 커밋되어야 한다.
+     * 따라서 해당 상태 변경 이후에는 AuthLoginFailureException을 던지고,
+     * 이 예외만 noRollbackFor 대상으로 제한한다.
+     *
+     * [주의]
+     * AuthException 전체를 noRollbackFor로 지정하지 않는다.
+     * AuthException은 계정 잠금, 인증 정보 없음, refresh token 오류 등 다양한 인증 예외를 포괄하므로,
+     * 향후 login() 내부에서 DB write 이후 다른 AuthException이 추가될 경우 의도하지 않은 부분 커밋이 발생할 수 있다.
+     *
+     * [호환성 정책]
+     * 회원가입 정책과 로그인 정책은 분리한다.
+     * 회원가입에서는 신규 loginId 포맷을 강제할 수 있지만,
+     * 로그인에서는 과거에 생성된 계정의 호환성을 위해 loginId 포맷 검증을 하지 않는다.
+     *
+     * 따라서 loginId는 null/blank만 차단하고,
+     * DB 조회 실패 또는 비밀번호 불일치는 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
+     */
+    @Transactional(noRollbackFor = AuthLoginFailureException.class)
     public LoginResponse login(String rawLoginId, String rawPassword, String ipAddress, String userAgent) {
-        String loginId = normalizeRequiredWithTrim(rawLoginId, "로그인 ID");
-        validateNoWhitespace(loginId, "로그인 ID");
-
-        String password = validateNoWhitespace(rawPassword, "비밀번호");
+        String loginId = normalizeLoginId(rawLoginId);
+        String password = normalizePassword(rawPassword);
 
         UserCredential credential = userCredentialRepository.findByLoginId(loginId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_CREDENTIALS));
+                .orElseThrow(() -> new AuthException(AuthErrorCode.AUTH_INVALID_CREDENTIALS));
 
         LocalDateTime now = LocalDateTime.now();
+
         if (credential.isLockedAt(now)) {
-            throw new ResponseStatusException(HttpStatus.LOCKED, ERR_ACCOUNT_LOCKED);
+            throw new AuthException(AuthErrorCode.AUTH_ACCOUNT_LOCKED);
         }
 
         if (!passwordEncoder.matches(password, credential.getPasswordHash())) {
             credential.increaseFailedLoginCount();
+
             if (credential.getFailedLoginCount() >= LOCK_THRESHOLD) {
                 credential.lockUntil(now.plus(LOCK_DURATION));
             }
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_CREDENTIALS);
+
+            throw new AuthLoginFailureException(AuthErrorCode.AUTH_INVALID_CREDENTIALS);
         }
 
         credential.resetFailedLoginState();
+
         User user = credential.getUser();
         user.updateLastLoginAt(now);
-        UserType userType = user.getUserType();
 
+        UserType userType = user.getUserType();
         String userIdentifier = UUID.randomUUID().toString();
+
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
                 user.getId(),
                 userType,
                 userIdentifier
         );
+
         TokenWithExpiry refreshToken = jwtTokenProvider.createRefreshToken(
                 user.getId(),
                 userType,
                 userIdentifier
         );
+
         String refreshTokenHash = TokenHashUtils.sha256(refreshToken.token());
 
         userSessionRepository.save(UserSession.builder()
@@ -103,19 +127,36 @@ public class LoginAuthService {
                 .status(UserSessionStatus.ACTIVE)
                 .build());
 
-        userSessionLifecycleService.enforceActiveSessionLimit(user.getId(), userType, userIdentifier, now);
+        userSessionLifecycleService.enforceActiveSessionLimit(
+                user.getId(),
+                userType,
+                userIdentifier,
+                now
+        );
 
         if (refreshStoreEnabled) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
                     String refreshTokenKey = RedisKeys.refreshTokenKey(userIdentifier);
+
                     try {
-                        redisTemplate.opsForValue().set(refreshTokenKey, refreshTokenHash, jwtTokenProvider.refreshTokenTtl());
-                        redisTemplate.opsForValue().set(RedisKeys.activeSessionKey(userIdentifier), "1", jwtTokenProvider.refreshTokenTtl());
+                        redisTemplate.opsForValue().set(
+                                refreshTokenKey,
+                                refreshTokenHash,
+                                jwtTokenProvider.refreshTokenTtl()
+                        );
+                        redisTemplate.opsForValue().set(
+                                RedisKeys.activeSessionKey(userIdentifier),
+                                "1",
+                                jwtTokenProvider.refreshTokenTtl()
+                        );
                     } catch (RuntimeException e) {
                         log.error("로그인 후 Redis 세션 저장 실패 - sessionId: {}", userIdentifier, e);
-                        userSessionLifecycleService.markSessionRevokedCompensating(userIdentifier, LocalDateTime.now());
+                        userSessionLifecycleService.markSessionRevokedCompensating(
+                                userIdentifier,
+                                LocalDateTime.now()
+                        );
                     }
                 }
             });
@@ -134,24 +175,37 @@ public class LoginAuthService {
                 .build();
     }
 
-    private String normalizeRequiredWithTrim(String value, String fieldName) {
-        if (value == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
-        }
-        String normalized = value.trim();
+    private String normalizeLoginId(String value) {
+        return normalizeRequiredWithTrim(value, AuthErrorCode.AUTH_LOGIN_ID_REQUIRED);
+    }
+
+    /**
+     * 로그인 비밀번호는 null/blank만 차단한다.
+     *
+     * [이유]
+     * 로그인 시점에 비밀번호 길이/포맷을 과하게 검증하면
+     * 기존 계정 호환성 또는 정책 변경 전 계정의 로그인을 막을 수 있다.
+     * 실제 인증 실패는 passwordEncoder.matches() 결과를 통해 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
+     */
+    private String normalizePassword(String value) {
+        return normalizeRequired(value, AuthErrorCode.AUTH_PASSWORD_REQUIRED);
+    }
+
+    private String normalizeRequiredWithTrim(String value, AuthErrorCode requiredErrorCode) {
+        String normalized = normalizeRequired(value, requiredErrorCode).trim();
+
         if (normalized.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
+            throw new AuthException(requiredErrorCode);
         }
+
         return normalized;
     }
 
-    private String validateNoWhitespace(String value, String fieldName) {
+    private String normalizeRequired(String value, AuthErrorCode requiredErrorCode) {
         if (value == null || value.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "는 비어 있을 수 없습니다.");
+            throw new AuthException(requiredErrorCode);
         }
-        if (value.chars().anyMatch(Character::isWhitespace)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + "에는 공백을 포함할 수 없습니다.");
-        }
+
         return value;
     }
 
@@ -159,10 +213,13 @@ public class LoginAuthService {
         if (value == null) {
             return null;
         }
+
         String normalized = value.trim();
+
         if (normalized.isEmpty()) {
             return null;
         }
+
         return normalized.length() > maxLength
                 ? normalized.substring(0, maxLength)
                 : normalized;

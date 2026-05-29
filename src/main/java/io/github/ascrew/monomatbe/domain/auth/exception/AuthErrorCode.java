@@ -92,7 +92,7 @@ public enum AuthErrorCode {
 
     AUTH_NICKNAME_INVALID_LENGTH(
             HttpStatus.BAD_REQUEST,
-            "닉네임은 2자 이상 12자 이하여야 합니다.",
+            "닉네임은 2자 이상 12자 이하로 입력해주세요.",
             AuthErrorFields.NICKNAME
     ),
 
@@ -104,8 +104,36 @@ public enum AuthErrorCode {
 
     AUTH_NICKNAME_FORBIDDEN_WORD(
             HttpStatus.BAD_REQUEST,
-            "사용할 수 없는 닉네임입니다.",
+            "금칙어가 포함된 닉네임은 사용할 수 없습니다.",
             AuthErrorFields.NICKNAME
+    ),
+
+    // =========================================================
+    // Forbidden Nickname Admin
+    // =========================================================
+
+    AUTH_FORBIDDEN_NICKNAME_WORD_REQUIRED(
+            HttpStatus.BAD_REQUEST,
+            "금칙어는 비어 있을 수 없습니다.",
+            "word"
+    ),
+
+    AUTH_FORBIDDEN_NICKNAME_WORD_DUPLICATED(
+            HttpStatus.CONFLICT,
+            "이미 등록된 금칙어입니다.",
+            "word"
+    ),
+
+    AUTH_FORBIDDEN_NICKNAME_WORD_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "존재하지 않는 금칙어입니다.",
+            null
+    ),
+
+    AUTH_FORBIDDEN_NICKNAME_CACHE_EVICT_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "금칙어 캐시 갱신에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            null
     ),
 
     // =========================================================

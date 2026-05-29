@@ -200,6 +200,206 @@ Access Token 기반으로 요청자를 식별하여 로그아웃 처리합니다
 
 ---
 
+### 관리자 - 닉네임 금칙어 관리
+
+닉네임 금칙어 목록을 관리자 API로 조회, 추가, 삭제합니다.
+
+현재 프로젝트에는 별도 `ROLE_ADMIN` 권한 체계가 없으므로, 관리자 API 접근은 `admin_users` 테이블 기반으로 제한합니다.
+
+관리자 API를 호출하려면 다음 조건을 모두 만족해야 합니다.
+
+- JWT Access Token이 유효해야 합니다.
+- JWT에서 추출한 `userId`가 `admin_users.user_id`에 등록되어 있어야 합니다.
+- 해당 사용자의 `user_type`이 `REGISTERED`여야 합니다.
+
+관리자 등록 예시:
+
+```sql
+INSERT IGNORE INTO admin_users (user_id, created_at, updated_at)
+VALUES (105, NOW(), NOW());
+```
+
+**관리자 확인 예시:**
+```sql
+SELECT au.id, au.user_id, u.username, u.user_type
+FROM admin_users au
+JOIN users u ON u.id = au.user_id
+WHERE au.user_id = 105;
+```
+
+**Fallback 설정**
+DB 장애 또는 local/dev 긴급 접근을 위해 환경변수 fallback allow-list를 사용할 수 있습니다.
+```
+MONOMAT_ADMIN_USER_IDS=105
+```
+
+**Spring 설정 키:**
+```
+monomat.admin.user-ids=${MONOMAT_ADMIN_USER_IDS:}
+```
+
+> MONOMAT_ADMIN_USER_IDS는 운영 주 권한 저장소가 아닙니다.
+기본 관리자 권한은 admin_users 테이블 기준으로 관리합니다.
+userIdentifier는 로그인/세션 식별자 성격이므로 관리자 권한 기준으로 사용하지 않습니다.
+---
+
+#### 금칙어 목록 조회
+
+```http
+GET /api/admin/forbidden-nicknames
+```
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Response `200 OK`**
+
+```json
+[
+  {
+    "id": 1,
+    "word": "관리자",
+    "normalizedWord": "관리자",
+    "createdAt": "2026-05-28T19:00:00",
+    "updatedAt": "2026-05-28T19:00:00"
+  }
+]
+```
+
+**Error**
+
+| 상태 코드              | 설명                               |
+| ------------------ | -------------------------------- |
+| `401 Unauthorized` | 인증 정보 없음 또는 유효하지 않은 Access Token |
+| `403 Forbidden`    | `users.id`가 관리자 allow-list에 포함되지 않은 사용자 |
+---
+
+#### 금칙어 추가
+
+```http
+POST /api/admin/forbidden-nicknames
+```
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+| `Content-Type`  | ✅  | `application/json`     |
+
+**Request Body**
+
+```json
+{
+  "word": "관리자"
+}
+```
+
+| 필드     | 타입     | 필수 | 설명                   |
+| ------ | ------ | -- | -------------------- |
+| `word` | String | ✅  | 등록할 닉네임 금칙어. 최대 100자 |
+
+**Response `201 Created`**
+
+```json
+{
+  "id": 1,
+  "word": "관리자",
+  "normalizedWord": "관리자",
+  "createdAt": "2026-05-28T19:00:00",
+  "updatedAt": "2026-05-28T19:00:00"
+}
+```
+
+**정규화 정책**
+
+금칙어는 비교 및 중복 방지를 위해 정규화됩니다.
+
+| 입력값         | normalizedWord |
+| ----------- | -------------- |
+| `Admin`     | `admin`        |
+| `A d m i n` | `admin`        |
+| `관 리 자`     | `관리자`          |
+
+동일한 `normalizedWord`를 가진 금칙어는 중복 등록할 수 없습니다.
+
+**Error**
+
+| 상태 코드              | 설명                               |
+| ------------------ | -------------------------------- |
+| `400 Bad Request`  | 금칙어가 비어 있음 또는 요청 형식 오류           |
+| `401 Unauthorized` | 인증 정보 없음 또는 유효하지 않은 Access Token |
+| `403 Forbidden`    | `users.id`가 관리자 allow-list에 포함되지 않은 사용자 |
+| `409 Conflict`     | 이미 등록된 금칙어                       |
+
+---
+
+#### 금칙어 삭제
+
+```http
+DELETE /api/admin/forbidden-nicknames/{id}
+```
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Path Variable**
+
+| 이름   | 타입   | 설명         |
+| ---- | ---- | ---------- |
+| `id` | Long | 삭제할 금칙어 ID |
+
+**Response `204 No Content`**
+
+응답 본문 없음.
+
+**Error**
+
+| 상태 코드              | 설명                               |
+| ------------------ | -------------------------------- |
+| `401 Unauthorized` | 인증 정보 없음 또는 유효하지 않은 Access Token |
+| `403 Forbidden`    | `users.id`가 관리자 allow-list에 포함되지 않은 사용자 |
+| `404 Not Found`    | 존재하지 않는 금칙어                      |
+
+---
+
+#### 닉네임 검증 정책
+
+회원가입 및 게스트 로그인에서 닉네임은 다음 정책을 따릅니다.
+
+| 정책  | 설명                     |
+| --- | ---------------------- |
+| 길이  | 2자 이상 12자 이하           |
+| 중복  | 기존 회원/게스트 닉네임과 중복 불가   |
+| 금칙어 | 관리자 API로 등록된 금칙어 포함 불가 |
+
+금칙어 검증은 대소문자와 공백 우회를 고려합니다.
+
+예를 들어 `admin`이 금칙어로 등록되어 있다면 아래 닉네임은 모두 차단됩니다.
+
+```text
+admin123
+Admin123
+a d m i n123
+```
+
+금칙어 포함 시 응답은 `400 Bad Request`입니다.
+
+```json
+{
+  "code": "AUTH_NICKNAME_FORBIDDEN_WORD",
+  "message": "금칙어가 포함된 닉네임은 사용할 수 없습니다.",
+  "field": "nickname"
+}
+```
+
+---
 ### 로비 (Lobby)
 
 #### 로비 생성

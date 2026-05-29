@@ -22,7 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -183,7 +182,6 @@ class ForbiddenNicknameServiceTest {
         verify(forbiddenNicknameWordRepository).findById(1L);
         verify(forbiddenNicknameWordRepository, never()).delete(any());
         verify(stringRedisTemplate, never()).delete(anyString());
-        verify(stringRedisTemplate, never()).delete(anyCollection());
     }
 
     @Test
@@ -198,13 +196,12 @@ class ForbiddenNicknameServiceTest {
         verify(forbiddenNicknameWordRepository, never()).findById(any());
         verify(forbiddenNicknameWordRepository, never()).delete(any());
         verify(stringRedisTemplate, never()).delete(anyString());
-        verify(stringRedisTemplate, never()).delete(anyCollection());
     }
 
     @Test
-    @DisplayName("Redis 캐시 hit 시 DB를 조회하지 않고 캐시 데이터로 금칙어 포함 여부를 판단한다")
+    @DisplayName("Redis 캐시 hit 시 DB를 조회하지 않고 JSON 캐시 데이터로 금칙어 포함 여부를 판단한다")
     void containsForbiddenWordWithCacheHit() {
-        when(valueOperations.get(CACHE_KEY)).thenReturn("관리자\nadmin");
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"관리자\",\"admin\"]");
 
         boolean result = forbiddenNicknameService.containsForbiddenWord("최고관 리 자");
 
@@ -215,7 +212,7 @@ class ForbiddenNicknameServiceTest {
     @Test
     @DisplayName("Redis 캐시 hit 시 금칙어가 포함되어 있지 않으면 false를 반환한다")
     void doesNotContainForbiddenWordWithCacheHit() {
-        when(valueOperations.get(CACHE_KEY)).thenReturn("관리자\nadmin");
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"관리자\",\"admin\"]");
 
         boolean result = forbiddenNicknameService.containsForbiddenWord("정상닉네임");
 
@@ -224,7 +221,7 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("Redis 캐시 miss 시 DB에서 normalizedWord만 조회하고 Redis String으로 캐싱한다")
+    @DisplayName("Redis 캐시 miss 시 DB에서 normalizedWord만 조회하고 JSON 배열 문자열로 캐싱한다")
     void containsForbiddenWordWithCacheMiss() {
         when(valueOperations.get(CACHE_KEY)).thenReturn(null);
         when(forbiddenNicknameWordRepository.findAllNormalizedWords())
@@ -235,11 +232,11 @@ class ForbiddenNicknameServiceTest {
         assertTrue(result);
 
         verify(forbiddenNicknameWordRepository).findAllNormalizedWords();
-        verify(valueOperations).set(eq(CACHE_KEY), eq("관리자\nadmin"), any(Duration.class));
+        verify(valueOperations).set(eq(CACHE_KEY), eq("[\"관리자\",\"admin\"]"), any(Duration.class));
     }
 
     @Test
-    @DisplayName("DB 금칙어 목록이 비어 있어도 빈 문자열로 캐싱한다")
+    @DisplayName("DB 금칙어 목록이 비어 있어도 JSON 빈 배열로 캐싱한다")
     void cacheEmptyForbiddenWords() {
         when(valueOperations.get(CACHE_KEY)).thenReturn(null);
         when(forbiddenNicknameWordRepository.findAllNormalizedWords())
@@ -250,13 +247,13 @@ class ForbiddenNicknameServiceTest {
         assertFalse(result);
 
         verify(forbiddenNicknameWordRepository).findAllNormalizedWords();
-        verify(valueOperations).set(eq(CACHE_KEY), eq(""), any(Duration.class));
+        verify(valueOperations).set(eq(CACHE_KEY), eq("[]"), any(Duration.class));
     }
 
     @Test
-    @DisplayName("Redis 캐시에 빈 문자열이 있으면 금칙어 0개 상태로 보고 DB를 조회하지 않는다")
-    void emptyStringCacheHitMeansNoForbiddenWords() {
-        when(valueOperations.get(CACHE_KEY)).thenReturn("");
+    @DisplayName("Redis 캐시에 JSON 빈 배열이 있으면 금칙어 0개 상태로 보고 DB를 조회하지 않는다")
+    void emptyJsonArrayCacheHitMeansNoForbiddenWords() {
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[]");
 
         boolean result = forbiddenNicknameService.containsForbiddenWord("정상닉네임");
 
@@ -279,6 +276,19 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
+    @DisplayName("Redis 캐시 값이 잘못된 JSON이면 DB 직접 조회로 fallback한다")
+    void containsForbiddenWordFallbackToDatabaseWhenCachedJsonIsInvalid() {
+        when(valueOperations.get(CACHE_KEY)).thenReturn("invalid-json");
+        when(forbiddenNicknameWordRepository.findAllNormalizedWords())
+                .thenReturn(List.of("관리자"));
+
+        boolean result = forbiddenNicknameService.containsForbiddenWord("최고관리자");
+
+        assertTrue(result);
+        verify(forbiddenNicknameWordRepository).findAllNormalizedWords();
+    }
+
+    @Test
     @DisplayName("Redis 캐시 저장 실패 시 DB 조회 결과를 재사용하고 DB를 중복 조회하지 않는다")
     void containsForbiddenWordUsesDbResultWhenRedisWriteFails() {
         when(valueOperations.get(CACHE_KEY)).thenReturn(null);
@@ -286,7 +296,7 @@ class ForbiddenNicknameServiceTest {
                 .thenReturn(List.of("관리자"));
         doThrow(new RedisConnectionFailureException("redis write down"))
                 .when(valueOperations)
-                .set(eq(CACHE_KEY), eq("관리자"), any(Duration.class));
+                .set(eq(CACHE_KEY), eq("[\"관리자\"]"), any(Duration.class));
 
         boolean result = forbiddenNicknameService.containsForbiddenWord("최고관리자");
 
@@ -329,8 +339,8 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("금칙어 추가 후 캐시 무효화 실패가 발생해도 DB 저장 결과는 반환한다")
-    void addForbiddenWordEvenIfCacheEvictFails() {
+    @DisplayName("금칙어 추가 후 캐시 무효화 실패가 발생하면 관리자 API 성공으로 처리하지 않는다")
+    void addForbiddenWordFailsWhenCacheEvictFails() {
         when(forbiddenNicknameWordRepository.existsByNormalizedWord("admin")).thenReturn(false);
 
         ForbiddenNicknameWord saved = ForbiddenNicknameWord.create("admin", "admin");
@@ -340,16 +350,18 @@ class ForbiddenNicknameServiceTest {
         when(stringRedisTemplate.delete(CACHE_KEY))
                 .thenThrow(new RedisConnectionFailureException("redis evict down"));
 
-        ForbiddenNicknameWord result = forbiddenNicknameService.addForbiddenWord("admin");
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> forbiddenNicknameService.addForbiddenWord("admin")
+        );
 
-        assertEquals("admin", result.getWord());
-        assertEquals("admin", result.getNormalizedWord());
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_CACHE_EVICT_FAILED, exception.getErrorCode());
         verify(stringRedisTemplate).delete(CACHE_KEY);
     }
 
     @Test
-    @DisplayName("금칙어 삭제 후 캐시 무효화 실패가 발생해도 삭제 요청은 실패하지 않는다")
-    void deleteForbiddenWordEvenIfCacheEvictFails() {
+    @DisplayName("금칙어 삭제 후 캐시 무효화 실패가 발생하면 관리자 API 성공으로 처리하지 않는다")
+    void deleteForbiddenWordFailsWhenCacheEvictFails() {
         ForbiddenNicknameWord forbiddenWord = ForbiddenNicknameWord.create("관리자", "관리자");
 
         when(forbiddenNicknameWordRepository.findById(1L))
@@ -357,8 +369,12 @@ class ForbiddenNicknameServiceTest {
         when(stringRedisTemplate.delete(CACHE_KEY))
                 .thenThrow(new RedisConnectionFailureException("redis evict down"));
 
-        forbiddenNicknameService.deleteForbiddenWord(1L);
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> forbiddenNicknameService.deleteForbiddenWord(1L)
+        );
 
+        assertEquals(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_CACHE_EVICT_FAILED, exception.getErrorCode());
         verify(forbiddenNicknameWordRepository).findById(1L);
         verify(forbiddenNicknameWordRepository).delete(forbiddenWord);
         verify(forbiddenNicknameWordRepository).flush();
@@ -366,9 +382,20 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("중복되거나 공백인 캐시 값은 검증 시 무시한다")
+    @DisplayName("JSON 배열 캐시는 금칙어 값에 개행 문자가 포함되어도 별도 금칙어로 분리하지 않는다")
+    void jsonCacheDoesNotSplitWordContainingNewline() {
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"a\\nadmin\"]");
+
+        boolean result = forbiddenNicknameService.containsForbiddenWord("admin");
+
+        assertFalse(result);
+        verify(forbiddenNicknameWordRepository, never()).findAllNormalizedWords();
+    }
+
+    @Test
+    @DisplayName("중복되거나 공백인 JSON 캐시 값은 검증 시 무시한다")
     void cachedWordsIgnoreBlankValues() {
-        when(valueOperations.get(CACHE_KEY)).thenReturn("관리자\n\nadmin\n관리자");
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"관리자\",\"\",\"admin\",\"관리자\"]");
 
         boolean result = forbiddenNicknameService.containsForbiddenWord("normal-admin-user");
 
@@ -377,7 +404,7 @@ class ForbiddenNicknameServiceTest {
     }
 
     @Test
-    @DisplayName("DB 조회 결과의 null, 공백, 중복 값은 캐싱 시 제거한다")
+    @DisplayName("DB 조회 결과의 null, 공백, 중복 값은 JSON 캐싱 시 제거한다")
     void cacheNormalizedWordsFiltersInvalidValues() {
         when(valueOperations.get(CACHE_KEY)).thenReturn(null);
         when(forbiddenNicknameWordRepository.findAllNormalizedWords())
@@ -386,6 +413,39 @@ class ForbiddenNicknameServiceTest {
         boolean result = forbiddenNicknameService.containsForbiddenWord("superAdmin");
 
         assertTrue(result);
-        verify(valueOperations).set(eq(CACHE_KEY), eq("관리자\nadmin"), any(Duration.class));
+        verify(valueOperations).set(eq(CACHE_KEY), eq("[\"관리자\",\"admin\"]"), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("닉네임에 금칙어가 부분 포함되면 차단한다")
+    void containsForbiddenWordBlocksPartialMatch() {
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"admin\"]");
+
+        boolean result = forbiddenNicknameService.containsForbiddenWord("superadminuser");
+
+        assertTrue(result);
+        verify(forbiddenNicknameWordRepository, never()).findAllNormalizedWords();
+    }
+
+    @Test
+    @DisplayName("공백을 섞어 금칙어를 우회해도 정규화 후 부분 포함되면 차단한다")
+    void containsForbiddenWordBlocksWhitespaceBypass() {
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"admin\"]");
+
+        boolean result = forbiddenNicknameService.containsForbiddenWord("a d m i n");
+
+        assertTrue(result);
+        verify(forbiddenNicknameWordRepository, never()).findAllNormalizedWords();
+    }
+
+    @Test
+    @DisplayName("부분 포함 정책상 금칙어가 단어 내부에 포함되어도 차단한다")
+    void containsForbiddenWordBlocksEmbeddedMatchByPolicy() {
+        when(valueOperations.get(CACHE_KEY)).thenReturn("[\"admin\"]");
+
+        boolean result = forbiddenNicknameService.containsForbiddenWord("madministrator");
+
+        assertTrue(result);
+        verify(forbiddenNicknameWordRepository, never()).findAllNormalizedWords();
     }
 }

@@ -130,6 +130,12 @@ public enum AuthErrorCode {
             null
     ),
 
+    AUTH_FORBIDDEN_NICKNAME_CACHE_EVICT_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "금칙어 캐시 갱신에 실패했습니다. 잠시 후 다시 시도해주세요.",
+            null
+    ),
+
     // =========================================================
     // Login / Session
     // =========================================================

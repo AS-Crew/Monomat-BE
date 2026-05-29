@@ -1,5 +1,8 @@
 package io.github.ascrew.monomatbe.domain.auth.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.ascrew.monomatbe.domain.auth.entity.ForbiddenNicknameWord;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
@@ -12,9 +15,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Objects;
 
 /**
  * 닉네임 금칙어 관리 서비스
@@ -31,10 +33,14 @@ import java.util.stream.Collectors;
  * - Redis 장애 시에는 인증 기능 전체가 막히지 않도록 DB 직접 조회로 degrade한다.
  *
  * [캐시 정책]
- * - 캐시 일관성을 단순화하기 위해 Redis key 하나만 사용한다.
- * - 금칙어 목록은 개행 문자로 join한 String value로 저장한다.
- * - 금칙어가 0개인 상태도 빈 문자열("")로 캐싱한다.
- * - Set key + loaded marker key 조합은 두 key의 TTL/eviction 불일치 가능성이 있어 사용하지 않는다.
+ * - Redis key 하나만 사용한다.
+ * - 금칙어 목록은 JSON 배열 문자열로 저장한다.
+ * - 금칙어가 0개인 상태도 JSON 빈 배열("[]")로 캐싱한다.
+ * - 개행 문자 구분자 방식은 정규화 정책과 암묵적으로 결합될 수 있으므로 사용하지 않는다.
+ *
+ * [관리자 변경 반영 정책]
+ * - 금칙어 추가/삭제 후 Redis 캐시 무효화에 실패하면 관리자 API를 성공 처리하지 않는다.
+ * - 성공 응답을 반환했는데 TTL 동안 stale cache가 남는 상태를 방지하기 위함이다.
  */
 @Slf4j
 @Service
@@ -44,9 +50,13 @@ public class ForbiddenNicknameService {
     private static final String FORBIDDEN_NICKNAME_WORDS_CACHE_KEY =
             "auth:forbidden_nickname_words:normalized";
 
-    private static final String CACHE_WORD_DELIMITER = "\n";
-
     private static final Duration FORBIDDEN_WORD_CACHE_TTL = Duration.ofMinutes(10);
+
+    private static final TypeReference<List<String>> STRING_LIST_TYPE_REFERENCE =
+            new TypeReference<>() {
+            };
+
+    private static final JsonMapper CACHE_JSON_MAPPER = JsonMapper.builder().build();
 
     private final ForbiddenNicknameWordRepository forbiddenNicknameWordRepository;
     private final NicknameNormalizer nicknameNormalizer;
@@ -108,6 +118,15 @@ public class ForbiddenNicknameService {
 
         List<String> normalizedForbiddenWords = getNormalizedForbiddenWords();
 
+        /*
+         * [금칙어 판정 정책]
+         * - 현재 정책은 완전 일치 차단이 아니라 부분 포함 차단이다.
+         * - 정규화된 닉네임 안에 정규화된 금칙어가 포함되면 차단한다.
+         *
+         * 예:
+         * - 금칙어: "admin"
+         * - 차단: "admin", "superadmin", "a d m i n", "madministrator"
+         */
         return normalizedForbiddenWords.stream()
                 .filter(word -> word != null && !word.isBlank())
                 .anyMatch(normalizedNickname::contains);
@@ -167,10 +186,17 @@ public class ForbiddenNicknameService {
     }
 
     private String serializeNormalizedWords(List<String> normalizedWords) {
-        return normalizedWords.stream()
-                .filter(word -> word != null && !word.isBlank())
+        List<String> cacheableWords = normalizedWords.stream()
+                .filter(Objects::nonNull)
+                .filter(word -> !word.isBlank())
                 .distinct()
-                .collect(Collectors.joining(CACHE_WORD_DELIMITER));
+                .toList();
+
+        try {
+            return CACHE_JSON_MAPPER.writeValueAsString(cacheableWords);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("닉네임 금칙어 캐시 직렬화에 실패했습니다.", e);
+        }
     }
 
     private List<String> deserializeNormalizedWords(String cachedValue) {
@@ -178,16 +204,23 @@ public class ForbiddenNicknameService {
             return List.of();
         }
 
-        return Arrays.stream(cachedValue.split(CACHE_WORD_DELIMITER))
-                .filter(word -> word != null && !word.isBlank())
-                .toList();
+        try {
+            return CACHE_JSON_MAPPER.readValue(cachedValue, STRING_LIST_TYPE_REFERENCE)
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .filter(word -> !word.isBlank())
+                    .toList();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("닉네임 금칙어 캐시 역직렬화에 실패했습니다.", e);
+        }
     }
 
     private void evictForbiddenWordCache() {
         try {
             stringRedisTemplate.delete(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
         } catch (RuntimeException e) {
-            log.warn("닉네임 금칙어 Redis 캐시 무효화 실패", e);
+            log.error("닉네임 금칙어 Redis 캐시 무효화 실패", e);
+            throw new AuthException(AuthErrorCode.AUTH_FORBIDDEN_NICKNAME_CACHE_EVICT_FAILED, e);
         }
     }
 

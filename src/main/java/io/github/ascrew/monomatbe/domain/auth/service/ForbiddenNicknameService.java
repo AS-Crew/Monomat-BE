@@ -12,11 +12,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
- * 닉네임 금칙어 관리 서비스.
+ * 닉네임 금칙어 관리 서비스
  *
  * [책임]
  * - 금칙어 목록 조회
@@ -28,6 +29,12 @@ import java.util.Set;
  * - 닉네임 검증은 회원가입/게스트 로그인 진입점에 붙어 있으므로 매 요청마다 DB findAll()을 수행하지 않는다.
  * - Redis에 정규화 금칙어 목록을 캐싱하고, 관리자 추가/삭제 시 캐시를 무효화한다.
  * - Redis 장애 시에는 인증 기능 전체가 막히지 않도록 DB 직접 조회로 degrade한다.
+ *
+ * [캐시 정책]
+ * - 캐시 일관성을 단순화하기 위해 Redis key 하나만 사용한다.
+ * - 금칙어 목록은 개행 문자로 join한 String value로 저장한다.
+ * - 금칙어가 0개인 상태도 빈 문자열("")로 캐싱한다.
+ * - Set key + loaded marker key 조합은 두 key의 TTL/eviction 불일치 가능성이 있어 사용하지 않는다.
  */
 @Slf4j
 @Service
@@ -37,10 +44,7 @@ public class ForbiddenNicknameService {
     private static final String FORBIDDEN_NICKNAME_WORDS_CACHE_KEY =
             "auth:forbidden_nickname_words:normalized";
 
-    private static final String FORBIDDEN_NICKNAME_WORDS_CACHE_LOADED_KEY =
-            "auth:forbidden_nickname_words:loaded";
-
-    private static final String CACHE_LOADED_VALUE = "1";
+    private static final String CACHE_WORD_DELIMITER = "\n";
 
     private static final Duration FORBIDDEN_WORD_CACHE_TTL = Duration.ofMinutes(10);
 
@@ -124,7 +128,14 @@ public class ForbiddenNicknameService {
 
     private List<String> getNormalizedForbiddenWordsSafely() {
         try {
-            return getNormalizedForbiddenWordsFromCache();
+            String cachedValue = stringRedisTemplate.opsForValue()
+                    .get(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
+
+            if (cachedValue == null) {
+                return null;
+            }
+
+            return deserializeNormalizedWords(cachedValue);
         } catch (RuntimeException e) {
             log.warn(
                     "닉네임 금칙어 Redis 캐시 조회 실패 - DB 직접 조회로 대체합니다.",
@@ -132,23 +143,6 @@ public class ForbiddenNicknameService {
             );
             return null;
         }
-    }
-
-    private List<String> getNormalizedForbiddenWordsFromCache() {
-        Boolean loaded = stringRedisTemplate.hasKey(FORBIDDEN_NICKNAME_WORDS_CACHE_LOADED_KEY);
-
-        if (!Boolean.TRUE.equals(loaded)) {
-            return null;
-        }
-
-        Set<String> cachedWords = stringRedisTemplate.opsForSet()
-                .members(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
-
-        if (cachedWords == null || cachedWords.isEmpty()) {
-            return null;
-        }
-
-        return List.copyOf(cachedWords);
     }
 
     private void cacheNormalizedForbiddenWordsSafely(List<String> normalizedWords) {
@@ -163,35 +157,35 @@ public class ForbiddenNicknameService {
     }
 
     private void cacheNormalizedForbiddenWords(List<String> normalizedWords) {
-        stringRedisTemplate.delete(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
-
-        List<String> validWords = normalizedWords.stream()
-                .filter(word -> word != null && !word.isBlank())
-                .toList();
-
-        if (!validWords.isEmpty()) {
-            stringRedisTemplate.opsForSet()
-                    .add(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY, validWords.toArray(String[]::new));
-
-            stringRedisTemplate.expire(
-                    FORBIDDEN_NICKNAME_WORDS_CACHE_KEY,
-                    FORBIDDEN_WORD_CACHE_TTL
-            );
-        }
+        String serializedWords = serializeNormalizedWords(normalizedWords);
 
         stringRedisTemplate.opsForValue().set(
-                FORBIDDEN_NICKNAME_WORDS_CACHE_LOADED_KEY,
-                CACHE_LOADED_VALUE,
+                FORBIDDEN_NICKNAME_WORDS_CACHE_KEY,
+                serializedWords,
                 FORBIDDEN_WORD_CACHE_TTL
         );
     }
 
+    private String serializeNormalizedWords(List<String> normalizedWords) {
+        return normalizedWords.stream()
+                .filter(word -> word != null && !word.isBlank())
+                .distinct()
+                .collect(Collectors.joining(CACHE_WORD_DELIMITER));
+    }
+
+    private List<String> deserializeNormalizedWords(String cachedValue) {
+        if (cachedValue.isBlank()) {
+            return List.of();
+        }
+
+        return Arrays.stream(cachedValue.split(CACHE_WORD_DELIMITER))
+                .filter(word -> word != null && !word.isBlank())
+                .toList();
+    }
+
     private void evictForbiddenWordCache() {
         try {
-            stringRedisTemplate.delete(List.of(
-                    FORBIDDEN_NICKNAME_WORDS_CACHE_KEY,
-                    FORBIDDEN_NICKNAME_WORDS_CACHE_LOADED_KEY
-            ));
+            stringRedisTemplate.delete(FORBIDDEN_NICKNAME_WORDS_CACHE_KEY);
         } catch (RuntimeException e) {
             log.warn("닉네임 금칙어 Redis 캐시 무효화 실패", e);
         }

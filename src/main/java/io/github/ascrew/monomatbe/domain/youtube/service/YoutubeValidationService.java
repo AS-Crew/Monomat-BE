@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.youtube.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.youtube.YoutubeVideoId;
 import io.github.ascrew.monomatbe.domain.youtube.client.YoutubeOEmbedClient;
 import io.github.ascrew.monomatbe.domain.youtube.exception.YoutubeEmbedNotAllowedException;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
@@ -21,7 +22,6 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -36,7 +36,6 @@ public class YoutubeValidationService {
 
     private static final Duration OEMBED_SUCCESS_TTL = Duration.ofHours(6);
     private static final Duration OEMBED_FAILURE_TTL = Duration.ofMinutes(30);
-    private static final Pattern VIDEO_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{11}$");
 
     private final StringRedisTemplate redisTemplate;
     @Qualifier("pubSubJsonMapper") private final JsonMapper jsonMapper;
@@ -178,7 +177,7 @@ public class YoutubeValidationService {
     }
 
     private boolean isValidVideoId(String value) {
-        return value != null && VIDEO_ID_PATTERN.matcher(value).matches();
+        return YoutubeVideoId.isValid(value);
     }
 
     private void validateRegisteredPrincipal(CustomPrincipal principal) {

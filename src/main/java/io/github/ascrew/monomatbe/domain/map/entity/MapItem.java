@@ -145,6 +145,10 @@ public class MapItem {
         this.hintTime = hintTime;
     }
 
+    public void reorder(int newOrderNum) {
+        this.orderNum = newOrderNum;
+    }
+
     public void softDelete() {
         this.isDeleted = true;
     }

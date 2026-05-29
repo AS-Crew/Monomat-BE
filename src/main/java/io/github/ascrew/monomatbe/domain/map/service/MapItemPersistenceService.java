@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
+import io.github.ascrew.monomatbe.domain.map.MapItemPolicy;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
@@ -30,6 +31,8 @@ public class MapItemPersistenceService {
     private static final String ERROR_DUPLICATE_ITEM_ID = "중복된 문제 ID가 있습니다.";
     private static final String ERROR_MISSING_ITEMS = "모든 문제의 순서를 지정해야 합니다.";
     private static final String ERROR_INVALID_ITEM_ID = "유효하지 않은 문제 ID가 포함되어 있습니다.";
+    private static final String ERROR_MAP_ITEM_LIMIT_EXCEEDED =
+            "한 맵에 등록할 수 있는 문제는 최대 " + MapItemPolicy.MAX_ITEMS_PER_MAP + "개입니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
@@ -63,6 +66,7 @@ public class MapItemPersistenceService {
             int hintTime
     ) {
         QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
+        validateItemCount(mapId);
         validateOrderDuplicatedOnCreate(mapId, request.orderNum());
 
         MapItem saved = mapItemJpaRepository.save(MapItem.builder()
@@ -194,13 +198,15 @@ public class MapItemPersistenceService {
     }
 
     // 같은 mapId에 대한 create/update/delete/reorder를 직렬화하기 위해 PESSIMISTIC_WRITE 락을 잡는다.
+    // 소유자 조건을 락 쿼리에 포함해 비소유자 요청이 write lock을 획득하지 않도록 한다.
     private QuizMap getOwnedMapForWriteOrThrow(Long mapId, Long ownerId) {
-        QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(mapId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
-        if (!Objects.equals(quizMap.getOwner().getId(), ownerId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
-        }
-        return quizMap;
+        return quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(mapId, ownerId)
+                .orElseThrow(() -> {
+                    if (quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId).isEmpty()) {
+                        return new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND);
+                    }
+                    return new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
+                });
     }
 
     private void validateReorderRequest(List<MapItem> activeItems, List<Long> orderedItemIds) {
@@ -216,6 +222,12 @@ public class MapItemPersistenceService {
             if (!activeIds.contains(id)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_ITEM_ID);
             }
+        }
+    }
+
+    private void validateItemCount(Long mapId) {
+        if (mapItemJpaRepository.countByMapIdAndIsDeletedFalse(mapId) >= MapItemPolicy.MAX_ITEMS_PER_MAP) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_MAP_ITEM_LIMIT_EXCEEDED);
         }
     }
 

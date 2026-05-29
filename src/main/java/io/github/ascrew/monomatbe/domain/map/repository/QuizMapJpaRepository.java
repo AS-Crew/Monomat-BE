@@ -24,4 +24,8 @@ public interface QuizMapJpaRepository
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT m FROM QuizMap m WHERE m.id = :mapId AND m.isDeleted = false")
     Optional<QuizMap> findByIdAndIsDeletedFalseForUpdate(@Param("mapId") Long mapId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT m FROM QuizMap m WHERE m.id = :mapId AND m.owner.id = :ownerId AND m.isDeleted = false")
+    Optional<QuizMap> findOwnedByIdAndIsDeletedFalseForUpdate(@Param("mapId") Long mapId, @Param("ownerId") Long ownerId);
 }

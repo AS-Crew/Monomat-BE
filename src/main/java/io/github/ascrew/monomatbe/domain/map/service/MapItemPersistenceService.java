@@ -62,7 +62,7 @@ public class MapItemPersistenceService {
             String hint,
             int hintTime
     ) {
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
+        QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
         validateOrderDuplicatedOnCreate(mapId, request.orderNum());
 
         MapItem saved = mapItemJpaRepository.save(MapItem.builder()
@@ -97,7 +97,7 @@ public class MapItemPersistenceService {
             String hint,
             int hintTime
     ) {
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
+        QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
 
         MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
@@ -125,7 +125,7 @@ public class MapItemPersistenceService {
 
     @Transactional
     public void reorder(Long mapId, Long ownerId, List<Long> orderedItemIds) {
-        getOwnedMapOrThrow(mapId, ownerId);
+        getOwnedMapForWriteOrThrow(mapId, ownerId);
 
         List<MapItem> activeItems = mapItemJpaRepository
                 .findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId);
@@ -147,7 +147,7 @@ public class MapItemPersistenceService {
 
     @Transactional
     public void delete(Long mapId, Long itemId, Long ownerId) {
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
+        QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
 
         MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
@@ -186,6 +186,16 @@ public class MapItemPersistenceService {
 
     private QuizMap getOwnedMapOrThrow(Long mapId, Long ownerId) {
         QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
+        if (!Objects.equals(quizMap.getOwner().getId(), ownerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
+        }
+        return quizMap;
+    }
+
+    // 같은 mapId에 대한 create/update/delete/reorder를 직렬화하기 위해 PESSIMISTIC_WRITE 락을 잡는다.
+    private QuizMap getOwnedMapForWriteOrThrow(Long mapId, Long ownerId) {
+        QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(mapId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND));
         if (!Objects.equals(quizMap.getOwner().getId(), ownerId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);

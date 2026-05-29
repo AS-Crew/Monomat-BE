@@ -65,7 +65,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void create_orderDuplicated_conflict() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
         when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(true);
 
         CreateMapItemRequest request = createRequest(1);
@@ -83,7 +83,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void create_success_recalculatesMetadata() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
         when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
         when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> {
             MapItem input = invocation.getArgument(0);
@@ -123,7 +123,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void delete_success_softDeletesAndRecalculatesMetadata() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem mapItem = MapItem.builder()
                 .id(50L)
@@ -158,7 +158,7 @@ class MapItemPersistenceServiceTest {
         QuizMap quizMap = quizMap(1L, owner(10L));
         quizMap.setPendingPublicIntent(true);
 
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
         when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
         when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
@@ -180,7 +180,7 @@ class MapItemPersistenceServiceTest {
         QuizMap quizMap = quizMap(1L, owner(10L));
         quizMap.setPendingPublicIntent(true);
 
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
         when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
         when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
@@ -201,7 +201,7 @@ class MapItemPersistenceServiceTest {
     void delete_lastItemFromPublicMap_autoFlipToPrivate_keepsPendingTrue() {
         QuizMap quizMap = quizMap(1L, owner(10L));
         quizMap.markAsPublished(); // 공개 상태
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem mapItem = MapItem.builder()
                 .id(50L)
@@ -235,7 +235,7 @@ class MapItemPersistenceServiceTest {
     void delete_nonLastItemFromPublicMap_remainsPublic() {
         QuizMap quizMap = quizMap(1L, owner(10L));
         quizMap.markAsPublished();
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem mapItem = MapItem.builder()
                 .id(51L)
@@ -271,7 +271,7 @@ class MapItemPersistenceServiceTest {
         // (데이터 오염, 수동 DB 수정, 향후 부분 수정 API 도입 등으로 공개 맵이 무효 상태에 놓이는 케이스)
         QuizMap quizMap = quizMap(1L, owner(10L));
         quizMap.markAsPublished();
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem mapItem = MapItem.builder()
                 .id(60L)
@@ -305,7 +305,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void reorder_success_assignsOrderNumsByRequestSequence() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem item1 = mapItem(1L, quizMap, 1);
         MapItem item2 = mapItem(2L, quizMap, 2);
@@ -323,28 +323,11 @@ class MapItemPersistenceServiceTest {
         assertThat(item2.getOrderNum()).isEqualTo(3);
     }
 
-    @Test
-    void reorder_success_updatesUpdatedAt() {
-        QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
-
-        java.time.LocalDateTime past = java.time.LocalDateTime.now().minusSeconds(10);
-        MapItem item1 = mapItemWithUpdatedAt(1L, quizMap, 1, past);
-        MapItem item2 = mapItemWithUpdatedAt(2L, quizMap, 2, past);
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item1, item2))
-                .thenReturn(List.of(item1, item2));
-
-        persistenceService.reorder(1L, 10L, List.of(2L, 1L));
-
-        assertThat(item1.getUpdatedAt()).isAfter(past);
-        assertThat(item2.getUpdatedAt()).isAfter(past);
-    }
 
     @Test
     void reorder_notOwner_forbidden() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         assertThatThrownBy(() -> persistenceService.reorder(1L, 99L, List.of(1L, 2L)))
                 .isInstanceOf(ResponseStatusException.class)
@@ -356,7 +339,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void reorder_duplicateItemId_badRequest() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem item1 = mapItem(1L, quizMap, 1);
         MapItem item2 = mapItem(2L, quizMap, 2);
@@ -373,7 +356,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void reorder_missingItem_badRequest() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem item1 = mapItem(1L, quizMap, 1);
         MapItem item2 = mapItem(2L, quizMap, 2);
@@ -392,7 +375,7 @@ class MapItemPersistenceServiceTest {
     @Test
     void reorder_invalidItemId_badRequest() {
         QuizMap quizMap = quizMap(1L, owner(10L));
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseForUpdate(1L)).thenReturn(Optional.of(quizMap));
 
         MapItem item1 = mapItem(1L, quizMap, 1);
         MapItem item2 = mapItem(2L, quizMap, 2);
@@ -408,10 +391,6 @@ class MapItemPersistenceServiceTest {
     }
 
     private MapItem mapItem(Long id, QuizMap quizMap, int orderNum) {
-        return mapItemWithUpdatedAt(id, quizMap, orderNum, java.time.LocalDateTime.now());
-    }
-
-    private MapItem mapItemWithUpdatedAt(Long id, QuizMap quizMap, int orderNum, java.time.LocalDateTime updatedAt) {
         return MapItem.builder()
                 .id(id)
                 .map(quizMap)
@@ -428,7 +407,6 @@ class MapItemPersistenceServiceTest {
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
-                .updatedAt(updatedAt)
                 .build();
     }
 

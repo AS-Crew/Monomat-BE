@@ -71,7 +71,7 @@ public class MapItemController {
     @Operation(summary = "맵 문제 순서 재정렬", description = "맵 소유자만 변경할 수 있으며 활성 문제 전체의 ID를 원하는 순서대로 전달해야 합니다.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "재정렬 성공"),
-            @ApiResponse(responseCode = "400", description = "중복 ID / 누락 문제 / 다른 맵의 itemId / soft delete된 문제 포함"),
+            @ApiResponse(responseCode = "400", description = "중복 ID / 누락 문제 / 요청한 itemId가 현재 맵의 활성 문제 목록과 일치하지 않음"),
             @ApiResponse(responseCode = "401", description = "미인증"),
             @ApiResponse(responseCode = "403", description = "정식 회원(REGISTERED)이 아님 또는 맵 소유자가 아님"),
             @ApiResponse(responseCode = "404", description = "mapId에 해당하는 맵 없음"),

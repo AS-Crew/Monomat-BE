@@ -40,6 +40,9 @@ public final class RedisKeys {
     /** 로비별 준비 완료 유저 Set 키 접미사 */
     private static final String READY_SUFFIX = ":ready";
 
+    /** 로비별 최근 채팅 메시지 List 키 접미사 */
+    private static final String RECENT_CHAT_MESSAGES_SUFFIX = ":chats:recent";
+
     /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
     private static final String USER_SESSION_SUFFIX = ":user_session:";
 
@@ -292,7 +295,9 @@ public final class RedisKeys {
         return LOBBY_PREFIX + code + ORDER_SUFFIX;
     }
 
-    public static String lobbyKickedKey(String code) { return LOBBY_PREFIX + code + KICKED_SUFFIX; }
+    public static String lobbyKickedKey(String code) {
+        return LOBBY_PREFIX + code + KICKED_SUFFIX;
+    }
 
     /**
      * 로비별 준비 완료 유저 Set 키를 반환한다.
@@ -301,11 +306,27 @@ public final class RedisKeys {
      * - Key   : lobby:{code}:ready
      * - Type  : Set
      * - Value : 준비 완료 상태인 userIdentifier 목록
+     *
      * @param code 로비 초대 코드
      * @return "lobby:{code}:ready"
      */
     public static String lobbyReadyKey(String code) {
         return LOBBY_PREFIX + code + READY_SUFFIX;
+    }
+
+    /**
+     * 로비별 최근 채팅 메시지 List 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : lobby:{code}:chats:recent
+     * - Type  : List
+     * - Value : 서버가 신뢰 가능한 값으로 재구성한 ChatMessageDto JSON
+     *
+     * @param code 로비 초대 코드
+     * @return 로비 최근 채팅 Redis List key
+     */
+    public static String lobbyRecentChatMessagesKey(String code) {
+        return LOBBY_PREFIX + code + RECENT_CHAT_MESSAGES_SUFFIX;
     }
 
     /**
@@ -514,7 +535,13 @@ public final class RedisKeys {
      * @return "map:public:list:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
      */
     public static String mapPublicListKey(
-            String version, String keyword, String category, String sort, int page, int size) {
+            String version,
+            String keyword,
+            String category,
+            String sort,
+            int page,
+            int size
+    ) {
         return MAP_PUBLIC_LIST_PREFIX
                 + ":v:" + version
                 + ":k:" + (keyword == null ? "" : keyword)

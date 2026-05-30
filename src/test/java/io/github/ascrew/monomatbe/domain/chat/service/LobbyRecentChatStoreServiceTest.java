@@ -31,6 +31,7 @@ class LobbyRecentChatStoreServiceTest {
     private LobbyRecentChatProperties properties;
     private LobbyRecentChatStoreService service;
 
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         redisTemplate = mock(StringRedisTemplate.class);
@@ -119,7 +120,7 @@ class LobbyRecentChatStoreServiceTest {
                 .roomId(LOBBY_CODE)
                 .sender(USER_IDENTIFIER)
                 .content(content)
-                .timestamp("2026-05-30T12:00:00")
+                .timestamp("2026-05-30T12:00:00.000Z")
                 .build();
     }
 }

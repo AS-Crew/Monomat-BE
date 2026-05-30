@@ -7,6 +7,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -27,6 +28,18 @@ public interface LobbyRepository {
 
   /** 해당 유저가 해당 로비에서 강퇴된 유저인지 확인합니다. */
   boolean isKicked(String code, String userIdentifier);
+
+  /**
+   * 로비 사용자 접근 상태를 조회한다.
+   *
+   * <p>로비 존재 여부, 강퇴 여부, 참여 여부를 한 번의 Repository 호출로 판별하기 위한 메서드다.
+   * 구현체는 Redis pipeline 또는 Lua 등을 사용해 네트워크 I/O를 줄일 수 있다.
+   *
+   * @param code 로비 초대 코드
+   * @param userIdentifier 사용자 식별자
+   * @return 로비 사용자 접근 상태
+   */
+  LobbyUserAccessStatus getUserAccessStatus(String code, String userIdentifier);
 
   /**
    * 로비 참여자의 준비 상태를 변경한다.

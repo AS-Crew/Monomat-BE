@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.chat.service;
 
+import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
@@ -16,7 +17,6 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -54,8 +54,8 @@ class LobbyRecentChatQueryServiceTest {
         // given
         givenReadableParticipant();
 
-        ChatMessageDto firstMessage = chatMessage("첫 번째 메시지", "2026-05-30T12:00:00");
-        ChatMessageDto secondMessage = chatMessage("두 번째 메시지", "2026-05-30T12:00:01");
+        ChatMessageDto firstMessage = chatMessage("첫 번째 메시지", "2026-05-30T12:00:00.000Z");
+        ChatMessageDto secondMessage = chatMessage("두 번째 메시지", "2026-05-30T12:00:01.000Z");
 
         when(redisTemplate.opsForList()).thenReturn(listOperations);
         when(listOperations.range(RECENT_CHAT_KEY, 0, -1))
@@ -79,7 +79,8 @@ class LobbyRecentChatQueryServiceTest {
     @DisplayName("로비가 존재하지 않으면 최근 채팅을 조회할 수 없다")
     void getRecentMessages_failsWhenLobbyNotFound() {
         // given
-        when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(false);
+        when(lobbyRepository.getUserAccessStatus(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.LOBBY_NOT_FOUND);
 
         // when & then
         assertThatThrownBy(() -> service.getRecentMessages(LOBBY_CODE, USER_IDENTIFIER))
@@ -94,8 +95,8 @@ class LobbyRecentChatQueryServiceTest {
     @DisplayName("강퇴된 유저는 최근 채팅을 조회할 수 없다")
     void getRecentMessages_failsWhenUserKicked() {
         // given
-        when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(true);
-        when(lobbyRepository.isKicked(LOBBY_CODE, USER_IDENTIFIER)).thenReturn(true);
+        when(lobbyRepository.getUserAccessStatus(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.KICKED);
 
         // when & then
         assertThatThrownBy(() -> service.getRecentMessages(LOBBY_CODE, USER_IDENTIFIER))
@@ -103,7 +104,6 @@ class LobbyRecentChatQueryServiceTest {
                         assertThat(e.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN)
                 );
 
-        verify(lobbyRepository, never()).isParticipant(LOBBY_CODE, USER_IDENTIFIER);
         verify(redisTemplate, never()).opsForList();
     }
 
@@ -111,9 +111,8 @@ class LobbyRecentChatQueryServiceTest {
     @DisplayName("로비 참여자가 아니면 최근 채팅을 조회할 수 없다")
     void getRecentMessages_failsWhenNotParticipant() {
         // given
-        when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(true);
-        when(lobbyRepository.isKicked(LOBBY_CODE, USER_IDENTIFIER)).thenReturn(false);
-        when(lobbyRepository.isParticipant(LOBBY_CODE, USER_IDENTIFIER)).thenReturn(false);
+        when(lobbyRepository.getUserAccessStatus(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.NOT_PARTICIPANT);
 
         // when & then
         assertThatThrownBy(() -> service.getRecentMessages(LOBBY_CODE, USER_IDENTIFIER))
@@ -161,7 +160,7 @@ class LobbyRecentChatQueryServiceTest {
         // given
         givenReadableParticipant();
 
-        ChatMessageDto validMessage = chatMessage("정상 메시지", "2026-05-30T12:00:00");
+        ChatMessageDto validMessage = chatMessage("정상 메시지", "2026-05-30T12:00:00.000Z");
 
         when(redisTemplate.opsForList()).thenReturn(listOperations);
         when(listOperations.range(RECENT_CHAT_KEY, 0, -1))
@@ -179,9 +178,8 @@ class LobbyRecentChatQueryServiceTest {
     }
 
     private void givenReadableParticipant() {
-        when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(true);
-        when(lobbyRepository.isKicked(LOBBY_CODE, USER_IDENTIFIER)).thenReturn(false);
-        when(lobbyRepository.isParticipant(LOBBY_CODE, USER_IDENTIFIER)).thenReturn(true);
+        when(lobbyRepository.getUserAccessStatus(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
     }
 
     private ChatMessageDto chatMessage(String content, String timestamp) {

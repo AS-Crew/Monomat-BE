@@ -56,9 +56,16 @@ public class LobbyRecentChatStoreService {
     public void append(String lobbyCode, ChatMessageDto message) {
         try {
             appendOrThrow(lobbyCode, message);
+        } catch (RecentChatSerializationException | RecentChatLuaContractException e) {
+            log.error(
+                    "로비 최근 채팅 저장 로직 오류 - lobbyCode: {}, sender: {}",
+                    lobbyCode,
+                    message != null ? message.getSender() : null,
+                    e
+            );
         } catch (RuntimeException e) {
             log.warn(
-                    "로비 최근 채팅 저장 실패 - lobbyCode: {}, sender: {}",
+                    "로비 최근 채팅 Redis 저장 실패 - lobbyCode: {}, sender: {}",
                     lobbyCode,
                     message != null ? message.getSender() : null,
                     e
@@ -79,7 +86,7 @@ public class LobbyRecentChatStoreService {
         );
 
         if (!LUA_RESULT_OK.equals(result)) {
-            throw new IllegalStateException("로비 최근 채팅 저장 Lua 처리 실패: " + result);
+            throw new RecentChatLuaContractException("로비 최근 채팅 저장 Lua 처리 실패: " + result);
         }
     }
 
@@ -87,7 +94,19 @@ public class LobbyRecentChatStoreService {
         try {
             return jsonMapper.writeValueAsString(message);
         } catch (JacksonException e) {
-            throw new IllegalStateException("로비 최근 채팅 메시지 직렬화에 실패했습니다.", e);
+            throw new RecentChatSerializationException("로비 최근 채팅 메시지 직렬화에 실패했습니다.", e);
+        }
+    }
+
+    private static class RecentChatSerializationException extends RuntimeException {
+        private RecentChatSerializationException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    private static class RecentChatLuaContractException extends RuntimeException {
+        private RecentChatLuaContractException(String message) {
+            super(message);
         }
     }
 }

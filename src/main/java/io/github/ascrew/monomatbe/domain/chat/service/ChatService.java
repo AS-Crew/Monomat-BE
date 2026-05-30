@@ -28,11 +28,25 @@ import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 
 @Service
 @RequiredArgsConstructor
 public class ChatService {
+
+    /*
+     * 채팅 timestamp 포맷
+     *
+     * 서버 OS timezone에 종속되지 않도록 UTC 기준으로 고정한다.
+     * 프론트엔드 Date 파싱 안정성을 위해 millisecond 단위까지 고정된 문자열을 사용한다.
+     *
+     * 예: 2026-05-30T12:00:00.123Z
+     */
+    private static final DateTimeFormatter CHAT_TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
+                    .withZone(ZoneOffset.UTC);
 
     /*
      * 채팅 메시지 최대 길이
@@ -187,8 +201,12 @@ public class ChatService {
                 .roomId(roomId)
                 .sender(userIdentifier)
                 .content(normalizedContent)
-                .timestamp(LocalDateTime.now().toString())
+                .timestamp(currentTimestamp())
                 .build();
+    }
+
+    private String currentTimestamp() {
+        return CHAT_TIMESTAMP_FORMATTER.format(Instant.now());
     }
 
     /**

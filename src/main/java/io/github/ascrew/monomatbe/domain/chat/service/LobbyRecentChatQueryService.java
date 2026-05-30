@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.chat.service;
 
+import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
@@ -72,16 +73,25 @@ public class LobbyRecentChatQueryService {
     }
 
     private void validateReadPermission(String lobbyCode, String userIdentifier) {
-        if (!lobbyRepository.existsByCode(lobbyCode)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_LOBBY_NOT_FOUND);
-        }
+        LobbyUserAccessStatus accessStatus =
+                lobbyRepository.getUserAccessStatus(lobbyCode, userIdentifier);
 
-        if (lobbyRepository.isKicked(lobbyCode, userIdentifier)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_LOBBY_CHAT_KICKED);
-        }
-
-        if (!lobbyRepository.isParticipant(lobbyCode, userIdentifier)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_LOBBY_CHAT_FORBIDDEN);
+        switch (accessStatus) {
+            case PARTICIPANT -> {
+                return;
+            }
+            case LOBBY_NOT_FOUND -> throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    ERROR_LOBBY_NOT_FOUND
+            );
+            case KICKED -> throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_LOBBY_CHAT_KICKED
+            );
+            case NOT_PARTICIPANT -> throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_LOBBY_CHAT_FORBIDDEN
+            );
         }
     }
 

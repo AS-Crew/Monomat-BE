@@ -18,8 +18,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
@@ -98,7 +100,7 @@ class ChatServiceTest {
         assertThat(stored.getRoomId()).isEqualTo(LOBBY_CODE);
         assertThat(stored.getSender()).isEqualTo(USER_IDENTIFIER);
         assertThat(stored.getContent()).isEqualTo("안녕하세요");
-        assertThat(stored.getTimestamp()).isNotBlank();
+        assertUtcTimestamp(stored.getTimestamp());
 
         ArgumentCaptor<ChatMessageDto> publishCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
 
@@ -113,7 +115,7 @@ class ChatServiceTest {
         assertThat(published.getRoomId()).isEqualTo(LOBBY_CODE);
         assertThat(published.getSender()).isEqualTo(USER_IDENTIFIER);
         assertThat(published.getContent()).isEqualTo("안녕하세요");
-        assertThat(published.getTimestamp()).isNotBlank();
+        assertUtcTimestamp(published.getTimestamp());
     }
 
     @Test
@@ -303,5 +305,12 @@ class ChatServiceTest {
         accessor.setSessionAttributes(sessionAttributes);
 
         return accessor;
+    }
+
+    private void assertUtcTimestamp(String timestamp) {
+        assertThat(timestamp).isNotBlank();
+        assertThat(timestamp).endsWith("Z");
+        assertThatCode(() -> Instant.parse(timestamp))
+                .doesNotThrowAnyException();
     }
 }

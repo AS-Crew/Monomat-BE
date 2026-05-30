@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 
@@ -25,11 +26,13 @@ class MapPublicationValidatorTest {
     @Mock
     private MapItemJpaRepository mapItemJpaRepository;
 
+    private final JsonMapper jsonMapper = JsonMapper.builder().build();
+
     private MapPublicationValidator validator;
 
     @BeforeEach
     void setUp() {
-        validator = new MapPublicationValidator(mapItemJpaRepository);
+        validator = new MapPublicationValidator(mapItemJpaRepository, jsonMapper);
     }
 
     @Test
@@ -133,6 +136,18 @@ class MapPublicationValidatorTest {
     }
 
     @Test
+    void requirePublishable_malformedAnswersJson_throwsConflictWithoutPropagatingException() {
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
+                .thenReturn(List.of(itemWithRawAnswers(4, "{")));
+
+        assertThatThrownBy(() -> validator.requirePublishable(1L))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("4번 문제")
+                .hasMessageContaining("정답");
+    }
+
+    @Test
     void requirePublishable_allValid_doesNotThrow() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
                 .thenReturn(List.of(item(1, 0, 30, "정답1"), item(2, 10, 40, "정답2")));
@@ -162,7 +177,24 @@ class MapPublicationValidatorTest {
                 .endTime(endTime)
                 .youtubeUrl(youtubeUrl)
                 .videoId(videoId)
-                .answer(answer)
+                .answers(answersJson(answer))
                 .build();
+    }
+
+    // 비정상 JSON answers를 가진 유효 구간 아이템 (마이그레이션 잔여/수동 조작 데이터 가정)
+    private MapItem itemWithRawAnswers(int orderNum, String rawAnswers) {
+        return MapItem.builder()
+                .orderNum(orderNum)
+                .startTime(0)
+                .endTime(30)
+                .youtubeUrl(VALID_YOUTUBE_URL)
+                .videoId(VALID_VIDEO_ID)
+                .answers(rawAnswers)
+                .build();
+    }
+
+    // null/blank이면 빈 배열(정답 없음)을, 그 외엔 단일 정답 JSON 배열을 만든다.
+    private String answersJson(String answer) {
+        return (answer == null || answer.isBlank()) ? "[]" : "[\"" + answer + "\"]";
     }
 }

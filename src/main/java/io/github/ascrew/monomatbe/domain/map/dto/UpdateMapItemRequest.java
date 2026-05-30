@@ -25,15 +25,14 @@ public record UpdateMapItemRequest(
         @Min(value = 1, message = "종료 시간은 1 이상이어야 합니다.")
         Integer endTime,
 
-        @NotBlank(message = "메인 정답은 비어 있을 수 없습니다.")
-        @Size(max = 255, message = "메인 정답은 255자를 초과할 수 없습니다.")
-        String answer,
+        @NotNull(message = "정답 목록은 필수입니다.")
+        @Size(min = 1, max = 5, message = "정답은 1개 이상 5개 이하로 입력해야 합니다.")
+        List<@NotBlank(message = "정답 값은 비어 있을 수 없습니다.")
+                @Size(max = 255, message = "정답 값은 255자를 초과할 수 없습니다.")
+                String> answers,
 
-        List<@NotBlank(message = "복수 정답 값은 비어 있을 수 없습니다.")
-                @Size(max = 255, message = "복수 정답 값은 255자를 초과할 수 없습니다.")
-                String> altAnswers,
-
-        @Size(max = 255, message = "힌트는 255자를 초과할 수 없습니다.")
+        @NotBlank(message = "힌트는 필수입니다.")
+        @Size(max = 50, message = "힌트는 50자를 초과할 수 없습니다.")
         String hint,
 
         @Min(value = 1, message = "힌트 공개 시간은 1초 이상이어야 합니다.")

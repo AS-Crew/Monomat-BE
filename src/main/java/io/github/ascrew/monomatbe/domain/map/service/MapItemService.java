@@ -6,7 +6,7 @@ import io.github.ascrew.monomatbe.domain.map.dto.MapItemResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.ReorderMapItemsRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
-import io.github.ascrew.monomatbe.domain.map.support.HintTextGenerator;
+import io.github.ascrew.monomatbe.domain.map.support.AnswerNormalizer;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeValidationService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -20,7 +20,6 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 
 @Service
 public class MapItemService {
@@ -31,6 +30,7 @@ public class MapItemService {
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵 문제를 관리할 수 있습니다.";
     private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
     private static final String ERROR_DUPLICATE_ORDER = "이미 사용 중인 문제 순서입니다.";
+    private static final String ERROR_NO_VALID_ANSWER = "정답은 최소 1개 이상이어야 합니다.";
 
     private final MapItemPersistenceService persistenceService;
     private final YoutubeValidationService youtubeValidationService;
@@ -64,10 +64,9 @@ public class MapItemService {
 
         // 외부 oEmbed 호출은 트랜잭션/DB 커넥션 점유 밖에서 수행한다.
         YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(request.youtubeUrl());
-        String normalizedAnswer = request.answer().trim();
-        String altAnswersJson = serializeAltAnswers(request.altAnswers());
+        String answersJson = serializeAnswers(request.answers());
         int hintTime = request.hintTime() == null ? DEFAULT_HINT_TIME : request.hintTime();
-        String hint = buildHint(request.hint(), normalizedAnswer);
+        String hint = request.hint().trim();
 
         // 서비스 레벨 pre-check는 단일 요청 fast-fail 용도이고,
         // 실제 동시성 보장은 DB 레벨 (map_id, active_order_num) UNIQUE 제약이 담당한다.
@@ -78,8 +77,7 @@ public class MapItemService {
                     principal.userId(),
                     request,
                     metadata,
-                    normalizedAnswer,
-                    altAnswersJson,
+                    answersJson,
                     hint,
                     hintTime
             );
@@ -98,10 +96,9 @@ public class MapItemService {
 
         // 외부 oEmbed 호출은 트랜잭션/DB 커넥션 점유 밖에서 수행한다.
         YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(request.youtubeUrl());
-        String normalizedAnswer = request.answer().trim();
-        String altAnswersJson = serializeAltAnswers(request.altAnswers());
+        String answersJson = serializeAnswers(request.answers());
         int hintTime = request.hintTime() == null ? DEFAULT_HINT_TIME : request.hintTime();
-        String hint = buildHint(request.hint(), normalizedAnswer);
+        String hint = request.hint().trim();
 
         MapItem updated;
         try {
@@ -111,8 +108,7 @@ public class MapItemService {
                     principal.userId(),
                     request,
                     metadata,
-                    normalizedAnswer,
-                    altAnswersJson,
+                    answersJson,
                     hint,
                     hintTime
             );
@@ -159,24 +155,15 @@ public class MapItemService {
         }
     }
 
-    private String buildHint(String hint, String answer) {
-        if (hint != null && !hint.isBlank()) {
-            return hint.trim();
+    private String serializeAnswers(List<String> answers) {
+        List<String> normalized = AnswerNormalizer.normalizeList(answers);
+        if (normalized.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_NO_VALID_ANSWER);
         }
-        return HintTextGenerator.toInitialConsonants(answer);
-    }
-
-    private String serializeAltAnswers(List<String> altAnswers) {
-        List<String> normalized = altAnswers == null ? Collections.emptyList() : altAnswers.stream()
-                .filter(Objects::nonNull)
-                .map(String::trim)
-                .filter(value -> !value.isBlank())
-                .distinct()
-                .toList();
         return jsonMapper.writeValueAsString(normalized);
     }
 
-    private List<String> deserializeAltAnswers(String raw) {
+    private List<String> deserializeAnswers(String raw) {
         if (raw == null || raw.isBlank()) {
             return Collections.emptyList();
         }
@@ -195,8 +182,7 @@ public class MapItemService {
                 .title(mapItem.getTitle())
                 .artist(mapItem.getArtist())
                 .thumbnailUrl(mapItem.getThumbnailUrl())
-                .answer(mapItem.getAnswer())
-                .altAnswers(deserializeAltAnswers(mapItem.getAltAnswers()))
+                .answers(deserializeAnswers(mapItem.getAnswers()))
                 .hint(mapItem.getHint())
                 .hintTime(mapItem.getHintTime())
                 .createdAt(mapItem.getCreatedAt())

@@ -872,6 +872,108 @@ JWT Access Token이 필요합니다.
 
 ---
 
+#### 로비 최근 채팅 조회
+
+```http
+GET /api/lobbies/{code}/chats/recent
+````
+
+로비 입장 또는 새로고침 시 Redis에 저장된 최근 로비 채팅 메시지를 조회합니다.
+
+이 API는 채팅 영구 저장 기능이 아닙니다.
+로비별 Redis List에 보관된 최근 N개의 메시지만 반환하며, 보관 개수와 TTL은 서버 설정값을 따릅니다.
+
+**정책**
+
+* JWT Access Token이 필요합니다.
+* 현재 로비 참여자만 조회할 수 있습니다.
+* 강퇴된 사용자는 조회할 수 없습니다.
+* Redis 장애 또는 최근 채팅 캐시 조회 실패 시 빈 배열을 반환합니다.
+* 응답은 오래된 메시지 → 최신 메시지 순서입니다.
+* 응답 DTO는 WebSocket 로비 채팅 메시지와 동일한 구조를 사용합니다.
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Path Variable**
+
+| 이름     | 타입     | 설명       |
+| ------ | ------ | -------- |
+| `code` | String | 로비 초대 코드 |
+
+**Response `200 OK`**
+
+```json
+[
+  {
+    "type": "CHAT",
+    "roomId": "ABC123",
+    "sender": "11111111-1111-1111-1111-111111111111",
+    "content": "안녕하세요",
+    "timestamp": "2026-05-30T12:00:00"
+  },
+  {
+    "type": "CHAT",
+    "roomId": "ABC123",
+    "sender": "22222222-2222-2222-2222-222222222222",
+    "content": "준비됐어요",
+    "timestamp": "2026-05-30T12:00:03"
+  }
+]
+```
+
+최근 채팅이 없거나 Redis 조회에 실패한 경우에도 `200 OK`와 빈 배열을 반환합니다.
+
+```json
+[]
+```
+
+**Response Fields**
+
+| 필드          | 타입     | 설명                        |
+| ----------- | ------ | ------------------------- |
+| `type`      | String | 메시지 타입. 일반 사용자 채팅은 `CHAT` |
+| `roomId`    | String | 로비 초대 코드                  |
+| `sender`    | String | 메시지 발신자 userIdentifier    |
+| `content`   | String | 채팅 메시지 본문                 |
+| `timestamp` | String | 서버에서 생성한 메시지 발신 시각        |
+
+**Error**
+
+| 상태 코드              | 설명                                  |
+| ------------------ | ----------------------------------- |
+| `401 Unauthorized` | JWT 토큰 없음, 만료, 또는 인증 주체가 유효하지 않은 경우 |
+| `403 Forbidden`    | 로비 참여자가 아니거나 강퇴된 사용자가 조회하는 경우       |
+| `404 Not Found`    | 존재하지 않는 로비                          |
+
+**FE 처리 기준**
+
+| 상황                 | 처리 방식                       |
+| ------------------ | --------------------------- |
+| `200 OK` + 메시지 배열  | 로비 채팅 UI 초기 메시지로 렌더링        |
+| `200 OK` + 빈 배열    | 기존 메시지 없이 실시간 채팅만 표시        |
+| `401 Unauthorized` | 로그인/게스트 세션 재진입 처리           |
+| `403 Forbidden`    | 로비 접근 중단 후 목록 또는 이전 화면으로 이동 |
+| `404 Not Found`    | 로비 목록으로 이동                  |
+
+**권장 호출 순서**
+
+```text
+1. POST /api/lobbies/join 호출
+2. WebSocket CONNECT
+3. SUBSCRIBE /topic/lobby/{code}
+4. GET /api/lobbies/{code}/chats/recent 호출
+5. 이후 /topic/lobby/{code} 실시간 메시지 수신
+```
+
+> 최근 채팅 조회는 로비 참여 확정 이후 호출해야 합니다.
+> REST join 성공만으로는 실제 로비 참여자가 아니며, 최종 참여 확정 기준은 WebSocket SUBSCRIBE 성공입니다.
+
+---
+
 #### 로비 ready 상태 변경
 
 ```http

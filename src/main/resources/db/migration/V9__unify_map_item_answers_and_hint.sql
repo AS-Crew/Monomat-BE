@@ -4,10 +4,17 @@
 --   - 힌트는 초성 자동 생성 폐기 → 수동 입력 필수, 최대 50자.
 -- 전제: 보존할 운영 데이터 없음. 아래 병합/절단 UPDATE는 개발 DB(baseline 이후 잔여 행) 안전망이다.
 
--- 1) 기존 행의 answer를 answers 배열로 병합 (alt_answers가 비어 있는 경우)
+-- 1) 모든 행: answer를 대표(answers[0])로 두고, 유효한 JSON 배열인 alt_answers를 뒤에 병합.
+--    JSON_VALID로 먼저 거른 뒤에만 JSON_TYPE/JSON_LENGTH/JSON_ARRAY_INSERT를 평가하므로
+--    빈 문자열·비정상 JSON이 남아 있어도 DB 에러 없이 안전하게 변환된다. (CASE는 첫 참 WHEN에서 멈춤)
 UPDATE map_item
-SET alt_answers = JSON_ARRAY(answer)
-WHERE alt_answers IS NULL OR alt_answers = '' OR JSON_LENGTH(alt_answers) = 0;
+SET alt_answers = CASE
+    WHEN alt_answers IS NULL OR alt_answers = '' OR JSON_VALID(alt_answers) = 0
+        THEN JSON_ARRAY(answer)
+    WHEN JSON_TYPE(alt_answers) <> 'ARRAY' OR JSON_LENGTH(alt_answers) = 0
+        THEN JSON_ARRAY(answer)
+    ELSE JSON_ARRAY_INSERT(alt_answers, '$[0]', answer)
+END;
 
 -- 2) alt_answers → answers 리네임 + NOT NULL 전환
 ALTER TABLE map_item

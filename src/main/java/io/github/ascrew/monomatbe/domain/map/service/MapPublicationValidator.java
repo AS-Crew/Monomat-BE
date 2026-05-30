@@ -98,6 +98,11 @@ public class MapPublicationValidator {
         if (answersJson == null || answersJson.isBlank()) {
             return true;
         }
-        return jsonMapper.readValue(answersJson, new TypeReference<List<String>>() {}).isEmpty();
+        try {
+            return jsonMapper.readValue(answersJson, new TypeReference<List<String>>() {}).isEmpty();
+        } catch (Exception e) {
+            // 비정상 JSON은 공개 불가 데이터로 간주한다. (예외를 공개 검증/CRUD 흐름으로 전파하지 않음)
+            return true;
+        }
     }
 }

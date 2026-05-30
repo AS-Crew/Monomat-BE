@@ -136,6 +136,18 @@ class MapPublicationValidatorTest {
     }
 
     @Test
+    void requirePublishable_malformedAnswersJson_throwsConflictWithoutPropagatingException() {
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
+                .thenReturn(List.of(itemWithRawAnswers(4, "{")));
+
+        assertThatThrownBy(() -> validator.requirePublishable(1L))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("4번 문제")
+                .hasMessageContaining("정답");
+    }
+
+    @Test
     void requirePublishable_allValid_doesNotThrow() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
                 .thenReturn(List.of(item(1, 0, 30, "정답1"), item(2, 10, 40, "정답2")));
@@ -166,6 +178,18 @@ class MapPublicationValidatorTest {
                 .youtubeUrl(youtubeUrl)
                 .videoId(videoId)
                 .answers(answersJson(answer))
+                .build();
+    }
+
+    // 비정상 JSON answers를 가진 유효 구간 아이템 (마이그레이션 잔여/수동 조작 데이터 가정)
+    private MapItem itemWithRawAnswers(int orderNum, String rawAnswers) {
+        return MapItem.builder()
+                .orderNum(orderNum)
+                .startTime(0)
+                .endTime(30)
+                .youtubeUrl(VALID_YOUTUBE_URL)
+                .videoId(VALID_VIDEO_ID)
+                .answers(rawAnswers)
                 .build();
     }
 

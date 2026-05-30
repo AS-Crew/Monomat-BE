@@ -40,4 +40,22 @@ public interface GuestSessionRepository extends JpaRepository<GuestSession, Long
     List<UserIdentifierNicknameProjection> findNicknamesByGuestTokenIn(
             @Param("guestTokens") Collection<String> guestTokens
     );
+
+    /**
+     * 게스트 userIdentifier에 대응되는 사용자 프로필을 Projection으로 조회한다.
+     *
+     * [사용 목적]
+     * 로비 채팅 메시지 신고를 위해 Redis 최근 채팅에 senderId와 senderNickname을 함께 저장한다.
+     */
+    @Query("""
+            select g.guestToken as userIdentifier,
+                   u.id as userId,
+                   u.username as nickname
+            from GuestSession g
+            join g.user u
+            where g.guestToken in :guestTokens
+            """)
+    List<UserIdentifierProfileProjection> findProfilesByGuestTokenIn(
+            @Param("guestTokens") Collection<String> guestTokens
+    );
 }

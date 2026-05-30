@@ -48,6 +48,24 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
             @Param("sessionIds") Collection<String> sessionIds
     );
 
+    /**
+     * 회원 userIdentifier에 대응되는 사용자 프로필을 Projection으로 조회한다.
+     *
+     * [사용 목적]
+     * 로비 채팅 메시지 신고를 위해 Redis 최근 채팅에 senderId와 senderNickname을 함께 저장한다.
+     */
+    @Query("""
+            select s.sessionId as userIdentifier,
+                   u.id as userId,
+                   u.username as nickname
+            from UserSession s
+            join s.user u
+            where s.sessionId in :sessionIds
+            """)
+    List<UserIdentifierProfileProjection> findProfilesBySessionIdIn(
+            @Param("sessionIds") Collection<String> sessionIds
+    );
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from UserSession s where s.sessionId = :sessionId")
     Optional<UserSession> findBySessionIdForUpdate(@Param("sessionId") String sessionId);

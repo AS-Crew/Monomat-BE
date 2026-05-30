@@ -64,9 +64,8 @@ class MapItemServiceTest {
                 "https://www.youtube.com/watch?v=abcde123456",
                 20,
                 10,
-                "정답",
-                List.of("정답2"),
-                null,
+                List.of("정답"),
+                "힌트",
                 15
         );
 
@@ -75,26 +74,26 @@ class MapItemServiceTest {
                 .hasMessageContaining("재생 구간은 시작 시간보다 종료 시간이 커야 합니다.");
 
         verify(youtubeValidationService, never()).validateYoutubeUrl(any());
-        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), any(), anyInt());
+        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
         verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
     }
 
     @Test
     void createMapItem_success_callsYoutubeBeforePersistenceAndEvictsCacheAfter() throws Exception {
+        // "좋은날"과 "좋은 날"은 정규화 후 동일 → dedup되어 단일 정답으로 저장된다.
         CreateMapItemRequest request = new CreateMapItemRequest(
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 10,
                 40,
-                "좋은날",
-                List.of("좋은 날", "좋은날"),
-                null,
+                List.of("좋은날", "좋은 날"),
+                "  좋은날 힌트  ",
                 null
         );
 
         YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb");
         when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
-        when(jsonMapper.writeValueAsString(any())).thenReturn("[\"좋은 날\",\"좋은날\"]");
+        when(jsonMapper.writeValueAsString(List.of("좋은날"))).thenReturn("[\"좋은날\"]");
 
         QuizMap quizMap = quizMap(1L, owner(10L));
         MapItem persisted = MapItem.builder()
@@ -108,9 +107,8 @@ class MapItemServiceTest {
                 .title("title")
                 .artist("artist")
                 .thumbnailUrl("thumb")
-                .answer("좋은날")
-                .altAnswers("[\"좋은 날\",\"좋은날\"]")
-                .hint("ㅈㅇㄴ")
+                .answers("[\"좋은날\"]")
+                .hint("좋은날 힌트")
                 .hintTime(15)
                 .build();
         when(persistenceService.create(
@@ -118,9 +116,8 @@ class MapItemServiceTest {
                 eq(10L),
                 eq(request),
                 eq(metadata),
-                eq("좋은날"),
-                eq("[\"좋은 날\",\"좋은날\"]"),
-                eq("ㅈㅇㄴ"),
+                eq("[\"좋은날\"]"),
+                eq("좋은날 힌트"),
                 eq(15)
         )).thenReturn(persisted);
 
@@ -128,14 +125,14 @@ class MapItemServiceTest {
 
         assertThat(response.id()).isEqualTo(100L);
         assertThat(response.videoId()).isEqualTo("abcde123456");
-        assertThat(response.hint()).isEqualTo("ㅈㅇㄴ");
+        assertThat(response.hint()).isEqualTo("좋은날 힌트");
 
         // oEmbed → 영속화 → 캐시 무효화 순서 검증 (캐시 무효화는 영속화 메서드 정상 반환 = 커밋 후).
         InOrder inOrder = inOrder(youtubeValidationService, persistenceService, mapCacheEvictor);
         inOrder.verify(youtubeValidationService).validateYoutubeUrl(request.youtubeUrl());
         inOrder.verify(persistenceService).create(
                 eq(1L), eq(10L), eq(request), eq(metadata),
-                eq("좋은날"), eq("[\"좋은 날\",\"좋은날\"]"), eq("ㅈㅇㄴ"), eq(15)
+                eq("[\"좋은날\"]"), eq("좋은날 힌트"), eq(15)
         );
         inOrder.verify(mapCacheEvictor).evictPublicMapCaches(1L);
     }
@@ -154,8 +151,7 @@ class MapItemServiceTest {
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
-                .answer("정답")
-                .altAnswers(null)
+                .answers(null)
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .build();

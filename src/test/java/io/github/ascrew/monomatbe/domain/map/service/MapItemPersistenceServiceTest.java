@@ -72,7 +72,7 @@ class MapItemPersistenceServiceTest {
         YoutubeMetadata metadata = new YoutubeMetadata("v", "t", "a", "th");
 
         assertThatThrownBy(() -> persistenceService.create(
-                1L, 10L, request, metadata, "정답", "[]", "ㅈㄷ", 15
+                1L, 10L, request, metadata, "[\"정답\"]", "ㅈㄷ", 15
         ))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("이미 사용 중인 문제 순서입니다.");
@@ -98,8 +98,7 @@ class MapItemPersistenceServiceTest {
                     .title(input.getTitle())
                     .artist(input.getArtist())
                     .thumbnailUrl(input.getThumbnailUrl())
-                    .answer(input.getAnswer())
-                    .altAnswers(input.getAltAnswers())
+                    .answers(input.getAnswers())
                     .hint(input.getHint())
                     .hintTime(input.getHintTime())
                     .build();
@@ -111,7 +110,7 @@ class MapItemPersistenceServiceTest {
         YoutubeMetadata metadata = new YoutubeMetadata("v", "t", "a", "th");
 
         MapItem saved = persistenceService.create(
-                1L, 10L, request, metadata, "정답", "[]", "ㅈㄷ", 15
+                1L, 10L, request, metadata, "[\"정답\"]", "ㅈㄷ", 15
         );
 
         assertThat(saved.getId()).isEqualTo(100L);
@@ -136,8 +135,7 @@ class MapItemPersistenceServiceTest {
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
-                .answer("정답")
-                .altAnswers(null)
+                .answers("[\"정답\"]")
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
@@ -168,7 +166,7 @@ class MapItemPersistenceServiceTest {
         persistenceService.create(
                 1L, 10L, createRequest(1),
                 new YoutubeMetadata("v", "t", "a", "th"),
-                "정답", "[]", "ㅈㄷ", 15
+                "[\"정답\"]", "ㅈㄷ", 15
         );
 
         assertThat(quizMap.getIsPublic()).isTrue();
@@ -190,7 +188,7 @@ class MapItemPersistenceServiceTest {
         persistenceService.create(
                 1L, 10L, createRequest(1),
                 new YoutubeMetadata("v", "t", "a", "th"),
-                "정답", "[]", "ㅈㄷ", 15
+                "[\"정답\"]", "ㅈㄷ", 15
         );
 
         assertThat(quizMap.getIsPublic()).isFalse();
@@ -214,8 +212,7 @@ class MapItemPersistenceServiceTest {
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
-                .answer("정답")
-                .altAnswers(null)
+                .answers("[\"정답\"]")
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
@@ -248,8 +245,7 @@ class MapItemPersistenceServiceTest {
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
-                .answer("정답")
-                .altAnswers(null)
+                .answers("[\"정답\"]")
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
@@ -284,8 +280,7 @@ class MapItemPersistenceServiceTest {
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
-                .answer("정답")
-                .altAnswers(null)
+                .answers("[\"정답\"]")
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
@@ -404,8 +399,7 @@ class MapItemPersistenceServiceTest {
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
-                .answer("정답")
-                .altAnswers(null)
+                .answers("[\"정답\"]")
                 .hint("ㅈㄷ")
                 .hintTime(15)
                 .isDeleted(false)
@@ -418,9 +412,8 @@ class MapItemPersistenceServiceTest {
                 "https://www.youtube.com/watch?v=abcde123456",
                 10,
                 40,
-                "정답",
-                List.of(),
-                null,
+                List.of("정답"),
+                "힌트",
                 null
         );
     }

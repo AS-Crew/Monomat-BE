@@ -25,7 +25,7 @@ public class GameSessionQueryService {
 
         String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
         
-        List<Object> hashValues = redisTemplate.opsForHash().multiGet(sessionKey, List.of("current_round_no", "time_limit_seconds", "playback_started_at"));
+        List<Object> hashValues = redisTemplate.opsForHash().multiGet(sessionKey, List.of("current_round_no", "time_limit_seconds"));
         
         if (hashValues.get(0) == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "진행 중인 게임 세션이 없습니다.");
@@ -33,7 +33,10 @@ public class GameSessionQueryService {
 
         int roundNo = Integer.parseInt((String) hashValues.get(0));
         int timeLimitSeconds = hashValues.get(1) != null ? Integer.parseInt((String) hashValues.get(1)) : 30;
-        Long serverStartedAt = hashValues.get(2) != null ? Long.parseLong((String) hashValues.get(2)) : null;
+        
+        String playbackStartedKey = "playback_started_at:" + roundNo;
+        String playbackStartedAtStr = (String) redisTemplate.opsForHash().get(sessionKey, playbackStartedKey);
+        Long serverStartedAt = playbackStartedAtStr != null ? Long.parseLong(playbackStartedAtStr) : null;
 
         String playbackLockKey = RedisKeys.gameSessionPlaybackLockKey(lobbyCode, roundNo);
         boolean isPlaying = Boolean.TRUE.equals(redisTemplate.hasKey(playbackLockKey));

@@ -28,6 +28,11 @@ public class GameEventController {
             return;
         }
 
+        if (request == null || request.roundNo() <= 0) {
+            log.warn("GameEventController: 잘못된 ready-to-play 요청 - code: {}, request: {}", code, request);
+            return;
+        }
+
         gameRoundStartService.processReadyToPlay(code, principal.userIdentifier(), request.roundNo());
     }
 }

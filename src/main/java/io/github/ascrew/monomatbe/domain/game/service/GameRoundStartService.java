@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.game.dto.RoundPlaybackStartedDto;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import lombok.extern.slf4j.Slf4j;
@@ -8,13 +9,12 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -23,20 +23,22 @@ public class GameRoundStartService {
     private final StringRedisTemplate redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
     private final RedisScript<String> readyToPlayScript;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(Runtime.getRuntime().availableProcessors());
+    private final TaskScheduler taskScheduler;
 
     public GameRoundStartService(
             StringRedisTemplate redisTemplate,
             SimpMessagingTemplate messagingTemplate,
-            @Qualifier("readyToPlayScript") RedisScript<String> readyToPlayScript) {
+            @Qualifier("readyToPlayScript") RedisScript<String> readyToPlayScript,
+            TaskScheduler taskScheduler) {
         this.redisTemplate = redisTemplate;
         this.messagingTemplate = messagingTemplate;
         this.readyToPlayScript = readyToPlayScript;
+        this.taskScheduler = taskScheduler;
     }
 
     public void scheduleForcePlaybackStart(String lobbyCode, int roundNo, int timeLimitSeconds) {
         log.info("게임 세션 라운드 시작 예약 - code: {}, roundNo: {}, timeout: 10s", lobbyCode, roundNo);
-        scheduler.schedule(() -> forcePlaybackStart(lobbyCode, roundNo, timeLimitSeconds), 10, TimeUnit.SECONDS);
+        taskScheduler.schedule(() -> forcePlaybackStart(lobbyCode, roundNo, timeLimitSeconds), Instant.now().plusSeconds(10));
     }
 
     public void processReadyToPlay(String lobbyCode, String userIdentifier, int roundNo) {
@@ -66,8 +68,15 @@ public class GameRoundStartService {
         String playbackLockKey = RedisKeys.gameSessionPlaybackLockKey(lobbyCode, roundNo);
         Boolean lockAcquired = redisTemplate.opsForValue().setIfAbsent(playbackLockKey, "1", Duration.ofHours(2));
 
+        String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
+        String playbackStartedKey = "playback_started_at:" + roundNo;
+        String playbackStartedAtVal = (String) redisTemplate.opsForHash().get(sessionKey, playbackStartedKey);
+
         if (Boolean.TRUE.equals(lockAcquired)) {
             log.warn("라운드 준비 타임아웃 발생. 강제 재생 시작 - code: {}, roundNo: {}", lobbyCode, roundNo);
+            broadcastPlaybackStarted(lobbyCode, roundNo, timeLimitSeconds);
+        } else if (playbackStartedAtVal == null) {
+            log.warn("라운드 락은 획득되었으나 재생 시작 시간이 기록되지 않은 비정상 상태 감지. 강제 재생 시작으로 복구 - code: {}, roundNo: {}", lobbyCode, roundNo);
             broadcastPlaybackStarted(lobbyCode, roundNo, timeLimitSeconds);
         } else {
             log.info("라운드 강제 재생 무시됨 (이미 시작됨) - code: {}, roundNo: {}", lobbyCode, roundNo);
@@ -78,10 +87,11 @@ public class GameRoundStartService {
         long serverStartedAt = System.currentTimeMillis();
 
         String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
-        redisTemplate.opsForHash().put(sessionKey, "playback_started_at", String.valueOf(serverStartedAt));
+        String playbackStartedKey = "playback_started_at:" + roundNo;
+        redisTemplate.opsForHash().put(sessionKey, playbackStartedKey, String.valueOf(serverStartedAt));
 
         RoundPlaybackStartedDto dto = RoundPlaybackStartedDto.builder()
-                .type("ROUND_PLAYBACK_STARTED")
+                .type(GameEventTypes.ROUND_PLAYBACK_STARTED)
                 .roundNo(roundNo)
                 .serverStartedAt(serverStartedAt)
                 .durationSeconds(durationSeconds)
@@ -90,3 +100,4 @@ public class GameRoundStartService {
         messagingTemplate.convertAndSend(StompDestinations.subscribeGameRound(lobbyCode), dto);
     }
 }
+

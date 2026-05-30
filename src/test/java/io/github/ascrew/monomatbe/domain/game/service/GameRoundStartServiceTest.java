@@ -36,6 +36,8 @@ class GameRoundStartServiceTest {
     private HashOperations<String, Object, Object> hashOperations;
     @Mock
     private ValueOperations<String, String> valueOperations;
+    @Mock
+    private org.springframework.scheduling.TaskScheduler taskScheduler;
 
     private GameRoundStartService gameRoundStartService;
 
@@ -45,7 +47,7 @@ class GameRoundStartServiceTest {
 
     @BeforeEach
     void setUp() {
-        gameRoundStartService = new GameRoundStartService(redisTemplate, messagingTemplate, readyToPlayScript);
+        gameRoundStartService = new GameRoundStartService(redisTemplate, messagingTemplate, readyToPlayScript, taskScheduler);
     }
 
     @Test

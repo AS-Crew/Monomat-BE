@@ -21,6 +21,12 @@ public class GameSessionController {
     public ResponseEntity<CurrentRoundStatusResponse> getCurrentRoundStatus(
             @PathVariable("code") String code,
             CustomPrincipal principal) {
+        if (principal == null || principal.userIdentifier() == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED,
+                    "유효하지 않은 인증 정보입니다."
+            );
+        }
         CurrentRoundStatusResponse response = gameSessionQueryService.getCurrentRoundStatus(code, principal.userIdentifier());
         return ResponseEntity.ok(response);
     }

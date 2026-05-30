@@ -86,6 +86,67 @@
 ```text
 비밀번호가 일치하지 않습니다.
 ```
+---
+
+### 사용자 (User)
+
+로그인한 사용자의 기본 정보를 조회합니다.
+
+#### 내 사용자 정보 조회
+
+```http
+GET /api/users/me
+````
+
+JWT Access Token이 필요합니다.
+
+프론트엔드는 이 API를 사용해 상단 프로필 영역, 닉네임 표시, 게스트/회원 분기 처리 등에 필요한 사용자 정보를 조회할 수 있습니다.
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Response `200 OK`**
+
+```json
+{
+  "userId": 1,
+  "username": "모노유저",
+  "userType": "REGISTERED",
+  "status": "ACTIVE",
+  "createdAt": "2026-05-29T12:00:00"
+}
+```
+
+**Response Fields**
+
+| 필드          | 타입     | 설명                                    |
+| ----------- | ------ | ------------------------------------- |
+| `userId`    | Long   | 사용자 고유 ID. `users.id`                 |
+| `username`  | String | 서비스 표시 닉네임                            |
+| `userType`  | String | 사용자 유형. `GUEST`, `REGISTERED`         |
+| `status`    | String | 사용자 상태. `ACTIVE`, `BANNED`, `DELETED` |
+| `createdAt` | String | 사용자 생성 시각. ISO-8601 LocalDateTime 형식  |
+
+**Error**
+
+| 상태 코드              | 설명                                                |
+| ------------------ | ------------------------------------------------- |
+| `401 Unauthorized` | 인증 정보 없음, 유효하지 않은 Access Token, DB에서 사용자를 찾을 수 없음 |
+| `401 Unauthorized` | 탈퇴 또는 삭제된 사용자                                     |
+| `403 Forbidden`    | 정지된 사용자                                           |
+| `409 Conflict`     | 사용자 상태 값이 비정상인 경우                                 |
+
+**프론트엔드 처리 기준**
+
+| 상황                 | 처리 방식                                  |
+| ------------------ | -------------------------------------- |
+| `200 OK`           | 사용자 정보를 전역 auth/user 상태에 저장            |
+| `401 Unauthorized` | 토큰 만료 또는 세션 무효 처리 후 로그인/게스트 진입 화면으로 이동 |
+| `403 Forbidden`    | 정지 계정 안내 화면 또는 toast 표시                |
+| `409 Conflict`     | 일시적 상태 불일치 안내 후 재로그인 유도                |
 
 ---
 

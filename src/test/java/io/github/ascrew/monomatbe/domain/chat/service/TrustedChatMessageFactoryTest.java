@@ -1,7 +1,5 @@
 package io.github.ascrew.monomatbe.domain.chat.service;
 
-import io.github.ascrew.monomatbe.domain.auth.service.UserIdentifierProfile;
-import io.github.ascrew.monomatbe.domain.auth.service.UserNicknameLookupService;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -13,8 +11,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
-import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -34,7 +30,7 @@ class TrustedChatMessageFactoryTest {
     private ChatMessageIdGenerator chatMessageIdGenerator;
 
     @Mock
-    private UserNicknameLookupService userNicknameLookupService;
+    private ChatSenderProfileResolver chatSenderProfileResolver;
 
     private TrustedChatMessageFactory trustedChatMessageFactory;
 
@@ -42,7 +38,7 @@ class TrustedChatMessageFactoryTest {
     void setUp() {
         trustedChatMessageFactory = new TrustedChatMessageFactory(
                 chatMessageIdGenerator,
-                userNicknameLookupService
+                chatSenderProfileResolver
         );
     }
 
@@ -63,11 +59,12 @@ class TrustedChatMessageFactoryTest {
                 .build();
 
         when(chatMessageIdGenerator.generate()).thenReturn(MESSAGE_ID);
-        when(userNicknameLookupService.findProfileMapByUserIdentifiers(List.of(USER_IDENTIFIER)))
-                .thenReturn(Map.of(
-                        USER_IDENTIFIER,
-                        new UserIdentifierProfile(USER_ID, NICKNAME)
-                ));
+        when(chatSenderProfileResolver.resolve(USER_IDENTIFIER))
+                .thenReturn(ChatSenderProfile.builder()
+                        .userIdentifier(USER_IDENTIFIER)
+                        .userId(USER_ID)
+                        .nickname(NICKNAME)
+                        .build());
 
         // when
         ChatMessageDto result = trustedChatMessageFactory.createUserChatMessage(
@@ -90,14 +87,14 @@ class TrustedChatMessageFactoryTest {
     }
 
     @Test
-    @DisplayName("닉네임 프로필을 찾지 못해도 메시지 생성은 실패시키지 않는다")
+    @DisplayName("프로필을 찾지 못해도 메시지 생성은 실패시키지 않는다")
     void createUserChatMessage_successWithoutProfile() {
         // given
         ChatMessageDto request = chatMessage("안녕하세요");
 
         when(chatMessageIdGenerator.generate()).thenReturn(MESSAGE_ID);
-        when(userNicknameLookupService.findProfileMapByUserIdentifiers(List.of(USER_IDENTIFIER)))
-                .thenReturn(Map.of());
+        when(chatSenderProfileResolver.resolve(USER_IDENTIFIER))
+                .thenReturn(ChatSenderProfile.unresolved(USER_IDENTIFIER));
 
         // when
         ChatMessageDto result = trustedChatMessageFactory.createUserChatMessage(
@@ -172,11 +169,12 @@ class TrustedChatMessageFactoryTest {
                 .build();
 
         when(chatMessageIdGenerator.generate()).thenReturn(MESSAGE_ID);
-        when(userNicknameLookupService.findProfileMapByUserIdentifiers(List.of(USER_IDENTIFIER)))
-                .thenReturn(Map.of(
-                        USER_IDENTIFIER,
-                        new UserIdentifierProfile(USER_ID, NICKNAME)
-                ));
+        when(chatSenderProfileResolver.resolve(USER_IDENTIFIER))
+                .thenReturn(ChatSenderProfile.builder()
+                        .userIdentifier(USER_IDENTIFIER)
+                        .userId(USER_ID)
+                        .nickname(NICKNAME)
+                        .build());
 
         // when
         ChatMessageDto result = trustedChatMessageFactory.createUserChatMessage(

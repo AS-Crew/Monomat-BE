@@ -1,7 +1,5 @@
 package io.github.ascrew.monomatbe.domain.chat.service;
 
-import io.github.ascrew.monomatbe.domain.auth.service.UserIdentifierProfile;
-import io.github.ascrew.monomatbe.domain.auth.service.UserNicknameLookupService;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -12,7 +10,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.Map;
 
 /**
  * 서버 신뢰 채팅 메시지 생성 컴포넌트
@@ -44,7 +41,7 @@ public class TrustedChatMessageFactory {
             "일반 채팅으로 전송할 수 없는 메시지 타입입니다.";
 
     private final ChatMessageIdGenerator chatMessageIdGenerator;
-    private final UserNicknameLookupService userNicknameLookupService;
+    private final ChatSenderProfileResolver chatSenderProfileResolver;
     private final Clock clock = Clock.systemUTC();
 
     /**
@@ -64,28 +61,19 @@ public class TrustedChatMessageFactory {
         validateUserMessageType(message);
 
         String sentAt = currentTimestamp();
-        UserIdentifierProfile senderProfile = resolveSenderProfile(userIdentifier);
+        ChatSenderProfile senderProfile = chatSenderProfileResolver.resolve(userIdentifier);
 
         return ChatMessageDto.builder()
                 .messageId(chatMessageIdGenerator.generate())
                 .type(ChatMessageDto.MessageType.CHAT)
                 .roomId(roomId)
                 .sender(userIdentifier)
-                .senderId(senderProfile != null ? senderProfile.userId() : null)
-                .senderNickname(senderProfile != null ? senderProfile.nickname() : null)
+                .senderId(senderProfile.getUserId())
+                .senderNickname(senderProfile.getNickname())
                 .content(normalizedContent)
                 .timestamp(sentAt)
                 .sentAt(sentAt)
                 .build();
-    }
-
-    private UserIdentifierProfile resolveSenderProfile(String userIdentifier) {
-        Map<String, UserIdentifierProfile> profileMap =
-                userNicknameLookupService.findProfileMapByUserIdentifiers(
-                        userIdentifier != null ? java.util.List.of(userIdentifier) : java.util.List.of()
-                );
-
-        return profileMap.get(userIdentifier);
     }
 
     private String currentTimestamp() {

@@ -5,6 +5,8 @@ import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
@@ -21,8 +23,10 @@ import java.util.Optional;
  * - 신고 API가 Redis 저장 구조를 직접 알지 않도록 조회 책임을 분리한다.
  *
  * [장애 정책]
- * - Redis 조회 실패 또는 payload 역직렬화 실패는 Optional.empty()로 처리한다.
- * - 신고 서비스는 empty를 "신고 대상 메시지를 찾을 수 없음"으로 해석한다.
+ * - messageId가 Redis 최근 채팅 목록에 없으면 Optional.empty()를 반환한다.
+ * - Redis 연결 실패, Redis 시스템 오류, Redis 조회 중 알 수 없는 런타임 예외는
+ *   RecentChatMessageLookupException으로 올린다.
+ * - 개별 payload 역직렬화 실패는 해당 payload만 건너뛴다.
  *
  * [주의]
  * 권한 검증은 수행하지 않는다.
@@ -32,6 +36,9 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class LobbyRecentChatMessageFinder {
+
+    private static final String ERROR_RECENT_CHAT_LOOKUP_FAILED =
+            "로비 최근 채팅 저장소를 조회할 수 없습니다.";
 
     private final StringRedisTemplate redisTemplate;
 
@@ -52,14 +59,10 @@ public class LobbyRecentChatMessageFinder {
 
         try {
             return findByMessageIdOrEmpty(lobbyCode, messageId);
+        } catch (RedisConnectionFailureException | RedisSystemException e) {
+            throw new RecentChatMessageLookupException(ERROR_RECENT_CHAT_LOOKUP_FAILED, e);
         } catch (RuntimeException e) {
-            log.warn(
-                    "로비 최근 채팅 단건 조회 실패 - lobbyCode: {}, messageId: {}",
-                    lobbyCode,
-                    messageId,
-                    e
-            );
-            return Optional.empty();
+            throw new RecentChatMessageLookupException(ERROR_RECENT_CHAT_LOOKUP_FAILED, e);
         }
     }
 

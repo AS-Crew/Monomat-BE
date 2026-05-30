@@ -4,6 +4,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
+import io.github.ascrew.monomatbe.domain.chat.service.RecentChatMessageLookupException;
 import io.github.ascrew.monomatbe.domain.chat.service.LobbyRecentChatMessageFinder;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
@@ -356,6 +357,33 @@ class LobbyChatMessageReportServiceTest {
         ))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+
+        verify(reportRepository, never()).save(any());
+        verify(snapshotRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("최근 채팅 저장소 조회 실패 시 503을 반환한다")
+    void reportLobbyChatMessage_failsWithServiceUnavailableWhenRecentChatLookupFails() {
+        User reporter = createUser(REPORTER_ID, "reporter");
+        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
+
+        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
+        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
+        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
+                .thenThrow(new RecentChatMessageLookupException("lookup failed", new RuntimeException()));
+
+        assertThatThrownBy(() -> service.reportLobbyChatMessage(
+                INVITE_CODE,
+                MESSAGE_ID,
+                REPORTER_ID,
+                REPORTER_IDENTIFIER,
+                new LobbyChatMessageReportRequest("신고")
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
 
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());

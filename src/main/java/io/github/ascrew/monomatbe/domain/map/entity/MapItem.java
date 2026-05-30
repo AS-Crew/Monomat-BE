@@ -66,13 +66,10 @@ public class MapItem {
     @Column(name = "thumbnail_url", length = 500)
     private String thumbnailUrl;
 
-    @Column(name = "answer", nullable = false, length = 255)
-    private String answer;
+    @Column(name = "answers", columnDefinition = "TEXT", nullable = false)
+    private String answers;
 
-    @Column(name = "alt_answers", columnDefinition = "TEXT")
-    private String altAnswers;
-
-    @Column(name = "hint", nullable = false, length = 255)
+    @Column(name = "hint", nullable = false, length = 50)
     private String hint;
 
     @Column(name = "hint_time", nullable = false)
@@ -126,8 +123,7 @@ public class MapItem {
             String title,
             String artist,
             String thumbnailUrl,
-            String answer,
-            String altAnswers,
+            String answers,
             String hint,
             int hintTime
     ) {
@@ -139,8 +135,7 @@ public class MapItem {
         this.title = title;
         this.artist = artist;
         this.thumbnailUrl = thumbnailUrl;
-        this.answer = answer;
-        this.altAnswers = altAnswers;
+        this.answers = answers;
         this.hint = hint;
         this.hintTime = hintTime;
     }

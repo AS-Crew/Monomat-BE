@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 
@@ -25,11 +26,13 @@ class MapPublicationValidatorTest {
     @Mock
     private MapItemJpaRepository mapItemJpaRepository;
 
+    private final JsonMapper jsonMapper = JsonMapper.builder().build();
+
     private MapPublicationValidator validator;
 
     @BeforeEach
     void setUp() {
-        validator = new MapPublicationValidator(mapItemJpaRepository);
+        validator = new MapPublicationValidator(mapItemJpaRepository, jsonMapper);
     }
 
     @Test
@@ -162,7 +165,12 @@ class MapPublicationValidatorTest {
                 .endTime(endTime)
                 .youtubeUrl(youtubeUrl)
                 .videoId(videoId)
-                .answer(answer)
+                .answers(answersJson(answer))
                 .build();
+    }
+
+    // null/blank이면 빈 배열(정답 없음)을, 그 외엔 단일 정답 JSON 배열을 만든다.
+    private String answersJson(String answer) {
+        return (answer == null || answer.isBlank()) ? "[]" : "[\"" + answer + "\"]";
     }
 }

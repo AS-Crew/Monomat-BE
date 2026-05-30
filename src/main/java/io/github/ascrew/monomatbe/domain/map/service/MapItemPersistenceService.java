@@ -60,8 +60,7 @@ public class MapItemPersistenceService {
             Long ownerId,
             CreateMapItemRequest request,
             YoutubeMetadata metadata,
-            String normalizedAnswer,
-            String altAnswersJson,
+            String answersJson,
             String hint,
             int hintTime
     ) {
@@ -79,8 +78,7 @@ public class MapItemPersistenceService {
                 .title(metadata.title())
                 .artist(metadata.artist())
                 .thumbnailUrl(metadata.thumbnailUrl())
-                .answer(normalizedAnswer)
-                .altAnswers(altAnswersJson)
+                .answers(answersJson)
                 .hint(hint)
                 .hintTime(hintTime)
                 .build());
@@ -96,8 +94,7 @@ public class MapItemPersistenceService {
             Long ownerId,
             UpdateMapItemRequest request,
             YoutubeMetadata metadata,
-            String normalizedAnswer,
-            String altAnswersJson,
+            String answersJson,
             String hint,
             int hintTime
     ) {
@@ -117,8 +114,7 @@ public class MapItemPersistenceService {
                 metadata.title(),
                 metadata.artist(),
                 metadata.thumbnailUrl(),
-                normalizedAnswer,
-                altAnswersJson,
+                answersJson,
                 hint,
                 hintTime
         );

@@ -4,10 +4,13 @@ import io.github.ascrew.monomatbe.domain.map.MapPublicationPolicy;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.domain.youtube.YoutubeVideoId;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 
@@ -27,9 +30,14 @@ public class MapPublicationValidator {
     private static final String ERROR_BLANK_ANSWER = "%d번 문제의 정답이 비어 있습니다.";
 
     private final MapItemJpaRepository mapItemJpaRepository;
+    private final JsonMapper jsonMapper;
 
-    public MapPublicationValidator(MapItemJpaRepository mapItemJpaRepository) {
+    public MapPublicationValidator(
+            MapItemJpaRepository mapItemJpaRepository,
+            @Qualifier("pubSubJsonMapper") JsonMapper jsonMapper
+    ) {
         this.mapItemJpaRepository = mapItemJpaRepository;
+        this.jsonMapper = jsonMapper;
     }
 
     @Transactional(readOnly = true)
@@ -56,7 +64,6 @@ public class MapPublicationValidator {
             Integer endTime = item.getEndTime();
             String youtubeUrl = item.getYoutubeUrl();
             String videoId = item.getVideoId();
-            String answer = item.getAnswer();
 
             if (startTime == null || startTime < 0) {
                 return String.format(ERROR_INVALID_START_TIME, item.getOrderNum());
@@ -79,11 +86,18 @@ public class MapPublicationValidator {
             if (!YoutubeVideoId.isValid(videoId)) {
                 return String.format(ERROR_INVALID_VIDEO_ID, item.getOrderNum());
             }
-            if (answer == null || answer.isBlank()) {
+            if (isAnswersEmpty(item.getAnswers())) {
                 return String.format(ERROR_BLANK_ANSWER, item.getOrderNum());
             }
         }
 
         return null;
+    }
+
+    private boolean isAnswersEmpty(String answersJson) {
+        if (answersJson == null || answersJson.isBlank()) {
+            return true;
+        }
+        return jsonMapper.readValue(answersJson, new TypeReference<List<String>>() {}).isEmpty();
     }
 }

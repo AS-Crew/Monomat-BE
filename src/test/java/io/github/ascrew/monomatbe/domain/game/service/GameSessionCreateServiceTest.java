@@ -91,7 +91,7 @@ class GameSessionCreateServiceTest {
                 .endTime(20)
                 .title("Secret Title")
                 .artist("Secret Artist")
-                .answer("정답")
+                .answers("[\"정답\"]")
                 .hint("힌트")
                 .build();
 

@@ -130,4 +130,12 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    @Bean
+    public RedisScript<String> readyToPlayScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/ready_to_play.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

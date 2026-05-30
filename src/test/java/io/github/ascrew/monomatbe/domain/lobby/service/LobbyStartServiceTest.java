@@ -26,11 +26,14 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.any;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import io.github.ascrew.monomatbe.domain.game.service.GameRoundStartService;
 
 @ExtendWith(MockitoExtension.class)
 class LobbyStartServiceTest {
@@ -40,6 +43,9 @@ class LobbyStartServiceTest {
     private static final Long REQUESTER_USER_ID = 1L;
     private static final Long MAP_ID = 1L;
     private static final int ROUND_COUNT = 5;
+
+    @Mock
+    private QuizMapJpaRepository quizMapJpaRepository;
 
     @Mock
     private LobbyRepository lobbyRepository;
@@ -57,10 +63,11 @@ class LobbyStartServiceTest {
     private GameRealtimeNotifier gameRealtimeNotifier;
 
     @Mock
-    private QuizMapJpaRepository quizMapJpaRepository;
+    private GameRoundStartService gameRoundStartService;
+
+    private LobbyStartPolicy lobbyStartPolicy;
 
     private LobbyStartService lobbyStartService;
-    private LobbyStartPolicy lobbyStartPolicy;
 
     @BeforeEach
     void setUp() {
@@ -71,10 +78,11 @@ class LobbyStartServiceTest {
         lobbyStartService = new LobbyStartService(
                 lobbyRepository,
                 lobbyRealtimeNotifier,
-                gameLobbyJpaRepository,
-                lobbyStartPolicy,
+                gameRealtimeNotifier,
                 gameSessionCreateService,
-                gameRealtimeNotifier
+                gameRoundStartService,
+                gameLobbyJpaRepository,
+                lobbyStartPolicy
         );
     }
 

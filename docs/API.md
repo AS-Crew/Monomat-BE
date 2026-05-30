@@ -12,6 +12,27 @@
 
 ## REST API
 
+### 시스템 (System)
+
+#### 서버 시간 동기화 조회
+
+```http
+GET /api/system/time
+```
+
+클라이언트가 서버와의 시간 오차(delta)를 계산하기 위해 호출합니다.
+인증 토큰 없이 누구나 호출할 수 있습니다.
+
+**Response `200 OK`**
+
+```json
+{
+  "serverTimeMillis": 1716500000000
+}
+```
+
+---
+
 ### 인증 (Auth)
 
 인증 API는 게스트 로그인, 회원가입, 자체 로그인, 토큰 재발급, 로그아웃을 제공합니다.
@@ -86,6 +107,67 @@
 ```text
 비밀번호가 일치하지 않습니다.
 ```
+---
+
+### 사용자 (User)
+
+로그인한 사용자의 기본 정보를 조회합니다.
+
+#### 내 사용자 정보 조회
+
+```http
+GET /api/users/me
+````
+
+JWT Access Token이 필요합니다.
+
+프론트엔드는 이 API를 사용해 상단 프로필 영역, 닉네임 표시, 게스트/회원 분기 처리 등에 필요한 사용자 정보를 조회할 수 있습니다.
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Response `200 OK`**
+
+```json
+{
+  "userId": 1,
+  "username": "모노유저",
+  "userType": "REGISTERED",
+  "status": "ACTIVE",
+  "createdAt": "2026-05-29T12:00:00"
+}
+```
+
+**Response Fields**
+
+| 필드          | 타입     | 설명                                    |
+| ----------- | ------ | ------------------------------------- |
+| `userId`    | Long   | 사용자 고유 ID. `users.id`                 |
+| `username`  | String | 서비스 표시 닉네임                            |
+| `userType`  | String | 사용자 유형. `GUEST`, `REGISTERED`         |
+| `status`    | String | 사용자 상태. `ACTIVE`, `BANNED`, `DELETED` |
+| `createdAt` | String | 사용자 생성 시각. ISO-8601 LocalDateTime 형식  |
+
+**Error**
+
+| 상태 코드              | 설명                                                |
+| ------------------ | ------------------------------------------------- |
+| `401 Unauthorized` | 인증 정보 없음, 유효하지 않은 Access Token, DB에서 사용자를 찾을 수 없음 |
+| `401 Unauthorized` | 탈퇴 또는 삭제된 사용자                                     |
+| `403 Forbidden`    | 정지된 사용자                                           |
+| `409 Conflict`     | 사용자 상태 값이 비정상인 경우                                 |
+
+**프론트엔드 처리 기준**
+
+| 상황                 | 처리 방식                                  |
+| ------------------ | -------------------------------------- |
+| `200 OK`           | 사용자 정보를 전역 auth/user 상태에 저장            |
+| `401 Unauthorized` | 토큰 만료 또는 세션 무효 처리 후 로그인/게스트 진입 화면으로 이동 |
+| `403 Forbidden`    | 정지 계정 안내 화면 또는 toast 표시                |
+| `409 Conflict`     | 일시적 상태 불일치 안내 후 재로그인 유도                |
 
 ---
 
@@ -1238,6 +1320,43 @@ SUBSCRIBE /topic/game/{code}/round
 ```
 
 > **참고**: 클라이언트 스포일러 방지를 위해 정답, 힌트, 제목, 아티스트 등의 메타데이터는 라운드 시작 시점에 전송되지 않으며, 정답 공개 시점에 별도의 채널과 DTO(`RoundMetadataDto`)를 통해 전송될 예정입니다.
+
+#### 유튜브 IFrame 로딩 완료(Ready To Play) 송신
+
+```text
+SEND /app/game/{code}/ready-to-play
+```
+
+클라이언트가 `ROUND_READY` 메시지를 수신한 후, 유튜브 IFrame 로딩이 완료되면 호출합니다.
+참가한 모든 플레이어가 해당 신호를 보내거나, 10초 타임아웃이 지나면 실제 라운드 재생(`ROUND_PLAYBACK_STARTED`)이 트리거됩니다.
+
+**Body**
+
+```json
+{
+  "roundNo": 1
+}
+```
+
+#### 라운드 동영상 재생 시작 이벤트 수신
+
+```text
+SUBSCRIBE /topic/game/{code}/round
+```
+(이전 `ROUND_READY` 메시지와 동일한 채널로 수신)
+
+모든 클라이언트의 준비 완료가 취합되거나, 10초 타임아웃이 발생하면 브로드캐스트됩니다. 클라이언트는 이 메시지를 받는 즉시 로드해둔 유튜브 영상을 재생합니다.
+
+**수신 메시지 (RoundPlaybackStartedDto)**
+
+```json
+{
+  "type": "ROUND_PLAYBACK_STARTED",
+  "roundNo": 1,
+  "serverStartedAt": 1716500000000,
+  "durationSeconds": 30
+}
+```
 
 #### 로비 유저 강퇴 송신
 

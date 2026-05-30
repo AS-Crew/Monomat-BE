@@ -69,7 +69,7 @@ public class GameRoundStartService {
         Boolean lockAcquired = redisTemplate.opsForValue().setIfAbsent(playbackLockKey, "1", Duration.ofHours(2));
 
         String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
-        String playbackStartedKey = "playback_started_at:" + roundNo;
+        String playbackStartedKey = RedisKeys.gameSessionRoundPlaybackStartedAtField(roundNo);
         String playbackStartedAtVal = (String) redisTemplate.opsForHash().get(sessionKey, playbackStartedKey);
 
         if (Boolean.TRUE.equals(lockAcquired)) {
@@ -87,17 +87,21 @@ public class GameRoundStartService {
         long serverStartedAt = System.currentTimeMillis();
 
         String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
-        String playbackStartedKey = "playback_started_at:" + roundNo;
-        redisTemplate.opsForHash().put(sessionKey, playbackStartedKey, String.valueOf(serverStartedAt));
+        String playbackStartedKey = RedisKeys.gameSessionRoundPlaybackStartedAtField(roundNo);
+        Boolean isSaved = redisTemplate.opsForHash().putIfAbsent(sessionKey, playbackStartedKey, String.valueOf(serverStartedAt));
 
-        RoundPlaybackStartedDto dto = RoundPlaybackStartedDto.builder()
-                .type(GameEventTypes.ROUND_PLAYBACK_STARTED)
-                .roundNo(roundNo)
-                .serverStartedAt(serverStartedAt)
-                .durationSeconds(durationSeconds)
-                .build();
+        if (Boolean.TRUE.equals(isSaved)) {
+            RoundPlaybackStartedDto dto = RoundPlaybackStartedDto.builder()
+                    .type(GameEventTypes.ROUND_PLAYBACK_STARTED)
+                    .roundNo(roundNo)
+                    .serverStartedAt(serverStartedAt)
+                    .durationSeconds(durationSeconds)
+                    .build();
 
-        messagingTemplate.convertAndSend(StompDestinations.subscribeGameRound(lobbyCode), dto);
+            messagingTemplate.convertAndSend(StompDestinations.subscribeGameRound(lobbyCode), dto);
+        } else {
+            log.info("이미 다른 스레드/서버에서 재생 시작 시각이 기록되어 브로드캐스트를 스킵합니다 - code: {}, roundNo: {}", lobbyCode, roundNo);
+        }
     }
 }
 

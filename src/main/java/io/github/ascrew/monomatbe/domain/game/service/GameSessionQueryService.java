@@ -34,7 +34,7 @@ public class GameSessionQueryService {
         int roundNo = Integer.parseInt((String) hashValues.get(0));
         int timeLimitSeconds = hashValues.get(1) != null ? Integer.parseInt((String) hashValues.get(1)) : 30;
         
-        String playbackStartedKey = "playback_started_at:" + roundNo;
+        String playbackStartedKey = RedisKeys.gameSessionRoundPlaybackStartedAtField(roundNo);
         String playbackStartedAtStr = (String) redisTemplate.opsForHash().get(sessionKey, playbackStartedKey);
         Long serverStartedAt = playbackStartedAtStr != null ? Long.parseLong(playbackStartedAtStr) : null;
 

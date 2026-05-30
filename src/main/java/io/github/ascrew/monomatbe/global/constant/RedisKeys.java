@@ -644,4 +644,14 @@ public final class RedisKeys {
     public static String gameSessionPlaybackLockKey(String lobbyCode, int roundNo) {
         return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":playback_lock";
     }
+
+    /**
+     * 특정 라운드의 재생 시작 시각 필드명을 반환합니다.
+     *
+     * @param roundNo 라운드 번호
+     * @return "playback_started_at:{roundNo}"
+     */
+    public static String gameSessionRoundPlaybackStartedAtField(int roundNo) {
+        return "playback_started_at:" + roundNo;
+    }
 }

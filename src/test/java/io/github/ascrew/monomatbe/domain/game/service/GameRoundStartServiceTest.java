@@ -58,6 +58,7 @@ class GameRoundStartServiceTest {
                 .thenReturn("ALL_READY");
         when(redisTemplate.opsForHash()).thenReturn(hashOperations);
         when(hashOperations.get(anyString(), eq("time_limit_seconds"))).thenReturn("30");
+        when(hashOperations.putIfAbsent(anyString(), anyString(), anyString())).thenReturn(true);
 
         // when
         gameRoundStartService.processReadyToPlay(lobbyCode, userIdentifier, roundNo);

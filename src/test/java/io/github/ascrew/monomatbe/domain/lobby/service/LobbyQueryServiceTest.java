@@ -442,7 +442,9 @@ class LobbyQueryServiceTest {
                 LobbyStatus.WAITING.name(),
                 1L,
                 "테스트 맵",
-                "K-POP"
+                "K-POP",
+                10,
+                30
         );
 
         when(lobbyRepository.findByInviteCode(code))
@@ -508,6 +510,8 @@ class LobbyQueryServiceTest {
                 8,
                 2,
                 LobbyStatus.WAITING.name(),
+                null,
+                null,
                 null,
                 null,
                 null

@@ -31,6 +31,8 @@ local status          = ARGV[7]   -- "WAITING"
 local mapId           = ARGV[8]   -- 선택된 맵 ID. 미선택 시 ""
 local mapTitle        = ARGV[9]   -- 선택된 맵 제목. 미선택 시 ""
 local mapCategory     = ARGV[10]  -- 선택된 맵 카테고리. 미선택 시 ""
+local questionCount   = ARGV[11]  -- 문제 수
+local timeLimitSeconds = ARGV[12] -- 제한 시간(초)
 
 -- Redis Hash 필드명은 스크립트 상단에서 중앙 관리합니다.
 local FIELD_CODE                    = 'code'
@@ -44,6 +46,8 @@ local FIELD_MAP_ID                  = 'map_id'
 local FIELD_MAP_TITLE               = 'map_title'
 local FIELD_MAP_CATEGORY            = 'map_category'
 local FIELD_CREATED_AT_EPOCH_MILLIS = 'created_at_epoch_millis'
+local FIELD_QUESTION_COUNT          = 'question_count'
+local FIELD_TIME_LIMIT_SECONDS      = 'time_limit_seconds'
 
 -- Redis 서버 기준 현재 시각을 epoch milliseconds로 계산한다.
 --
@@ -78,7 +82,9 @@ redis.call('HSET', lobbyKey,
     FIELD_CURRENT_PLAYERS,         '0',
     FIELD_IS_PRIVATE,              isPrivate,
     FIELD_STATUS,                  status,
-    FIELD_CREATED_AT_EPOCH_MILLIS, tostring(createdAtEpochMillis)
+    FIELD_CREATED_AT_EPOCH_MILLIS, tostring(createdAtEpochMillis),
+    FIELD_QUESTION_COUNT,          questionCount,
+    FIELD_TIME_LIMIT_SECONDS,      timeLimitSeconds
 )
 
 -- 3. 맵이 선택된 경우에만 맵 메타 정보 저장

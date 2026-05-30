@@ -3,6 +3,8 @@ package io.github.ascrew.monomatbe.domain.auth.service;
 import io.github.ascrew.monomatbe.domain.auth.dto.RefreshTokenResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtClaims;
@@ -10,16 +12,15 @@ import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenWithExpiry;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -28,9 +29,6 @@ import java.time.ZoneId;
 @Service
 @RequiredArgsConstructor
 public class RefreshAuthService {
-
-    private static final String ERR_INVALID_REFRESH_TOKEN = "Refresh Token이 유효하지 않습니다.";
-    private static final String ERR_SESSION_STORE_TEMPORARY = "세션 저장소에 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
 
     private final JwtTokenProvider jwtTokenProvider;
     private final StringRedisTemplate redisTemplate;
@@ -51,31 +49,36 @@ public class RefreshAuthService {
         UserSession session = userSessionRepository.findBySessionIdForUpdate(sessionId)
                 .orElse(null);
 
-        if (session == null || !session.getUser().getId().equals(userId) || !session.isActiveAt(now)) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+        if (session == null || !session.getUser().getId().equals(userId)) {
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
+        }
+
+        if (!session.isActiveAt(now)) {
+            throw new AuthException(AuthErrorCode.AUTH_SESSION_EXPIRED);
         }
 
         if (!matchesStoredRefreshToken(session.getSessionToken(), refreshToken, refreshTokenHash)) {
             userSessionLifecycleService.revokeAllActiveSessions(userId, now);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
         }
 
         String storedRefreshTokenHash;
         try {
             storedRefreshTokenHash = redisTemplate.opsForValue().get(RedisKeys.refreshTokenKey(sessionId));
         } catch (RuntimeException e) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERR_SESSION_STORE_TEMPORARY);
+            throw new AuthException(AuthErrorCode.AUTH_TEMPORARY_UNAVAILABLE, e);
         }
 
         if (storedRefreshTokenHash != null
                 && !matchesStoredRefreshToken(storedRefreshTokenHash, refreshToken, refreshTokenHash)) {
             userSessionLifecycleService.revokeAllActiveSessions(userId, now);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
         }
 
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(userId, userType, sessionId);
         TokenWithExpiry rotatedRefreshToken = jwtTokenProvider.createRefreshToken(userId, userType, sessionId);
         String rotatedRefreshTokenHash = TokenHashUtils.sha256(rotatedRefreshToken.token());
+
         session.rotate(
                 rotatedRefreshTokenHash,
                 LocalDateTime.ofInstant(rotatedRefreshToken.expiresAt(), ZoneId.systemDefault()),
@@ -100,7 +103,10 @@ public class RefreshAuthService {
                     );
                 } catch (RuntimeException e) {
                     log.error("Refresh 후 Redis 갱신 실패 - sessionId: {}", sessionId, e);
-                    userSessionLifecycleService.markSessionRevokedCompensating(sessionId, LocalDateTime.now());
+                    userSessionLifecycleService.markSessionRevokedCompensating(
+                            sessionId,
+                            LocalDateTime.now()
+                    );
                 }
             }
         });
@@ -120,14 +126,17 @@ public class RefreshAuthService {
         if (storedValue == null || storedValue.isBlank()) {
             return false;
         }
+
         return storedValue.equals(requestHash) || storedValue.equals(requestRawToken);
     }
 
     private Claims parseRefreshClaims(String refreshToken) {
         try {
             return jwtTokenProvider.parseClaims(refreshToken);
-        } catch (JwtException e) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+        } catch (ExpiredJwtException e) {
+            throw new AuthException(AuthErrorCode.AUTH_SESSION_EXPIRED, e);
+        } catch (JwtException | IllegalArgumentException e) {
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN, e);
         }
     }
 
@@ -135,7 +144,7 @@ public class RefreshAuthService {
         try {
             return Long.valueOf(claims.getSubject());
         } catch (NumberFormatException | NullPointerException e) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN, e);
         }
     }
 
@@ -144,26 +153,31 @@ public class RefreshAuthService {
             String value = claims.get(JwtClaims.USER_TYPE, String.class);
             return UserType.valueOf(value);
         } catch (IllegalArgumentException | NullPointerException e) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN, e);
         }
     }
 
     private String extractSessionId(Claims claims) {
         String sessionId = claims.get(JwtClaims.SESSION_ID, String.class);
+
         if (sessionId == null || sessionId.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERR_INVALID_REFRESH_TOKEN);
+            throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
         }
+
         return sessionId;
     }
 
     private String normalizeRequired(String value) {
         if (value == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Refresh Token은 비어 있을 수 없습니다.");
+            throw new AuthException(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED);
         }
+
         String normalized = value.trim();
+
         if (normalized.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Refresh Token은 비어 있을 수 없습니다.");
+            throw new AuthException(AuthErrorCode.AUTH_REFRESH_TOKEN_REQUIRED);
         }
+
         return normalized;
     }
 
@@ -171,10 +185,13 @@ public class RefreshAuthService {
         if (value == null) {
             return null;
         }
+
         String normalized = value.trim();
+
         if (normalized.isEmpty()) {
             return null;
         }
+
         return normalized.length() > maxLength
                 ? normalized.substring(0, maxLength)
                 : normalized;

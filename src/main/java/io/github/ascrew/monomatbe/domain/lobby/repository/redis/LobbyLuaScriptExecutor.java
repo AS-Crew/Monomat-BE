@@ -77,6 +77,8 @@ public class LobbyLuaScriptExecutor {
      * ARGV[8]  = mapId or ""
      * ARGV[9]  = mapTitle or ""
      * ARGV[10] = mapCategory or ""
+     * ARGV[11] = questionCount
+     * ARGV[12] = timeLimitSeconds
      *
      * @return "OK" | "LOCK_FAILED" | null
      */
@@ -84,7 +86,9 @@ public class LobbyLuaScriptExecutor {
             String inviteCode,
             CreateLobbyRequest request,
             String userIdentifier,
-            LobbyMapMetadata mapMetadata
+            LobbyMapMetadata mapMetadata,
+            int questionCount,
+            int timeLimitSeconds
     ) {
         List<String> keys = List.of(
                 RedisKeys.lobbyCodeLockKey(inviteCode),
@@ -112,7 +116,9 @@ public class LobbyLuaScriptExecutor {
                 // 맵 미선택 시 빈 문자열을 전달하여 Redis에 "null" 문자열이 저장되지 않게 한다.
                 mapMetadata != null ? String.valueOf(mapMetadata.mapId()) : EMPTY_REDIS_VALUE,
                 mapMetadata != null ? mapMetadata.mapTitle() : EMPTY_REDIS_VALUE,
-                mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE
+                mapMetadata != null ? mapMetadata.mapCategory() : EMPTY_REDIS_VALUE,
+                String.valueOf(questionCount),
+                String.valueOf(timeLimitSeconds)
         );
     }
 
@@ -260,14 +266,16 @@ public class LobbyLuaScriptExecutor {
      * KEYS[1] = lobby:{code}
      *
      * [ARGV 계약]
-     * ARGV[1] = status field name
-     * ARGV[2] = mapId field name
-     * ARGV[3] = mapTitle field name
-     * ARGV[4] = mapCategory field name
-     * ARGV[5] = WAITING status
-     * ARGV[6] = oldMapId (없으면 "")
-     * ARGV[7] = oldMapTitle (없으면 "")
-     * ARGV[8] = oldMapCategory (없으면 "")
+     * ARGV[1]  = status field name
+     * ARGV[2]  = mapId field name
+     * ARGV[3]  = mapTitle field name
+     * ARGV[4]  = mapCategory field name
+     * ARGV[5]  = WAITING status
+     * ARGV[6]  = oldMapId (없으면 "")
+     * ARGV[7]  = oldMapTitle (없으면 "")
+     * ARGV[8]  = oldMapCategory (없으면 "")
+     * ARGV[9]  = questionCount field name
+     * ARGV[10] = oldQuestionCount
      *
      * [null oldMetadata 처리]
      * oldMetadata가 null이거나 필드가 일부 null이면 빈 문자열로 전달하여
@@ -275,7 +283,7 @@ public class LobbyLuaScriptExecutor {
      *
      * @return "COMPENSATED" | "SKIPPED_NOT_WAITING" | "LOBBY_NOT_FOUND"
      */
-    public String executeCompensateLobbyMap(String code, LobbyMapMetadata oldMetadata) {
+    public String executeCompensateLobbyMap(String code, LobbyMapMetadata oldMetadata, int oldQuestionCount) {
         List<String> keys = List.of(RedisKeys.lobbyKey(code));
 
         boolean restoreMap = oldMetadata != null
@@ -293,7 +301,9 @@ public class LobbyLuaScriptExecutor {
                 LobbyStatus.WAITING.name(),
                 restoreMap ? String.valueOf(oldMetadata.mapId()) : EMPTY_REDIS_VALUE,
                 restoreMap ? oldMetadata.mapTitle() : EMPTY_REDIS_VALUE,
-                restoreMap ? oldMetadata.mapCategory() : EMPTY_REDIS_VALUE
+                restoreMap ? oldMetadata.mapCategory() : EMPTY_REDIS_VALUE,
+                RedisKeys.FIELD_QUESTION_COUNT,
+                String.valueOf(oldQuestionCount)
         );
     }
 

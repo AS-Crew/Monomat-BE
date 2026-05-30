@@ -1,6 +1,5 @@
 package io.github.ascrew.monomatbe.domain.lobby.dto;
 
-import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import jakarta.validation.constraints.*;
 
 /**
@@ -10,14 +9,16 @@ import jakarta.validation.constraints.*;
  * mapId는 선택 사항이다.
  * 로비는 맵 없이 먼저 생성될 수 있으며, 게임 시작 시점에 맵 선택 여부를 검증한다.
  *
- * [기본값 처리]
- * roundCount, timeLimitSeconds는 클라이언트가 null로 생략하면 LobbyDefaults 상수값으로 자동 적용된다.
+ * [questionCount 기본값 처리]
+ * questionCount가 null인 경우 LobbyCreateService에서 맥락에 따라 처리한다.
+ * - mapId가 있으면: 맵의 numOfSong을 상한으로 자동 설정
+ * - mapId가 없으면: LobbyDefaults.DEFAULT_QUESTION_COUNT 적용
  *
  * [검증 규칙 — 기능명세서 기준]
  * - title      : 필수, 최대 255자
  * - maxPlayers : 2~8명
  * - mapId      : 선택 사항 (맵 없는 로비 허용), 전달 시 양수
- * - roundCount : 1~20 (생략 시 기본값 5)
+ * - questionCount : 최솟값 1 (상한은 맵의 numOfSong으로 동적 검증)
  * - timeLimitSeconds : 10~120초 (생략 시 기본값 30)
  */
 public record CreateLobbyRequest(
@@ -41,25 +42,26 @@ public record CreateLobbyRequest(
         @Positive(message = "맵 ID는 양수여야 합니다.")
         Long mapId,
 
-        @Min(value = 1, message = "라운드 수는 1 이상이어야 합니다.")
-        @Max(value = 20, message = "라운드 수는 20 이하이어야 합니다.")
-        Integer roundCount,
+        /**
+         * 문제 갯수 (라운드 수).
+         *
+         * null이면 LobbyCreateService에서 맥락에 따라 기본값을 결정한다.
+         * 맵이 선택된 경우 맵의 문제 수(numOfSong)를 상한으로 자동 설정한다.
+         */
+        @Min(value = 1, message = "문제 갯수는 1 이상이어야 합니다.")
+        Integer questionCount,
 
         @Min(value = 10, message = "제한 시간은 10초 이상이어야 합니다.")
         @Max(value = 120, message = "제한 시간은 120초 이하이어야 합니다.")
         Integer timeLimitSeconds
 ) {
     /**
-     * 기본값 적용 compact constructor.
-     * roundCount, timeLimitSeconds가 null이면 LobbyDefaults 상수값으로 대체한다.
-     * Integer(nullable) 선언으로 @Min 검증과 충돌 없이 기본값을 적용한다.
+     * timeLimitSeconds 기본값 적용 compact constructor.
+     * questionCount의 기본값은 LobbyCreateService에서 맵 정보를 기반으로 결정한다.
      */
     public CreateLobbyRequest {
-        if (roundCount == null) {
-            roundCount = LobbyDefaults.DEFAULT_ROUND_COUNT;
-        }
         if (timeLimitSeconds == null) {
-            timeLimitSeconds = LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS;
+            timeLimitSeconds = io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS;
         }
     }
 }

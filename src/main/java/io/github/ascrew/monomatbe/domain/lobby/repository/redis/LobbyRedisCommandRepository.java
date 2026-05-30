@@ -384,15 +384,17 @@ public class LobbyRedisCommandRepository {
      * [정책]
      * - metadata != null이고 모든 필드가 non-null → map_id, map_title, map_category를 단일 HSET으로 원자 갱신
      * - metadata == null 또는 필드 중 하나라도 null → 3개 필드를 HDEL (맵 미선택 상태로 복원)
+     * question_count는 항상 갱신된다.
      *
      * [null 필드 처리]
      * 보상 복구 경로에서 기존에 맵이 없던 로비의 oldMetadata는 필드가 모두 null일 수 있다.
      * 이 경우 metadata == null과 동일하게 HDEL로 처리하여 "null" 문자열 오염을 방지한다.
      *
-     * @param code     로비 초대 코드
-     * @param metadata 새 맵 메타데이터 (null 또는 필드가 하나라도 null이면 맵 필드를 제거한다)
+     * @param code          로비 초대 코드
+     * @param metadata      새 맵 메타데이터 (null 또는 필드가 하나라도 null이면 맵 필드를 제거한다)
+     * @param questionCount 새 문제 수
      */
-    public void updateMapMetadata(String code, LobbyMapMetadata metadata) {
+    public void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount) {
         String lobbyKey = RedisKeys.lobbyKey(code);
 
         if (metadata != null
@@ -402,7 +404,8 @@ public class LobbyRedisCommandRepository {
             redisTemplate.opsForHash().putAll(lobbyKey, Map.of(
                     RedisKeys.FIELD_MAP_ID, String.valueOf(metadata.mapId()),
                     RedisKeys.FIELD_MAP_TITLE, metadata.mapTitle(),
-                    RedisKeys.FIELD_MAP_CATEGORY, metadata.mapCategory()
+                    RedisKeys.FIELD_MAP_CATEGORY, metadata.mapCategory(),
+                    RedisKeys.FIELD_QUESTION_COUNT, String.valueOf(questionCount)
             ));
         } else {
             redisTemplate.opsForHash().delete(
@@ -411,6 +414,7 @@ public class LobbyRedisCommandRepository {
                     RedisKeys.FIELD_MAP_TITLE,
                     RedisKeys.FIELD_MAP_CATEGORY
             );
+            redisTemplate.opsForHash().put(lobbyKey, RedisKeys.FIELD_QUESTION_COUNT, String.valueOf(questionCount));
         }
     }
 

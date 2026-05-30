@@ -16,8 +16,8 @@ public final class LobbyDefaults {
 
     private LobbyDefaults() {}
 
-    /** 기본 라운드 수 */
-    public static final int DEFAULT_ROUND_COUNT = 5;
+    /** 기본 문제 갯수 (맵 미선택 시 적용) */
+    public static final int DEFAULT_QUESTION_COUNT = 5;
 
     /** 기본 문제당 제한 시간 (초) */
     public static final int DEFAULT_TIME_LIMIT_SECONDS = 30;

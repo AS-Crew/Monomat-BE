@@ -79,6 +79,12 @@ public final class RedisKeys {
     /** YouTube oEmbed 실패 캐시 키 접두사 */
     private static final String YOUTUBE_OEMBED_FAILURE_PREFIX = "youtube:oembed:failure:";
 
+    /** 로비 채팅 쿨타임 키 접두사 */
+    private static final String LOBBY_CHAT_COOLDOWN_PREFIX = "chat:lobby:";
+
+    /** 로비 채팅 최근 메시지 키 접두사 */
+    private static final String LOBBY_CHAT_RECENT_MESSAGE_PREFIX = "chat:lobby:";
+
     // =========================================================
     // Redis Hash 필드 키 상수 (auth:guest:session:{token} Hash 내부 필드명)
     // =========================================================
@@ -224,6 +230,12 @@ public final class RedisKeys {
 
     /** 로비 Hash의 상태 필드. 저장 값: "WAITING" / "PLAYING" */
     public static final String FIELD_STATUS = "status";
+
+    /** 로비 Hash의 문제 수 필드 */
+    public static final String FIELD_QUESTION_COUNT = "question_count";
+
+    /** 로비 Hash의 제한 시간(초) 필드 */
+    public static final String FIELD_TIME_LIMIT_SECONDS = "time_limit_seconds";
 
     /**
      * 로비 Hash의 생성 시각 필드
@@ -488,6 +500,31 @@ public final class RedisKeys {
     }
 
     /**
+     * 검색 조건이 포함된 공개 맵 목록 캐시 키를 반환합니다.
+     *
+     * <p>버전 기반 무효화 정책이 유지되므로 {@link #mapPublicListVersionKey()} 버전 증가 시
+     * 이 키로 저장된 모든 캐시도 함께 무효화됩니다.
+     *
+     * @param version  캐시 버전
+     * @param keyword  제목 검색어 (null 또는 빈 문자열 허용)
+     * @param category 카테고리 이름 (null 허용)
+     * @param sort     정렬 기준 이름 (null 허용)
+     * @param page     페이지 번호
+     * @param size     페이지 크기
+     * @return "map:public:list:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
+     */
+    public static String mapPublicListKey(
+            String version, String keyword, String category, String sort, int page, int size) {
+        return MAP_PUBLIC_LIST_PREFIX
+                + ":v:" + version
+                + ":k:" + (keyword == null ? "" : keyword)
+                + ":c:" + (category == null ? "" : category)
+                + ":sort:" + (sort == null ? "" : sort)
+                + ":p:" + page
+                + ":s:" + size;
+    }
+
+    /**
      * 공개 맵 단건 캐시 키를 반환합니다.
      *
      * @param mapId 맵 ID
@@ -516,6 +553,38 @@ public final class RedisKeys {
      */
     public static String youtubeOembedFailureKey(String videoId) {
         return YOUTUBE_OEMBED_FAILURE_PREFIX + videoId;
+    }
+
+    /**
+     * 로비 채팅 쿨타임 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : chat:lobby:{code}:cooldown:{userIdentifier}
+     * - Value : "1"
+     * - TTL   : 채팅 쿨타임
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return 로비 채팅 쿨타임 Redis key
+     */
+    public static String lobbyChatCooldownKey(String code, String userIdentifier) {
+        return LOBBY_CHAT_COOLDOWN_PREFIX + code + ":cooldown:" + userIdentifier;
+    }
+
+    /**
+     * 로비 채팅 최근 메시지 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : chat:lobby:{code}:recent:{userIdentifier}
+     * - Value : 최근 전송한 메시지 본문 해시
+     * - TTL   : 반복 메시지 감지 기간
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return 로비 채팅 최근 메시지 Redis key
+     */
+    public static String lobbyChatRecentMessageKey(String code, String userIdentifier) {
+        return LOBBY_CHAT_RECENT_MESSAGE_PREFIX + code + ":recent:" + userIdentifier;
     }
 
     // =========================================================

@@ -1,142 +1,82 @@
 package io.github.ascrew.monomatbe.domain.auth.service;
 
-import io.github.ascrew.monomatbe.domain.auth.dto.RegisterResponse;
-import io.github.ascrew.monomatbe.domain.auth.entity.User;
-import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
-import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
+import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.HttpStatus;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
-@SpringBootTest
-@ActiveProfiles("test")
-@Transactional
 class RegisterAuthServiceTest {
 
-    @Autowired
+    private UserRepository userRepository;
+    private UserCredentialRepository userCredentialRepository;
+    private PasswordEncoder passwordEncoder;
+    private NicknamePolicyValidator nicknamePolicyValidator;
     private RegisterAuthService registerAuthService;
 
-    @Autowired
-    private UserRepository userRepository;
+    @BeforeEach
+    void setUp() {
+        userRepository = mock(UserRepository.class);
+        userCredentialRepository = mock(UserCredentialRepository.class);
+        passwordEncoder = mock(PasswordEncoder.class);
+        nicknamePolicyValidator = mock(NicknamePolicyValidator.class);
 
-    private String uniqueNickname() {
-        return "n" + (System.nanoTime() % 1_000_000);
+        registerAuthService = new RegisterAuthService(
+                userRepository,
+                userCredentialRepository,
+                passwordEncoder,
+                nicknamePolicyValidator
+        );
     }
 
     @Test
-    void register_success() {
-        String uniqueLoginId = "member_" + System.nanoTime();
-        String uniqueNickname = uniqueNickname();
-
-        RegisterResponse response = registerAuthService.register(
-                uniqueLoginId,
-                "password123",
-                uniqueNickname
+    @DisplayName("회원가입 닉네임이 1자이면 길이 검증에서 실패한다")
+    void registerWithTooShortNickname() {
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> registerAuthService.register("loginId1", "password123", "가")
         );
 
-        assertNotNull(response.userId());
-        assertEquals(uniqueLoginId, response.loginId());
-        assertEquals(uniqueNickname, response.nickname());
-        assertEquals(UserType.REGISTERED, response.userType());
+        assertEquals(AuthErrorCode.AUTH_NICKNAME_INVALID_LENGTH, exception.getErrorCode());
+        verifyNoInteractions(nicknamePolicyValidator);
     }
 
     @Test
-    void register_trimsLoginIdAndNickname() {
-        String uniqueLoginId = "member_" + System.nanoTime();
-        String uniqueNickname = uniqueNickname();
-
-        RegisterResponse response = registerAuthService.register(
-                "  " + uniqueLoginId + "  ",
-                "password123",
-                "  " + uniqueNickname + "  "
+    @DisplayName("회원가입 닉네임이 13자 이상이면 길이 검증에서 실패한다")
+    void registerWithTooLongNickname() {
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> registerAuthService.register("loginId1", "password123", "가나다라마바사아자차카타파")
         );
 
-        assertEquals(uniqueLoginId, response.loginId());
-        assertEquals(uniqueNickname, response.nickname());
+        assertEquals(AuthErrorCode.AUTH_NICKNAME_INVALID_LENGTH, exception.getErrorCode());
+        verifyNoInteractions(nicknamePolicyValidator);
     }
 
     @Test
-    void register_passwordWithWhitespace_throwsBadRequest() {
-        String uniqueLoginId = "member_" + System.nanoTime();
-        String uniqueNickname = uniqueNickname();
-        String rawPassword = "  password123  ";
+    @DisplayName("회원가입 닉네임에 금칙어가 포함되면 실패한다")
+    void registerWithForbiddenNickname() {
+        doThrow(new AuthException(AuthErrorCode.AUTH_NICKNAME_FORBIDDEN_WORD))
+                .when(nicknamePolicyValidator)
+                .validate("관리자123");
 
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register(uniqueLoginId, rawPassword, uniqueNickname));
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        assertEquals("비밀번호에는 공백을 포함할 수 없습니다.", exception.getReason());
-    }
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> registerAuthService.register("loginId1", "password123", "관리자123")
+        );
 
-    @Test
-    void register_duplicateLoginId_throwsConflict() {
-        String loginId = "dup_login_" + System.nanoTime();
-
-        registerAuthService.register(loginId, "password123", uniqueNickname());
-
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register(loginId, "password123", uniqueNickname()));
-        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
-        assertEquals("이미 사용 중인 로그인 ID입니다.", exception.getReason());
-    }
-
-    @Test
-    void register_duplicateNickname_throwsConflict() {
-        String nickname = uniqueNickname();
-        userRepository.saveAndFlush(User.builder()
-                .username(nickname)
-                .userType(UserType.REGISTERED)
-                .status(UserStatus.ACTIVE)
-                .build());
-
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register("anotherLogin_" + System.nanoTime(), "password123", nickname));
-        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
-        assertEquals("이미 사용 중인 닉네임입니다.", exception.getReason());
-    }
-
-    @Test
-    void register_nullPassword_throwsBadRequest() {
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register("login_" + System.nanoTime(), null, uniqueNickname()));
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        assertEquals("비밀번호는 비어 있을 수 없습니다.", exception.getReason());
-    }
-
-    @Test
-    void register_blankLoginId_throwsBadRequest() {
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register("   ", "password123", uniqueNickname()));
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        assertEquals("로그인 ID는 비어 있을 수 없습니다.", exception.getReason());
-    }
-
-    @Test
-    void register_nicknameTooLong_throwsBadRequest() {
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register("login_" + System.nanoTime(), "password123", "123456789"));
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        assertEquals("닉네임은 8자를 초과할 수 없습니다.", exception.getReason());
-    }
-
-    @Test
-    void register_loginIdWithWhitespace_throwsBadRequest() {
-        // given
-        String loginIdWithWhitespace = "abc def";
-        String uniqueNickname = uniqueNickname();
-
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                registerAuthService.register(loginIdWithWhitespace, "password123", uniqueNickname));
-
-        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        assertEquals("로그인 ID에는 공백을 포함할 수 없습니다.", exception.getReason());
+        assertEquals(AuthErrorCode.AUTH_NICKNAME_FORBIDDEN_WORD, exception.getErrorCode());
+        verify(nicknamePolicyValidator).validate("관리자123");
+        verifyNoInteractions(userRepository, userCredentialRepository, passwordEncoder);
     }
 }

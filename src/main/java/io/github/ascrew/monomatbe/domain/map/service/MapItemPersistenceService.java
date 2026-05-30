@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
+import io.github.ascrew.monomatbe.domain.map.MapItemPolicy;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
@@ -12,8 +13,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class MapItemPersistenceService {
@@ -22,6 +28,11 @@ public class MapItemPersistenceService {
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 문제를 관리할 수 있습니다.";
     private static final String ERROR_MAP_ITEM_NOT_FOUND = "문제를 찾을 수 없습니다.";
     private static final String ERROR_DUPLICATE_ORDER = "이미 사용 중인 문제 순서입니다.";
+    private static final String ERROR_DUPLICATE_ITEM_ID = "중복된 문제 ID가 있습니다.";
+    private static final String ERROR_MISSING_ITEMS = "모든 문제의 순서를 지정해야 합니다.";
+    private static final String ERROR_INVALID_ITEM_ID = "유효하지 않은 문제 ID가 포함되어 있습니다.";
+    private static final String ERROR_MAP_ITEM_LIMIT_EXCEEDED =
+            "한 맵에 등록할 수 있는 문제는 최대 " + MapItemPolicy.MAX_ITEMS_PER_MAP + "개입니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
@@ -54,7 +65,8 @@ public class MapItemPersistenceService {
             String hint,
             int hintTime
     ) {
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
+        QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
+        validateItemCount(mapId);
         validateOrderDuplicatedOnCreate(mapId, request.orderNum());
 
         MapItem saved = mapItemJpaRepository.save(MapItem.builder()
@@ -89,7 +101,7 @@ public class MapItemPersistenceService {
             String hint,
             int hintTime
     ) {
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
+        QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
 
         MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
@@ -116,8 +128,30 @@ public class MapItemPersistenceService {
     }
 
     @Transactional
+    public void reorder(Long mapId, Long ownerId, List<Long> orderedItemIds) {
+        getOwnedMapForWriteOrThrow(mapId, ownerId);
+
+        List<MapItem> activeItems = mapItemJpaRepository
+                .findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId);
+
+        validateReorderRequest(activeItems, orderedItemIds);
+
+        // Phase 1: -id(음수)로 일괄 변경 (최종값 1~N과 겹치지 않아 UNIQUE 충돌 없음)
+        mapItemJpaRepository.setTemporaryOrderNums(mapId);
+
+        // Phase 2: L1 캐시 클리어 후 재조회, 최종 orderNum 할당
+        Map<Long, MapItem> itemById = mapItemJpaRepository
+                .findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId)
+                .stream().collect(Collectors.toMap(MapItem::getId, Function.identity()));
+
+        for (int i = 0; i < orderedItemIds.size(); i++) {
+            itemById.get(orderedItemIds.get(i)).reorder(i + 1);
+        }
+    }
+
+    @Transactional
     public void delete(Long mapId, Long itemId, Long ownerId) {
-        QuizMap quizMap = getOwnedMapOrThrow(mapId, ownerId);
+        QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, ownerId);
 
         MapItem mapItem = mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(itemId, mapId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_ITEM_NOT_FOUND));
@@ -161,6 +195,40 @@ public class MapItemPersistenceService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
         }
         return quizMap;
+    }
+
+    // 같은 mapId에 대한 create/update/delete/reorder를 직렬화하기 위해 PESSIMISTIC_WRITE 락을 잡는다.
+    // 소유자 조건을 락 쿼리에 포함해 비소유자 요청이 write lock을 획득하지 않도록 한다.
+    private QuizMap getOwnedMapForWriteOrThrow(Long mapId, Long ownerId) {
+        return quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(mapId, ownerId)
+                .orElseThrow(() -> {
+                    if (quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId).isEmpty()) {
+                        return new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_MAP_NOT_FOUND);
+                    }
+                    return new ResponseStatusException(HttpStatus.FORBIDDEN, ERROR_MAP_FORBIDDEN);
+                });
+    }
+
+    private void validateReorderRequest(List<MapItem> activeItems, List<Long> orderedItemIds) {
+        Set<Long> deduplicated = new HashSet<>(orderedItemIds);
+        if (deduplicated.size() != orderedItemIds.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_DUPLICATE_ITEM_ID);
+        }
+        if (orderedItemIds.size() != activeItems.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_MISSING_ITEMS);
+        }
+        Set<Long> activeIds = activeItems.stream().map(MapItem::getId).collect(Collectors.toSet());
+        for (Long id : orderedItemIds) {
+            if (!activeIds.contains(id)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_ITEM_ID);
+            }
+        }
+    }
+
+    private void validateItemCount(Long mapId) {
+        if (mapItemJpaRepository.countByMapIdAndIsDeletedFalse(mapId) >= MapItemPolicy.MAX_ITEMS_PER_MAP) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_MAP_ITEM_LIMIT_EXCEEDED);
+        }
     }
 
     private void validateOrderDuplicatedOnCreate(Long mapId, Integer orderNum) {

@@ -5,16 +5,17 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserCredential;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthLoginFailureException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -44,11 +45,19 @@ class LoginAuthServiceTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    private String uniqueLoginId() {
+        return "member" + System.nanoTime();
+    }
+
+    private String uniqueNickname() {
+        return "n" + (System.nanoTime() % 1_000_000);
+    }
+
     @Test
     void login_success() {
-        String loginId = "member_" + System.nanoTime();
+        String loginId = uniqueLoginId();
         String password = "password123";
-        String nickname = "n" + (System.nanoTime() % 1_000_000);
+        String nickname = uniqueNickname();
         long sessionCountBefore = userSessionRepository.count();
 
         UserCredential credential = createCredential(loginId, password, nickname);
@@ -82,15 +91,67 @@ class LoginAuthServiceTest {
     }
 
     @Test
+    void login_legacyLoginIdWithUnderscore_success() {
+        String loginId = "legacy_" + System.nanoTime();
+        String password = "password123";
+        String nickname = uniqueNickname();
+
+        UserCredential credential = createCredential(loginId, password, nickname);
+
+        LoginResponse response = loginAuthService.login(
+                loginId,
+                password,
+                "127.0.0.1",
+                "JUnit-Agent"
+        );
+
+        assertEquals(credential.getUser().getId(), response.userId());
+        assertEquals(loginId, response.loginId());
+        assertEquals(nickname, response.nickname());
+        assertEquals(UserType.REGISTERED, response.userType());
+    }
+
+    @Test
+    void login_legacyLoginIdWithSpecialCharacter_success() {
+        String loginId = "legacy-" + System.nanoTime();
+        String password = "password123";
+        String nickname = uniqueNickname();
+
+        UserCredential credential = createCredential(loginId, password, nickname);
+
+        LoginResponse response = loginAuthService.login(
+                loginId,
+                password,
+                "127.0.0.1",
+                "JUnit-Agent"
+        );
+
+        assertEquals(credential.getUser().getId(), response.userId());
+        assertEquals(loginId, response.loginId());
+        assertEquals(nickname, response.nickname());
+        assertEquals(UserType.REGISTERED, response.userType());
+    }
+
+    @Test
+    void login_unknownLoginId_returnsInvalidCredentials() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login("unknown!", "password123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
+    }
+
+    @Test
     void login_wrongPassword_incrementsFailedCount() {
-        String loginId = "member_" + System.nanoTime();
-        createCredential(loginId, "password123", "n" + (System.nanoTime() % 1_000_000));
+        String loginId = uniqueLoginId();
 
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                loginAuthService.login(loginId, "wrong-password", null, null));
+        createCredential(loginId, "password123", uniqueNickname());
 
-        assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatusCode());
-        assertEquals("로그인 ID 또는 비밀번호가 올바르지 않습니다.", exception.getReason());
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(loginId, "wrong-password", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
 
         UserCredential savedCredential = userCredentialRepository.findByLoginId(loginId).orElseThrow();
         assertEquals(1, savedCredential.getFailedLoginCount());
@@ -99,12 +160,16 @@ class LoginAuthServiceTest {
 
     @Test
     void login_fiveFailures_locksAccount() {
-        String loginId = "member_" + System.nanoTime();
-        createCredential(loginId, "password123", "n" + (System.nanoTime() % 1_000_000));
+        String loginId = uniqueLoginId();
+
+        createCredential(loginId, "password123", uniqueNickname());
 
         for (int i = 0; i < 5; i++) {
-            assertThrows(ResponseStatusException.class, () ->
-                    loginAuthService.login(loginId, "wrong-password", null, null));
+            AuthException exception = assertThrows(AuthException.class, () ->
+                    loginAuthService.login(loginId, "wrong-password", null, null)
+            );
+
+            assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
         }
 
         UserCredential savedCredential = userCredentialRepository.findByLoginId(loginId).orElseThrow();
@@ -112,29 +177,34 @@ class LoginAuthServiceTest {
         assertNotNull(savedCredential.getLockedUntil());
         assertTrue(savedCredential.getLockedUntil().isAfter(LocalDateTime.now()));
 
-        ResponseStatusException lockedException = assertThrows(ResponseStatusException.class, () ->
-                loginAuthService.login(loginId, "password123", null, null));
-        assertEquals(HttpStatus.LOCKED, lockedException.getStatusCode());
+        AuthException lockedException = assertThrows(AuthException.class, () ->
+                loginAuthService.login(loginId, "password123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_ACCOUNT_LOCKED, lockedException.getErrorCode());
     }
 
     @Test
-    void login_lockedAccount_returnsLocked() {
-        String loginId = "member_" + System.nanoTime();
-        UserCredential credential = createCredential(loginId, "password123", "n" + (System.nanoTime() % 1_000_000));
+    void login_lockedAccount_returnsLockedError() {
+        String loginId = uniqueLoginId();
+
+        UserCredential credential = createCredential(loginId, "password123", uniqueNickname());
         credential.lockUntil(LocalDateTime.now().plusMinutes(10));
         userCredentialRepository.saveAndFlush(credential);
 
-        ResponseStatusException exception = assertThrows(ResponseStatusException.class, () ->
-                loginAuthService.login(loginId, "password123", null, null));
-        assertEquals(HttpStatus.LOCKED, exception.getStatusCode());
-        assertEquals("로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요.", exception.getReason());
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(loginId, "password123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_ACCOUNT_LOCKED, exception.getErrorCode());
     }
 
     @Test
     void login_success_resetsFailedState() {
-        String loginId = "member_" + System.nanoTime();
+        String loginId = uniqueLoginId();
         String password = "password123";
-        UserCredential credential = createCredential(loginId, password, "n" + (System.nanoTime() % 1_000_000));
+
+        UserCredential credential = createCredential(loginId, password, uniqueNickname());
         credential.increaseFailedLoginCount();
         credential.increaseFailedLoginCount();
         credential.lockUntil(LocalDateTime.now().minusMinutes(1));
@@ -145,6 +215,68 @@ class LoginAuthServiceTest {
         UserCredential savedCredential = userCredentialRepository.findByLoginId(loginId).orElseThrow();
         assertEquals(0, savedCredential.getFailedLoginCount());
         assertNull(savedCredential.getLockedUntil());
+    }
+
+    @Test
+    void login_blankLoginId_throwsLoginIdRequiredError() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login("   ", "password123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_LOGIN_ID_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_nullLoginId_throwsLoginIdRequiredError() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(null, "password123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_LOGIN_ID_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_blankPassword_throwsPasswordRequiredError() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(uniqueLoginId(), "   ", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_nullPassword_throwsPasswordRequiredError() {
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(uniqueLoginId(), null, null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_wrongPassword_throwsLoginFailureExceptionForNoRollback() {
+        String loginId = uniqueLoginId();
+
+        createCredential(loginId, "password123", uniqueNickname());
+
+        AuthLoginFailureException exception = assertThrows(AuthLoginFailureException.class, () ->
+                loginAuthService.login(loginId, "wrong-password", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
+    }
+
+    @Test
+    void login_passwordWithWhitespace_isHandledAsInvalidCredentialsAfterLookup() {
+        String loginId = uniqueLoginId();
+
+        createCredential(loginId, "password123", uniqueNickname());
+
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(loginId, "pass word123", null, null)
+        );
+
+        assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
     }
 
     private UserCredential createCredential(String loginId, String rawPassword, String nickname) {

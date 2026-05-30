@@ -58,11 +58,11 @@ public class GameSessionCreateService {
         List<MapItem> mapItems = mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(map.getId());
         Collections.shuffle(mapItems);
         List<MapItem> selectedItems = mapItems.stream()
-                .limit(lobby.getRoundCount())
+                .limit(lobby.getQuestionCount())
                 .toList();
 
-        if (selectedItems.size() < lobby.getRoundCount()) {
-            throw new io.github.ascrew.monomatbe.domain.game.exception.NotEnoughMapItemsException("출제 가능한 문제 수가 라운드 수보다 적습니다.");
+        if (selectedItems.size() < lobby.getQuestionCount()) {
+            throw new io.github.ascrew.monomatbe.domain.game.exception.NotEnoughMapItemsException("출제 가능한 문제 수가 설정된 문제 갯수보다 적습니다.");
         }
 
         long serverStartedAt = System.currentTimeMillis();
@@ -73,7 +73,7 @@ public class GameSessionCreateService {
                 .lobby(lobby)
                 .map(map)
                 .currentRoundNo(1)
-                .totalRoundCount(lobby.getRoundCount())
+                .totalQuestionCount(lobby.getQuestionCount())
                 .startedAt(startedAt)
                 .build();
         gameSessionJpaRepository.save(gameSession);
@@ -108,7 +108,7 @@ public class GameSessionCreateService {
         String result = redisTemplate.execute(
                 initGameSessionScript,
                 List.of(sessionKey, roundsKey, playersKey),
-                String.valueOf(lobby.getRoundCount()),
+                String.valueOf(lobby.getQuestionCount()),
                 mapItemIdsStr,
                 participantsStr,
                 String.valueOf(lobby.getTimeLimitSeconds()),
@@ -123,8 +123,8 @@ public class GameSessionCreateService {
             throw new IllegalStateException("게임 세션 Redis 초기화 실패: " + result);
         }
 
-        log.info("게임 세션 생성 완료 - 로비 코드: {}, 라운드 수: {}, 참여자 수: {}", 
-                 code, lobby.getRoundCount(), participantIdentifiers.size());
+        log.info("게임 세션 생성 완료 - 로비 코드: {}, 문제 갯수: {}, 참여자 수: {}",
+                 code, lobby.getQuestionCount(), participantIdentifiers.size());
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
@@ -137,12 +137,13 @@ public class GameSessionCreateService {
         });
 
         MapItem firstItem = selectedItems.get(0);
+        int effectiveEndTime = firstItem.getStartTime() + lobby.getTimeLimitSeconds();
         return RoundStartDto.builder()
                 .type("ROUND_READY")
                 .videoId(firstItem.getVideoId())
                 .youtubeUrl(firstItem.getYoutubeUrl())
                 .startTime(firstItem.getStartTime())
-                .endTime(firstItem.getEndTime())
+                .endTime(effectiveEndTime)
                 .timeLimitSeconds(lobby.getTimeLimitSeconds())
                 .roundNo(1)
                 .serverStartedAt(serverStartedAt)

@@ -25,6 +25,9 @@ public interface LobbyRepository {
   /** 해당 유저가 해당 로비의 참여자인지 확인합니다. */
   boolean isParticipant(String code, String userId);
 
+  /** 해당 유저가 해당 로비에서 강퇴된 유저인지 확인합니다. */
+  boolean isKicked(String code, String userIdentifier);
+
   /**
    * 로비 참여자의 준비 상태를 변경한다.
    *
@@ -56,11 +59,15 @@ public interface LobbyRepository {
    * @param request 로비 생성 요청
    * @param userIdentifier 방장 사용자 식별자
    * @param mapMetadata 선택된 맵 메타데이터 (맵 미선택 시 null)
+   * @param effectiveQuestionCount 실제 적용할 문제 수
+   * @param timeLimitSeconds 제한 시간(초)
    */
   String saveToRedis(
           CreateLobbyRequest request,
           String userIdentifier,
-          LobbyMapMetadata mapMetadata
+          LobbyMapMetadata mapMetadata,
+          int effectiveQuestionCount,
+          int timeLimitSeconds
   );
 
   /**
@@ -247,12 +254,13 @@ public interface LobbyRepository {
   int getCurrentPlayerCount(String inviteCode);
 
   /**
-   * Redis 로비 Hash의 맵 메타데이터 3개 필드(map_id, map_title, map_category)를 갱신한다.
+   * Redis 로비 Hash의 맵 메타데이터와 문제 수를 갱신한다.
    *
-   * @param code     로비 초대 코드
-   * @param metadata 새 맵 메타데이터 (null이면 맵 필드를 제거한다)
+   * @param code          로비 초대 코드
+   * @param metadata      새 맵 메타데이터 (null이면 맵 필드를 제거한다)
+   * @param questionCount 새 문제 수
    */
-  void updateMapMetadata(String code, LobbyMapMetadata metadata);
+  void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount);
 
   /**
    * 로비 맵 변경 트랜잭션 보상 복구를 status==WAITING 원자 검증과 함께 수행한다.
@@ -265,13 +273,15 @@ public interface LobbyRepository {
    * Redis 연결 단절·타임아웃·Lua 스크립트 로딩 실패 등 인프라 예외는 호출자에게 그대로 전파한다.
    * 호출자(LobbyMapUpdateService)가 도메인 결과(LOBBY_NOT_FOUND)와 인프라 장애를 분리 처리한다.
    *
-   * @param code        로비 초대 코드
-   * @param oldMetadata 복구할 이전 맵 메타데이터 (null 또는 필드가 null이면 HDEL 처리)
+   * @param code             로비 초대 코드
+   * @param oldMetadata      복구할 이전 맵 메타데이터 (null 또는 필드가 null이면 HDEL 처리)
+   * @param oldQuestionCount 복구할 이전 문제 수
    * @return 보상 처리 결과 (COMPENSATED / SKIPPED_NOT_WAITING / LOBBY_NOT_FOUND)
    * @throws RuntimeException Redis 인프라 오류 발생 시
    */
   LobbyMapCompensationResult compensateMapMetadataIfWaiting(
           String code,
-          LobbyMapMetadata oldMetadata
+          LobbyMapMetadata oldMetadata,
+          int oldQuestionCount
   );
 }

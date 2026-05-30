@@ -80,8 +80,8 @@ public class GameLobby {
     @Column(name = "max_players", nullable = false)
     private Integer maxPlayers;
 
-    @Column(name = "round_count", nullable = false)
-    private Integer roundCount;
+    @Column(name = "question_count", nullable = false)
+    private Integer questionCount;
 
     @Column(name = "time_limit_seconds", nullable = false)
     private Integer timeLimitSeconds;
@@ -146,5 +146,14 @@ public class GameLobby {
      */
     public void updateMap(Long mapId) {
         this.mapId = mapId;
+    }
+
+    /**
+     * 로비 맵과 문제 수를 함께 변경한다.
+     * 맵 변경 시 새 맵의 numOfSong으로 questionCount를 재설정할 때 사용한다.
+     */
+    public void updateMapAndQuestionCount(Long mapId, Integer questionCount) {
+        this.mapId = mapId;
+        this.questionCount = questionCount;
     }
 }

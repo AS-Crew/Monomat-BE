@@ -99,9 +99,9 @@ public class LobbyStartPolicy {
      */
     private void validateMapSongCount(QuizMap quizMap, GameLobby gameLobby) {
         Integer numOfSong = quizMap.getNumOfSong();
-        Integer roundCount = gameLobby.getRoundCount();
+        Integer questionCount = gameLobby.getQuestionCount();
 
-        if (numOfSong == null || roundCount == null || numOfSong < roundCount) {
+        if (numOfSong == null || questionCount == null || numOfSong < questionCount) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     ERROR_START_MAP_SONG_COUNT_NOT_ENOUGH

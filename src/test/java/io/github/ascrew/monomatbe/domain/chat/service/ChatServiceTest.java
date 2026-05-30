@@ -18,8 +18,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
@@ -42,6 +44,9 @@ class ChatServiceTest {
     @Mock
     private LobbyChatRateLimitService lobbyChatRateLimitService;
 
+    @Mock
+    private LobbyRecentChatStoreService lobbyRecentChatStoreService;
+
     private ChatService chatService;
 
     @BeforeEach
@@ -49,7 +54,8 @@ class ChatServiceTest {
         chatService = new ChatService(
                 redisPublisher,
                 lobbyRepository,
-                lobbyChatRateLimitService
+                lobbyChatRateLimitService,
+                lobbyRecentChatStoreService
         );
     }
 
@@ -81,20 +87,35 @@ class ChatServiceTest {
                 "안녕하세요"
         );
 
-        ArgumentCaptor<ChatMessageDto> captor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        ArgumentCaptor<ChatMessageDto> recentChatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+
+        verify(lobbyRecentChatStoreService).append(
+                eq(LOBBY_CODE),
+                recentChatCaptor.capture()
+        );
+
+        ChatMessageDto stored = recentChatCaptor.getValue();
+
+        assertThat(stored.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
+        assertThat(stored.getRoomId()).isEqualTo(LOBBY_CODE);
+        assertThat(stored.getSender()).isEqualTo(USER_IDENTIFIER);
+        assertThat(stored.getContent()).isEqualTo("안녕하세요");
+        assertUtcTimestamp(stored.getTimestamp());
+
+        ArgumentCaptor<ChatMessageDto> publishCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
 
         verify(redisPublisher).publish(
                 eq(StompDestinations.subscribeLobbyChat(LOBBY_CODE)),
-                captor.capture()
+                publishCaptor.capture()
         );
 
-        ChatMessageDto published = captor.getValue();
+        ChatMessageDto published = publishCaptor.getValue();
 
         assertThat(published.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
         assertThat(published.getRoomId()).isEqualTo(LOBBY_CODE);
         assertThat(published.getSender()).isEqualTo(USER_IDENTIFIER);
         assertThat(published.getContent()).isEqualTo("안녕하세요");
-        assertThat(published.getTimestamp()).isNotBlank();
+        assertUtcTimestamp(published.getTimestamp());
     }
 
     @Test
@@ -114,6 +135,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -136,6 +158,7 @@ class ChatServiceTest {
 
         verify(lobbyRepository, never()).isParticipant(LOBBY_CODE, USER_IDENTIFIER);
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -158,6 +181,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -178,6 +202,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -198,6 +223,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -221,11 +247,12 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
     @Test
-    @DisplayName("전체 채팅은 로비 참여자 검증 없이 CHAT 메시지를 발행한다")
+    @DisplayName("전체 채팅은 로비 참여자 검증과 최근 채팅 저장 없이 CHAT 메시지를 발행한다")
     void publishGlobalMessage_success() {
         // given
         ChatMessageDto request = chatMessage("  전체 채팅  ");
@@ -238,6 +265,7 @@ class ChatServiceTest {
         // then
         verify(lobbyRepository, never()).existsByCode(any());
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
 
         ArgumentCaptor<ChatMessageDto> captor = ArgumentCaptor.forClass(ChatMessageDto.class);
 
@@ -277,5 +305,12 @@ class ChatServiceTest {
         accessor.setSessionAttributes(sessionAttributes);
 
         return accessor;
+    }
+
+    private void assertUtcTimestamp(String timestamp) {
+        assertThat(timestamp).isNotBlank();
+        assertThat(timestamp).endsWith("Z");
+        assertThatCode(() -> Instant.parse(timestamp))
+                .doesNotThrowAnyException();
     }
 }

@@ -8,6 +8,7 @@
  * - 채팅 메시지 본문 검증
  * - 로비 채팅 전송 권한 검증
  * - Redis 기반 로비 채팅 쿨타임/반복 전송 제한
+ * - 로비 최근 채팅 메시지 저장 위임
  * - Redis Pub/Sub 채널로 메시지 발행
  *
  * [주의]
@@ -27,11 +28,25 @@ import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 
 @Service
 @RequiredArgsConstructor
 public class ChatService {
+
+    /*
+     * 채팅 timestamp 포맷
+     *
+     * 서버 OS timezone에 종속되지 않도록 UTC 기준으로 고정한다.
+     * 프론트엔드 Date 파싱 안정성을 위해 millisecond 단위까지 고정된 문자열을 사용한다.
+     *
+     * 예: 2026-05-30T12:00:00.123Z
+     */
+    private static final DateTimeFormatter CHAT_TIMESTAMP_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
+                    .withZone(ZoneOffset.UTC);
 
     /*
      * 채팅 메시지 최대 길이
@@ -57,6 +72,7 @@ public class ChatService {
     private final RedisPublisher redisPublisher;
     private final LobbyRepository lobbyRepository;
     private final LobbyChatRateLimitService lobbyChatRateLimitService;
+    private final LobbyRecentChatStoreService lobbyRecentChatStoreService;
 
     /**
      * 전체 채팅 메시지를 처리하고 Redis 전체 채팅 채널로 발행한다.
@@ -67,7 +83,7 @@ public class ChatService {
      *
      * [정책]
      * 전체 채팅은 특정 로비 참여 상태와 무관하므로 로비 참여자 검증을 수행하지 않는다.
-     * 이번 이슈 범위는 로비 채팅 제한이므로, Redis 쿨타임도 로비 채팅에만 적용한다.
+     * 이번 이슈 범위는 로비 최근 채팅 조회이므로, 최근 채팅 저장은 로비 채팅에만 적용한다.
      *
      * @param message  클라이언트로부터 수신한 메시지
      * @param accessor STOMP 헤더 접근자
@@ -95,6 +111,10 @@ public class ChatService {
      * - Redis 기반 쿨타임을 적용한다.
      * - 짧은 시간 내 동일 메시지 반복 전송을 차단한다.
      *
+     * [최근 채팅 저장]
+     * - 서버 신뢰 메시지를 Redis List에 저장한다.
+     * - 저장 실패는 실시간 채팅 전송을 막지 않는다.
+     *
      * @param code     로비 초대 코드
      * @param message  클라이언트로부터 수신한 메시지
      * @param accessor STOMP 헤더 접근자
@@ -115,6 +135,8 @@ public class ChatService {
                 userIdentifier,
                 secureMessage.getContent()
         );
+
+        lobbyRecentChatStoreService.append(code, secureMessage);
 
         redisPublisher.publish(StompDestinations.subscribeLobbyChat(code), secureMessage);
     }
@@ -179,8 +201,12 @@ public class ChatService {
                 .roomId(roomId)
                 .sender(userIdentifier)
                 .content(normalizedContent)
-                .timestamp(LocalDateTime.now().toString())
+                .timestamp(currentTimestamp())
                 .build();
+    }
+
+    private String currentTimestamp() {
+        return CHAT_TIMESTAMP_FORMATTER.format(Instant.now());
     }
 
     /**

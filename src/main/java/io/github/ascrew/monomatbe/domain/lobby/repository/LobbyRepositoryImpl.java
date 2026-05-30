@@ -3,6 +3,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -81,6 +82,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public boolean isKicked(String code, String userIdentifier) {
     return lobbyRedisQueryRepository.isKicked(code, userIdentifier);
+  }
+
+  @Override
+  public LobbyUserAccessStatus getUserAccessStatus(String code, String userIdentifier) {
+    return lobbyRedisQueryRepository.getUserAccessStatus(code, userIdentifier);
   }
 
   @Override

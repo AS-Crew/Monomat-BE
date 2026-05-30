@@ -84,6 +84,10 @@ public class UserQueryService {
                     HttpStatus.UNAUTHORIZED,
                     ERROR_USER_DELETED
             );
+            default -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_UNSUPPORTED_USER_STATUS
+            );
         }
     }
 

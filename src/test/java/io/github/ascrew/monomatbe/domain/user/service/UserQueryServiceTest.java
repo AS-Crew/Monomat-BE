@@ -43,10 +43,10 @@ class UserQueryServiceTest {
     class GetMyInfo {
 
         @Test
-        @DisplayName("ACTIVE 사용자는 내 사용자 정보를 조회할 수 있다")
-        void getMyInfo_returnsMyUserInfo_whenUserIsActive() {
-            CustomPrincipal principal = registeredPrincipal(USER_ID);
-            User user = user(UserStatus.ACTIVE);
+        @DisplayName("ACTIVE 회원 사용자는 내 사용자 정보를 조회할 수 있다")
+        void getMyInfo_returnsMyUserInfo_whenRegisteredUserIsActive() {
+            CustomPrincipal principal = principal(USER_ID, UserType.REGISTERED);
+            User user = user(UserType.REGISTERED, UserStatus.ACTIVE);
 
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
@@ -55,6 +55,25 @@ class UserQueryServiceTest {
             assertThat(response.userId()).isEqualTo(USER_ID);
             assertThat(response.username()).isEqualTo(USERNAME);
             assertThat(response.userType()).isEqualTo(UserType.REGISTERED);
+            assertThat(response.status()).isEqualTo(UserStatus.ACTIVE);
+            assertThat(response.createdAt()).isEqualTo(CREATED_AT);
+
+            verify(userRepository).findById(USER_ID);
+        }
+
+        @Test
+        @DisplayName("ACTIVE 게스트 사용자는 userType이 GUEST로 매핑되어 반환된다")
+        void getMyInfo_returnsGuestUserType_whenGuestUserIsActive() {
+            CustomPrincipal principal = principal(USER_ID, UserType.GUEST);
+            User user = user(UserType.GUEST, UserStatus.ACTIVE);
+
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+            MyUserInfoResponse response = userQueryService.getMyInfo(principal);
+
+            assertThat(response.userId()).isEqualTo(USER_ID);
+            assertThat(response.username()).isEqualTo(USERNAME);
+            assertThat(response.userType()).isEqualTo(UserType.GUEST);
             assertThat(response.status()).isEqualTo(UserStatus.ACTIVE);
             assertThat(response.createdAt()).isEqualTo(CREATED_AT);
 
@@ -73,11 +92,7 @@ class UserQueryServiceTest {
         @Test
         @DisplayName("principal의 userId가 null이면 401을 반환한다")
         void getMyInfo_throwsUnauthorized_whenPrincipalUserIdIsNull() {
-            CustomPrincipal principal = new CustomPrincipal(
-                    null,
-                    USER_IDENTIFIER,
-                    UserType.REGISTERED
-            );
+            CustomPrincipal principal = principal(null, UserType.REGISTERED);
 
             assertThatThrownBy(() -> userQueryService.getMyInfo(principal))
                     .isInstanceOfSatisfying(ResponseStatusException.class, exception ->
@@ -88,7 +103,7 @@ class UserQueryServiceTest {
         @Test
         @DisplayName("DB에서 사용자를 찾을 수 없으면 401을 반환한다")
         void getMyInfo_throwsUnauthorized_whenUserDoesNotExist() {
-            CustomPrincipal principal = registeredPrincipal(USER_ID);
+            CustomPrincipal principal = principal(USER_ID, UserType.REGISTERED);
 
             when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
@@ -103,8 +118,8 @@ class UserQueryServiceTest {
         @Test
         @DisplayName("BANNED 사용자는 403을 반환한다")
         void getMyInfo_throwsForbidden_whenUserIsBanned() {
-            CustomPrincipal principal = registeredPrincipal(USER_ID);
-            User user = user(UserStatus.BANNED);
+            CustomPrincipal principal = principal(USER_ID, UserType.REGISTERED);
+            User user = user(UserType.REGISTERED, UserStatus.BANNED);
 
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
@@ -119,8 +134,8 @@ class UserQueryServiceTest {
         @Test
         @DisplayName("DELETED 사용자는 401을 반환한다")
         void getMyInfo_throwsUnauthorized_whenUserIsDeleted() {
-            CustomPrincipal principal = registeredPrincipal(USER_ID);
-            User user = user(UserStatus.DELETED);
+            CustomPrincipal principal = principal(USER_ID, UserType.REGISTERED);
+            User user = user(UserType.REGISTERED, UserStatus.DELETED);
 
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
@@ -135,8 +150,8 @@ class UserQueryServiceTest {
         @Test
         @DisplayName("사용자 상태가 null이면 409를 반환한다")
         void getMyInfo_throwsConflict_whenUserStatusIsNull() {
-            CustomPrincipal principal = registeredPrincipal(USER_ID);
-            User user = user(null);
+            CustomPrincipal principal = principal(USER_ID, UserType.REGISTERED);
+            User user = user(UserType.REGISTERED, null);
 
             when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
@@ -149,19 +164,19 @@ class UserQueryServiceTest {
         }
     }
 
-    private CustomPrincipal registeredPrincipal(Long userId) {
+    private CustomPrincipal principal(Long userId, UserType userType) {
         return new CustomPrincipal(
                 userId,
                 USER_IDENTIFIER,
-                UserType.REGISTERED
+                userType
         );
     }
 
-    private User user(UserStatus status) {
+    private User user(UserType userType, UserStatus status) {
         return User.builder()
                 .id(USER_ID)
                 .username(USERNAME)
-                .userType(UserType.REGISTERED)
+                .userType(userType)
                 .status(status)
                 .createdAt(CREATED_AT)
                 .updatedAt(CREATED_AT)

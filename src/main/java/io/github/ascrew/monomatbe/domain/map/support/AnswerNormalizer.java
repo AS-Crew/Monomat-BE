@@ -4,11 +4,13 @@ import java.text.Normalizer;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * 정답 정규화 유틸
  *
  * [정책] 정답은 저장·비교 모두 동일한 정규화를 거친다.
+ *   - 유튜브 메타데이터 제거 (괄호 내용 [MV], (Official) 등 및 official, video, mv 등의 키워드 제거)
  *   - 유니코드 NFC 통일 (한글 조합형/호환 문자 차이 제거)
  *   - 모든 공백 제거 (일반 공백 + 비분리 공백 U+00A0 + 전각 공백 U+3000 등)
  *   - 쉼표 제거 (ASCII ',' + 전각 '，')
@@ -21,7 +23,22 @@ import java.util.List;
  */
 public final class AnswerNormalizer {
 
+    private static final Pattern METADATA_PATTERN = Pattern.compile(
+            "\\[[^\\]]*\\]|\\([^\\)]*\\)|(?i)(official\\s+video|official\\s+audio|official\\s+mv|official\\s+music\\s+video|official|mv|audio)",
+            Pattern.UNICODE_CHARACTER_CLASS
+    );
+
     private AnswerNormalizer() {}
+
+    /**
+     * 원본 문자열에서 대괄호/소괄호 안의 메타데이터 및 YouTube 관련 키워드를 제거하고 공백을 정돈합니다.
+     */
+    public static String cleanMetadata(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return METADATA_PATTERN.matcher(raw).replaceAll("").trim();
+    }
 
     /**
      * 단일 정답 문자열을 정규화한다.
@@ -34,7 +51,8 @@ public final class AnswerNormalizer {
             return "";
         }
 
-        String nfc = Normalizer.normalize(raw, Normalizer.Form.NFC);
+        String cleaned = cleanMetadata(raw);
+        String nfc = Normalizer.normalize(cleaned, Normalizer.Form.NFC);
         StringBuilder builder = new StringBuilder(nfc.length());
         nfc.codePoints().forEach(cp -> {
             if (Character.isWhitespace(cp) || Character.isSpaceChar(cp)) {

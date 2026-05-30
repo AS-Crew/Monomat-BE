@@ -123,12 +123,37 @@ src/main/java/io/github/ascrew/monomatbe/
 │   │   ├── repository/
 │   │   └── service/
 │   │
-│   └── game/                                       # 인게임 도메인
+│   └── game/                                       # 인게임 플레이 도메인
 │       ├── controller/
+│       │   ├── GameEventController.java            # 인게임 WebSocket 엔드포인트
+│       │   └── GameSessionController.java          # 인게임 REST 엔드포인트
 │       ├── dto/
+│       │   ├── CurrentRoundStatusResponse.java
+│       │   ├── GameChatMessageDto.java
+│       │   ├── ReadyToPlayRequest.java
+│       │   ├── RoundCorrectResponse.java
+│       │   ├── RoundMetadataDto.java
+│       │   ├── RoundPlaybackStartedDto.java
+│       │   └── RoundStartDto.java
 │       ├── entity/
+│       │   ├── GameSession.java
+│       │   └── GameSessionPlayer.java
+│       ├── exception/
+│       │   ├── GameSessionAlreadyExistsException.java
+│       │   └── NotEnoughMapItemsException.java
 │       ├── repository/
-│       └── service/
+│       │   ├── GameSessionJpaRepository.java
+│       │   └── GameSessionPlayerJpaRepository.java
+│       ├── service/
+│       │   ├── GameAnswerService.java              # 정답 검증 및 판별 비즈니스
+│       │   ├── GameParticipantResolver.java        # WebSocket 세션 참가자 검증
+│       │   ├── GameRealtimeNotifier.java           # 인게임 Pub/Sub 브로드캐스트
+│       │   ├── GameRoundStartService.java          # 라운드 데이터 웜업 및 라운드 준비/재생 제어
+│       │   ├── GameSessionCreateService.java       # 게임 세션 및 라운드 초기 데이터 생성
+│       │   └── GameSessionQueryService.java        # 현재 게임 세션 및 라운드 상태 조회
+│       └── support/
+│           ├── FuzzyMatcher.java                   # 오타 허용 임계거리 판단 정책
+│           └── LevenshteinDistance.java            # Levenshtein Distance 계산 (공간 복잡도 O(min(M, N)))
 │
 └── global/                                         # 전역 인프라 레이어
     ├── config/
@@ -213,6 +238,17 @@ LobbyCreateService
             ▼
 LobbyRepositoryImpl
     └── Redis 저장에 필요한 mapId, mapTitle, mapCategory만 사용
+```
+
+또한, 인게임 플레이 중에 이루어지는 채팅 및 정답 제출은 대기실/로비를 다루는 `chat` 도메인과의 순환 의존을 방지하기 위해 완전히 격리되어 있습니다. 인게임 채팅 엔드포인트 `/app/game/{code}/chat`은 `game` 도메인의 `GameEventController`가 수용하여 `GameAnswerService`로 직접 제어를 위임합니다.
+
+```text
+GameEventController (인게임 채팅 송신 수용)
+     │
+     ▼
+GameAnswerService (정답 여부 검증 및 라우팅)
+     ├── (최초 정답자) -> Redis 정답자 Set 등록 및 SYSTEM 공지 발행 + 개별 성공 통지(/user/queue/game/answers)
+     └── (오답 및 정답자 채팅) -> CHAT 타입 브로드캐스트 (스포일러 방지를 위해 정답 키워드 포함 시 *** 마스킹)
 ```
 
 ---
@@ -442,6 +478,77 @@ KICK:
   "content": "target-user-identifier님이 강퇴되었습니다.",
   "timestamp": "2026-05-26T12:00:00"
 }
+```
+
+### 인게임 메시지 및 동기화 흐름
+
+#### 1. 인게임 준비 및 YouTube IFrame 동기화 흐름 (#103)
+게임 세션 시작 혹은 다음 라운드 진행 시, 비디오가 정확히 동기화되어 모든 사용자에게 동시에 재생될 수 있도록 2단계 동기화가 이루어집니다.
+
+```text
+클라이언트 (방장/참가자)                               서버
+      │                                                │
+      │ 1. [ROUND_READY] 브로드캐스트 수신              │
+      │    (videoId, startTime, endTime, limit)        │
+      │    - 스포일러 방지를 위해 정답/메타 생략       │
+      │    - YouTube IFrame API 로딩 및 버퍼링 시작    │
+      │◄───────────────────────────────────────────────┤
+      │                                                │
+      │ 2. YouTube IFrame 로딩 완료 (ready-to-play)     │
+      │    SEND /app/game/{code}/ready-to-play         │
+      ├───────────────────────────────────────────────►│ 1. ready count 증가 (Redis Set)
+      │                                                │ 2. 모든 세션의 준비 완료 취합 또는
+      │                                                │    10초 타임아웃 발생 감지
+      │                                                │ 3. 재생 시작 조건 충족 시
+      │                                                │
+      │ 3. [ROUND_PLAYBACK_STARTED] 브로드캐스트 수신   │
+      │    (roundNo, serverStartedAt, duration)        │
+      │◄───────────────────────────────────────────────┤
+      │                                                │
+      │ 4. 재생 시간 보정 및 강제 재생                 │
+      │    - (현재 서버시간 - serverStartedAt) 만큼       │
+      │      seekTo() 후 playVideo() 수행              │
+      ▼                                                ▼
+```
+
+#### 2. 단일 채팅창 기반 인게임 정답 제출 및 판별 흐름 (#104)
+사용자는 단일 채팅창에서 일반 채팅 대화와 정답 제출을 동시에 수행합니다. 시스템은 사용자가 아직 정답을 맞추지 못했을 경우 정답 여부를 판별하여 처리합니다.
+
+```text
+클라이언트 (미정답자)                                 서버
+      │                                                │
+      │ 1. 채팅/정답 입력 (SEND /app/game/{code}/chat)   │
+      ├───────────────────────────────────────────────►│ 1. 사용자가 이미 정답을 맞춘 상태인지 확인 (Redis Set)
+      │                                                │ 2. (미정답자일 시) 정답 여부 대소문자/공백 제거 비교
+      │                                                │ 3. Fuzzy Match(Levenshtein Distance)로 오타 판단
+      │                                                │
+      │                    [정답인 경우]               │
+      │                    - 일반 채팅 브로드캐스트 차단
+      │                    - Redis 정답자 Set 등록
+      │                    - 전체 공지 브로드캐스트 (SYSTEM 타입)
+      │                      "/topic/game/{code}/chat"
+      │◄───────────────────────────────────────────────┤
+      │                                                │
+      │                    - 개별 정답 성공 통지 (ROUND_CORRECT)
+      │                      "/user/queue/game/answers"
+      │◄───────────────────────────────────────────────┤
+      │                                                │
+      │                    [오답/일반채팅인 경우]      │
+      │                    - 일반 채팅 브로드캐스트 (CHAT 타입)
+      │                      "/topic/game/{code}/chat"
+      │◄───────────────────────────────────────────────┤
+```
+
+```text
+클라이언트 (이미 정답을 맞춘 사람)                     서버
+      │                                                │
+      │ 1. 채팅 입력 (SEND /app/game/{code}/chat)       │
+      ├───────────────────────────────────────────────►│ 1. 사용자가 이미 정답을 맞춘 상태인지 확인 (Redis Set)
+      │                                                │ 2. 입력된 채팅 본문에 정답 키워드가 포함되는지 확인
+      │                                                │ 3. (스포일러 방지) 정답 포함 시 본문 "***" 마스킹
+      │                                                │
+      │ 2. 마스킹된 일반 채팅 수신 (CHAT 타입)        │
+      │◄───────────────────────────────────────────────┤
 ```
 
 ---
@@ -732,6 +839,10 @@ GameRealtimeNotifier / LobbyRealtimeNotifier
 | `game:session:{lobbyCode}` | Hash | 인게임 세션 메타데이터 |
 | `game:session:{lobbyCode}:rounds` | List | 출제된 라운드 목록 |
 | `game:session:{lobbyCode}:players` | Hash | 인게임 플레이어 점수 |
+| `game:session:{lobbyCode}:round:{roundNo}:data` | Hash | 라운드 정답(JSON list), 비디오 제목, 아티스트 메타데이터 |
+| `game:session:{lobbyCode}:round:{roundNo}:correct_players` | Set | 해당 라운드에서 이미 정답을 맞춘 플레이어 목록 (스포일러 판정용) |
+| `game:session:{lobbyCode}:round:{roundNo}:ready_players` | Set | 해당 라운드 시작 전 YouTube IFrame 준비 완료 신호를 보낸 플레이어 목록 |
+
 
 ### `lobby:{code}` Hash 구조
 
@@ -751,6 +862,24 @@ GameRealtimeNotifier / LobbyRealtimeNotifier
 
 `map_id`, `map_title`, `map_category`는 로비 생성 시 `mapId`가 전달된 경우에만 저장합니다.  
 맵이 선택되지 않은 로비는 위 세 필드를 저장하지 않습니다.
+
+### `game:session:{lobbyCode}` Hash 구조
+
+| 필드 | 설명 |
+| --- | --- |
+| `lobby_code` | 게임 로비 초대 코드 |
+| `status` | 인게임 상태 (`READY`, `PLAYING`, `FINISHED`) |
+| `current_round_no` | 현재 진행 중인 라운드 번호 (1-based) |
+| `time_limit_seconds` | 라운드별 재생 시간 제한 |
+| `playback_started_at` | 현재 라운드의 비디오 재생 개시 시각 (Clock sync용, 아직 재생 전이면 null) |
+
+### `game:session:{lobbyCode}:round:{roundNo}:data` Hash 구조
+
+| 필드 | 설명 |
+| --- | --- |
+| `answers` | JSON 직렬화된 정답 목록 문자열 (예: `["곡제목1", "곡제목2"]`) |
+| `title` | 정답 공개용 곡 공식 타이틀 |
+| `artist` | 정답 공개용 가수명 |
 
 ---
 
@@ -947,3 +1076,19 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 | `action` | 화면 이동/재연결/재시도 정책 |
 | `recoverable` | 같은 화면에서 재시도 가능한지 판단 |
 | `message` | 사용자에게 표시할 문구 |
+
+### 인게임 플레이 및 동기화
+
+#### 1) 유튜브 IFrame API 동기화 및 Clock Skew 보정
+- FE는 인게임 화면 진입 시 `GET /api/system/time`을 호출하여 서버와 클라이언트 간의 **시간차(Clock Skew)**를 계산하고 보관해야 합니다.
+- 라운드가 시작되어 `ROUND_READY` 수신 후 YouTube 비디오 로드가 완료되면 즉시 `SEND /app/game/{code}/ready-to-play`를 전송해야 합니다. (전체 준비가 완료되지 않아 대기하는 동안 비디오는 재생하지 않고 정지 또는 일시정지 상태여야 함)
+- 모든 유저의 준비 완료 혹은 타임아웃으로 `ROUND_PLAYBACK_STARTED` 메시지를 받으면, FE는 즉시 비디오를 재생해야 합니다.
+- **재생 지점 보정**: 네트워크 딜레이 등으로 인해 메시지 수신 시점이 비디오 시작 타임라인보다 늦을 수 있으므로, `(현재 서버 기준 밀리초 - serverStartedAt)` 만큼 비디오를 앞으로 감기(`seekTo`)한 후 재생(`playVideo`)하여 정확히 1초 미만의 싱크차를 맞춥니다.
+
+#### 2) 단일 채팅창 연동 및 스포일러 방지 필터링
+- **수신 분기**: 인게임 채팅 채널 `/topic/game/{code}/chat`을 구독하고, 수신된 메시지의 `type`을 확인합니다:
+  - `CHAT`: 일반 사용자의 채팅 내용입니다. 본문 `content`가 `"***"`로 왔다면 이는 **정답을 맞춘 사용자가 정답 키워드를 누설하지 않도록 서버에서 마스킹한 스포일러 방지 본문**이므로, 그대로 화면에 출력합니다.
+  - `SYSTEM`: 누군가 새로 정답을 맞췄을 때 브로드캐스트되는 공지입니다. (예: `"닉네임님이 정답을 맞췄습니다!"`)
+- **송신 규칙**: 사용자가 텍스트를 입력하고 전송할 때는 모두 `SEND /app/game/{code}/chat`으로 단일하게 송신합니다.
+- **개별 결과 수신**: 자신이 제출한 채팅이 정답에 해당할 경우, 서버는 일반 채팅 브로드캐스트를 중단(Drop)하고, 해당 사용자에게 `/user/queue/game/answers` 채널로 개별 정답 성공 통지(`ROUND_CORRECT`)를 보냅니다.
+  - 이 통지에는 오타 허용으로 정답 처리되었는지를 알 수 있는 `isFuzzy` 필드가 포함되어 있으므로, FE는 이를 활용하여 사용자에게 "오타 허용 정답!" 같은 전용 연출을 표시할 수 있습니다.

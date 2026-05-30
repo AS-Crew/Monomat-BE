@@ -22,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -54,6 +55,8 @@ class GameSessionCreateServiceTest {
     private StringRedisTemplate redisTemplate;
     @Mock
     private RedisScript<String> initGameSessionScript;
+    @Mock
+    private HashOperations<String, Object, Object> hashOperations;
 
     @InjectMocks
     private GameSessionCreateService gameSessionCreateService;
@@ -114,6 +117,7 @@ class GameSessionCreateServiceTest {
                 anyString(),
                 anyString()
         )).thenReturn("OK");
+        when(redisTemplate.opsForHash()).thenReturn(hashOperations);
 
         // when
         RoundStartDto result = gameSessionCreateService.createGameSession(lobby, quizMap);

@@ -123,6 +123,19 @@ public class GameSessionCreateService {
             throw new IllegalStateException("게임 세션 Redis 초기화 실패: " + result);
         }
 
+        // 4-1. 라운드별 문제 데이터 Redis 캐싱
+        for (int i = 0; i < selectedItems.size(); i++) {
+            MapItem item = selectedItems.get(i);
+            int roundNo = i + 1;
+            String roundDataKey = RedisKeys.gameSessionRoundDataKey(code, roundNo);
+            java.util.Map<String, String> roundData = new java.util.HashMap<>();
+            roundData.put("answers", item.getAnswers()); // 이미 JSON List 포맷 문자열
+            roundData.put("title", item.getTitle() == null ? "" : item.getTitle());
+            roundData.put("artist", item.getArtist() == null ? "" : item.getArtist());
+            redisTemplate.opsForHash().putAll(roundDataKey, roundData);
+            redisTemplate.expire(roundDataKey, java.time.Duration.ofSeconds(7200));
+        }
+
         log.info("게임 세션 생성 완료 - 로비 코드: {}, 문제 갯수: {}, 참여자 수: {}",
                  code, lobby.getQuestionCount(), participantIdentifiers.size());
 
@@ -132,6 +145,10 @@ public class GameSessionCreateService {
                 if (status == STATUS_ROLLED_BACK) {
                     log.warn("DB 트랜잭션 롤백 감지 - Redis 세션 잔여 데이터 정리. code: {}", code);
                     redisTemplate.delete(List.of(sessionKey, roundsKey, playersKey));
+                    for (int i = 1; i <= lobby.getQuestionCount(); i++) {
+                        redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(code, i));
+                        redisTemplate.delete(RedisKeys.gameSessionRoundCorrectPlayersKey(code, i));
+                    }
                 }
             }
         });

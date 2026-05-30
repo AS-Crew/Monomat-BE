@@ -91,6 +91,8 @@ public class GameRoundStartService {
         Boolean isSaved = redisTemplate.opsForHash().putIfAbsent(sessionKey, playbackStartedKey, String.valueOf(serverStartedAt));
 
         if (Boolean.TRUE.equals(isSaved)) {
+            redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+
             RoundPlaybackStartedDto dto = RoundPlaybackStartedDto.builder()
                     .type(GameEventTypes.ROUND_PLAYBACK_STARTED)
                     .roundNo(roundNo)

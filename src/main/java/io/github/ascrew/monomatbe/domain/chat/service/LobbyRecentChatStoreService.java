@@ -1,0 +1,79 @@
+package io.github.ascrew.monomatbe.domain.chat.service;
+
+import io.github.ascrew.monomatbe.domain.chat.config.LobbyRecentChatProperties;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * 로비 최근 채팅 메시지 저장 서비스
+ *
+ * [책임]
+ * - 서버가 신뢰 가능한 값으로 재구성한 로비 채팅 메시지를 Redis List에 저장한다.
+ * - 로비별 최근 N개 메시지만 유지한다.
+ * - 최근 채팅 List TTL을 갱신한다.
+ *
+ * [장애 정책]
+ * 최근 채팅은 새로고침/늦은 입장 UX 보조 기능
+ * 따라서 Redis 저장 실패가 발생하더라도 실시간 채팅 전송 자체를 막지 않는다.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class LobbyRecentChatStoreService {
+
+    private final StringRedisTemplate redisTemplate;
+
+    @Qualifier("cacheJsonMapper")
+    private final JsonMapper jsonMapper;
+
+    private final LobbyRecentChatProperties properties;
+
+    /**
+     * 로비 최근 채팅 메시지를 Redis List에 저장한다.
+     *
+     * 저장 순서:
+     * 1. ChatMessageDto를 타입 정보 없는 JSON 문자열로 직렬화
+     * 2. RPUSH로 List 끝에 추가
+     * 3. LTRIM으로 최근 maxSize개만 유지
+     * 4. EXPIRE로 TTL 갱신
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param message 서버에서 신뢰 가능한 값으로 재구성된 채팅 메시지
+     */
+    public void append(String lobbyCode, ChatMessageDto message) {
+        try {
+            appendOrThrow(lobbyCode, message);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "로비 최근 채팅 저장 실패 - lobbyCode: {}, sender: {}",
+                    lobbyCode,
+                    message != null ? message.getSender() : null,
+                    e
+            );
+        }
+    }
+
+    private void appendOrThrow(String lobbyCode, ChatMessageDto message) {
+        String key = RedisKeys.lobbyRecentChatMessagesKey(lobbyCode);
+        String payload = serialize(message);
+
+        redisTemplate.opsForList().rightPush(key, payload);
+        redisTemplate.opsForList().trim(key, -properties.getMaxSize(), -1);
+        redisTemplate.expire(key, properties.getTtl());
+    }
+
+    private String serialize(ChatMessageDto message) {
+        try {
+            return jsonMapper.writeValueAsString(message);
+        } catch (JacksonException e) {
+            throw new IllegalStateException("로비 최근 채팅 메시지 직렬화에 실패했습니다.", e);
+        }
+    }
+}

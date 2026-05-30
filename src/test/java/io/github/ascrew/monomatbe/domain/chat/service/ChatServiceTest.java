@@ -42,6 +42,9 @@ class ChatServiceTest {
     @Mock
     private LobbyChatRateLimitService lobbyChatRateLimitService;
 
+    @Mock
+    private LobbyRecentChatStoreService lobbyRecentChatStoreService;
+
     private ChatService chatService;
 
     @BeforeEach
@@ -49,7 +52,8 @@ class ChatServiceTest {
         chatService = new ChatService(
                 redisPublisher,
                 lobbyRepository,
-                lobbyChatRateLimitService
+                lobbyChatRateLimitService,
+                lobbyRecentChatStoreService
         );
     }
 
@@ -81,14 +85,29 @@ class ChatServiceTest {
                 "안녕하세요"
         );
 
-        ArgumentCaptor<ChatMessageDto> captor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        ArgumentCaptor<ChatMessageDto> recentChatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+
+        verify(lobbyRecentChatStoreService).append(
+                eq(LOBBY_CODE),
+                recentChatCaptor.capture()
+        );
+
+        ChatMessageDto stored = recentChatCaptor.getValue();
+
+        assertThat(stored.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
+        assertThat(stored.getRoomId()).isEqualTo(LOBBY_CODE);
+        assertThat(stored.getSender()).isEqualTo(USER_IDENTIFIER);
+        assertThat(stored.getContent()).isEqualTo("안녕하세요");
+        assertThat(stored.getTimestamp()).isNotBlank();
+
+        ArgumentCaptor<ChatMessageDto> publishCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
 
         verify(redisPublisher).publish(
                 eq(StompDestinations.subscribeLobbyChat(LOBBY_CODE)),
-                captor.capture()
+                publishCaptor.capture()
         );
 
-        ChatMessageDto published = captor.getValue();
+        ChatMessageDto published = publishCaptor.getValue();
 
         assertThat(published.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
         assertThat(published.getRoomId()).isEqualTo(LOBBY_CODE);
@@ -114,6 +133,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -136,6 +156,7 @@ class ChatServiceTest {
 
         verify(lobbyRepository, never()).isParticipant(LOBBY_CODE, USER_IDENTIFIER);
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -158,6 +179,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -178,6 +200,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -198,6 +221,7 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
@@ -221,11 +245,12 @@ class ChatServiceTest {
                 );
 
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
         verify(redisPublisher, never()).publish(any(), any());
     }
 
     @Test
-    @DisplayName("전체 채팅은 로비 참여자 검증 없이 CHAT 메시지를 발행한다")
+    @DisplayName("전체 채팅은 로비 참여자 검증과 최근 채팅 저장 없이 CHAT 메시지를 발행한다")
     void publishGlobalMessage_success() {
         // given
         ChatMessageDto request = chatMessage("  전체 채팅  ");
@@ -238,6 +263,7 @@ class ChatServiceTest {
         // then
         verify(lobbyRepository, never()).existsByCode(any());
         verify(lobbyChatRateLimitService, never()).validateAndRecord(any(), any(), any());
+        verify(lobbyRecentChatStoreService, never()).append(any(), any());
 
         ArgumentCaptor<ChatMessageDto> captor = ArgumentCaptor.forClass(ChatMessageDto.class);
 

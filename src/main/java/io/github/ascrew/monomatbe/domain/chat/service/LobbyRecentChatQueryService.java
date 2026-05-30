@@ -104,9 +104,9 @@ public class LobbyRecentChatQueryService {
             return jsonMapper.readValue(payload, ChatMessageDto.class);
         } catch (JacksonException e) {
             log.warn(
-                    "로비 최근 채팅 payload 역직렬화 실패 - 해당 메시지 건너뜀. lobbyCode: {}, payload: {}",
+                    "로비 최근 채팅 payload 역직렬화 실패 - 해당 메시지 건너뜀. lobbyCode: {}, payloadLength: {}",
                     lobbyCode,
-                    payload,
+                    payload != null ? payload.length() : null,
                     e
             );
             return null;

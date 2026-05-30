@@ -7,9 +7,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
+
+import java.util.List;
 
 /**
  * 로비 최근 채팅 메시지 저장 서비스
@@ -28,10 +31,15 @@ import tools.jackson.databind.json.JsonMapper;
 @RequiredArgsConstructor
 public class LobbyRecentChatStoreService {
 
+    private static final String LUA_RESULT_OK = "OK";
+
     private final StringRedisTemplate redisTemplate;
 
     @Qualifier("cacheJsonMapper")
     private final JsonMapper jsonMapper;
+
+    @Qualifier("appendRecentLobbyChatScript")
+    private final RedisScript<String> appendRecentLobbyChatScript;
 
     private final LobbyRecentChatProperties properties;
 
@@ -40,9 +48,7 @@ public class LobbyRecentChatStoreService {
      *
      * 저장 순서:
      * 1. ChatMessageDto를 타입 정보 없는 JSON 문자열로 직렬화
-     * 2. RPUSH로 List 끝에 추가
-     * 3. LTRIM으로 최근 maxSize개만 유지
-     * 4. EXPIRE로 TTL 갱신
+     * 2. Lua에서 RPUSH + LTRIM + EXPIRE를 원자 처리
      *
      * @param lobbyCode 로비 초대 코드
      * @param message 서버에서 신뢰 가능한 값으로 재구성된 채팅 메시지
@@ -64,9 +70,17 @@ public class LobbyRecentChatStoreService {
         String key = RedisKeys.lobbyRecentChatMessagesKey(lobbyCode);
         String payload = serialize(message);
 
-        redisTemplate.opsForList().rightPush(key, payload);
-        redisTemplate.opsForList().trim(key, -properties.getMaxSize(), -1);
-        redisTemplate.expire(key, properties.getTtl());
+        String result = redisTemplate.execute(
+                appendRecentLobbyChatScript,
+                List.of(key),
+                payload,
+                String.valueOf(properties.getMaxSize()),
+                String.valueOf(properties.getTtl().toSeconds())
+        );
+
+        if (!LUA_RESULT_OK.equals(result)) {
+            throw new IllegalStateException("로비 최근 채팅 저장 Lua 처리 실패: " + result);
+        }
     }
 
     private String serialize(ChatMessageDto message) {

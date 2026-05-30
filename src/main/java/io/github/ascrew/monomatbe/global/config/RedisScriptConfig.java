@@ -138,4 +138,20 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    /**
+     * 로비 최근 채팅 저장 Lua 스크립트
+     *
+     * [처리 내용]
+     * - Redis List에 최근 채팅 메시지 append
+     * - 최근 maxSize개만 유지
+     * - TTL 갱신
+     */
+    @Bean
+    public RedisScript<String> appendRecentLobbyChatScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/append_recent_lobby_chat.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

@@ -65,12 +65,13 @@ class ChatSenderProfileResolverTest {
         assertThat(result.getUserIdentifier()).isEqualTo(USER_IDENTIFIER);
         assertThat(result.getUserId()).isEqualTo(1L);
         assertThat(result.getNickname()).isEqualTo("캐시닉네임");
+        assertThat(result.isResolved()).isTrue();
 
         verify(userNicknameLookupService, never()).findProfileMapByUserIdentifiers(any());
     }
 
     @Test
-    @DisplayName("캐시가 없으면 DB 조회 후 Redis에 캐시한다")
+    @DisplayName("캐시가 없으면 DB 조회 후 정상 프로필만 Redis에 캐시한다")
     void resolve_loadsAndCachesWhenCacheMiss() {
         // given
         when(valueOperations.get(CACHE_KEY)).thenReturn(null);
@@ -87,6 +88,7 @@ class ChatSenderProfileResolverTest {
         assertThat(result.getUserIdentifier()).isEqualTo(USER_IDENTIFIER);
         assertThat(result.getUserId()).isEqualTo(1L);
         assertThat(result.getNickname()).isEqualTo("조회닉네임");
+        assertThat(result.isResolved()).isTrue();
 
         verify(valueOperations).set(
                 eq(CACHE_KEY),
@@ -96,8 +98,8 @@ class ChatSenderProfileResolverTest {
     }
 
     @Test
-    @DisplayName("프로필 조회 결과가 없으면 unresolved profile을 캐시한다")
-    void resolve_cachesUnresolvedProfileWhenProfileMissing() {
+    @DisplayName("프로필 조회 결과가 없으면 unresolved profile을 반환하지만 Redis에 캐시하지 않는다")
+    void resolve_doesNotCacheUnresolvedProfileWhenProfileMissing() {
         // given
         when(valueOperations.get(CACHE_KEY)).thenReturn(null);
         when(userNicknameLookupService.findProfileMapByUserIdentifiers(List.of(USER_IDENTIFIER)))
@@ -110,8 +112,9 @@ class ChatSenderProfileResolverTest {
         assertThat(result.getUserIdentifier()).isEqualTo(USER_IDENTIFIER);
         assertThat(result.getUserId()).isNull();
         assertThat(result.getNickname()).isNull();
+        assertThat(result.isResolved()).isFalse();
 
-        verify(valueOperations).set(
+        verify(valueOperations, never()).set(
                 eq(CACHE_KEY),
                 any(String.class),
                 any(Duration.class)

@@ -177,16 +177,16 @@ public class GameAnswerService {
             // 원자적 정답자 등록 및 상태 검증 (Lua Script 기동)
             String result = redisTemplate.execute(
                     submitGameAnswerScript,
-                    List.of(sessionKey, correctPlayersKey),
+                    List.of(sessionKey, correctPlayersKey, roundDataKey, RedisKeys.gameSessionRoundCorrectTimesKey(code, currentRoundNo)),
                     userIdentifier,
                     String.valueOf(currentRoundNo),
                     String.valueOf(System.currentTimeMillis())
             );
 
-            if ("CORRECT_FIRST".equals(result)) {
+            if ("CORRECT_FIRST_PLACE".equals(result) || "CORRECT".equals(result)) {
                 String nickname = getNickname(userIdentifier);
-                log.info("processGameChat: 정답 달성! - code: {}, user: {} ({}), fuzzy: {}", 
-                         code, userIdentifier, nickname, isFuzzy);
+                log.info("processGameChat: 정답 달성! - code: {}, user: {} ({}), result: {}, fuzzy: {}", 
+                         code, userIdentifier, nickname, result, isFuzzy);
 
                 // 정답 달성 시스템 공지 브로드캐스트
                 broadcastSystemMessage(code, nickname + "님이 정답을 맞췄습니다!");

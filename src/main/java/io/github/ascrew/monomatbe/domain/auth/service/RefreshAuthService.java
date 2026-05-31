@@ -75,7 +75,13 @@ public class RefreshAuthService {
             throw new AuthException(AuthErrorCode.AUTH_INVALID_REFRESH_TOKEN);
         }
 
-        TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(userId, userType, sessionId);
+        TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
+                userId,
+                userType,
+                session.getUser().getRole(),
+                sessionId
+        );
+
         TokenWithExpiry rotatedRefreshToken = jwtTokenProvider.createRefreshToken(userId, userType, sessionId);
         String rotatedRefreshTokenHash = TokenHashUtils.sha256(rotatedRefreshToken.token());
 

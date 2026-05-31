@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.auth.service;
 
 import io.github.ascrew.monomatbe.domain.auth.dto.RefreshTokenResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserRole;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
@@ -111,7 +112,7 @@ class RefreshAuthServiceTest {
                 Instant.now().plusSeconds(3600)
         );
 
-        when(jwtTokenProvider.createAccessToken(userId, UserType.REGISTERED, sessionId))
+        when(jwtTokenProvider.createAccessToken(userId, UserType.REGISTERED, UserRole.USER, sessionId))
                 .thenReturn(accessToken);
         when(jwtTokenProvider.createRefreshToken(userId, UserType.REGISTERED, sessionId))
                 .thenReturn(refreshToken);
@@ -298,6 +299,7 @@ class RefreshAuthServiceTest {
                         .username("tester")
                         .userType(UserType.REGISTERED)
                         .status(UserStatus.ACTIVE)
+                        .role(UserRole.USER)
                         .build())
                 .sessionId(sessionId)
                 .sessionToken(sessionToken)

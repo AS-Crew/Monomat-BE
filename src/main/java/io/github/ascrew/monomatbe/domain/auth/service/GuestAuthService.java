@@ -98,6 +98,7 @@ public class GuestAuthService {
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
                 savedUser.getId(),
                 savedUser.getUserType(),
+                savedUser.getRole(),
                 userIdentifier
         );
 

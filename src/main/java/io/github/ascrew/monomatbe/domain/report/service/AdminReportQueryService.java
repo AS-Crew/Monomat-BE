@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.report.entity.LobbyChatMessageReportSna
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
+import io.github.ascrew.monomatbe.domain.report.repository.AdminReportSearchCondition;
 import io.github.ascrew.monomatbe.domain.report.repository.LobbyChatMessageReportSnapshotRepository;
 import io.github.ascrew.monomatbe.domain.report.repository.ReportRepository;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +52,9 @@ public class AdminReportQueryService {
     /**
      * 관리자 신고 목록을 조회한다.
      *
+     * 검색 조건은 AdminReportSearchCondition으로 묶어 Repository에 전달한다.
+     * 향후 조건이 늘어나도 Service의 if 분기와 Repository 메서드 조합을 늘리지 않는다.
+     *
      * @param targetType 신고 대상 타입 필터. null이면 전체
      * @param status     신고 처리 상태 필터. null이면 전체
      * @param page       0-based 페이지 번호
@@ -72,7 +76,15 @@ public class AdminReportQueryService {
                 Sort.by(Sort.Direction.DESC, "createdAt")
         );
 
-        Slice<Report> reportSlice = findReports(targetType, status, pageable);
+        AdminReportSearchCondition condition = new AdminReportSearchCondition(
+                targetType,
+                status
+        );
+
+        Slice<Report> reportSlice = reportRepository.searchAdminReports(
+                condition,
+                pageable
+        );
 
         List<AdminReportListItemResponse> items = reportSlice.getContent()
                 .stream()
@@ -101,26 +113,6 @@ public class AdminReportQueryService {
                 ));
 
         return toDetailResponse(report);
-    }
-
-    private Slice<Report> findReports(
-            ReportTargetType targetType,
-            ReportStatus status,
-            Pageable pageable
-    ) {
-        if (targetType != null && status != null) {
-            return reportRepository.findByTargetTypeAndStatus(targetType, status, pageable);
-        }
-
-        if (targetType != null) {
-            return reportRepository.findByTargetType(targetType, pageable);
-        }
-
-        if (status != null) {
-            return reportRepository.findByStatus(status, pageable);
-        }
-
-        return reportRepository.findAllBy(pageable);
     }
 
     private int resolvePage(Integer page) {

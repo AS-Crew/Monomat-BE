@@ -9,15 +9,17 @@ import io.github.ascrew.monomatbe.domain.report.entity.LobbyChatMessageReportSna
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
+import io.github.ascrew.monomatbe.domain.report.repository.AdminReportSearchCondition;
 import io.github.ascrew.monomatbe.domain.report.repository.LobbyChatMessageReportSnapshotRepository;
 import io.github.ascrew.monomatbe.domain.report.repository.ReportRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -28,7 +30,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,7 +56,7 @@ class AdminReportQueryServiceTest {
     }
 
     @Test
-    @DisplayName("targetType과 status가 모두 있으면 두 조건으로 신고 목록을 조회한다")
+    @DisplayName("targetType과 status 조건을 검색 조건 객체로 묶어 신고 목록을 조회한다")
     void getReports_withTargetTypeAndStatus() {
         // given
         Report report = report(
@@ -65,9 +66,8 @@ class AdminReportQueryServiceTest {
                 ReportStatus.PENDING
         );
 
-        when(reportRepository.findByTargetTypeAndStatus(
-                eq(ReportTargetType.LOBBY_USER),
-                eq(ReportStatus.PENDING),
+        when(reportRepository.searchAdminReports(
+                any(AdminReportSearchCondition.class),
                 any(Pageable.class)
         )).thenReturn(new SliceImpl<>(List.of(report)));
 
@@ -90,15 +90,22 @@ class AdminReportQueryServiceTest {
         assertThat(item.targetType()).isEqualTo(ReportTargetType.LOBBY_USER);
         assertThat(item.status()).isEqualTo(ReportStatus.PENDING);
 
-        verify(reportRepository).findByTargetTypeAndStatus(
-                eq(ReportTargetType.LOBBY_USER),
-                eq(ReportStatus.PENDING),
+        ArgumentCaptor<AdminReportSearchCondition> conditionCaptor =
+                ArgumentCaptor.forClass(AdminReportSearchCondition.class);
+
+        verify(reportRepository).searchAdminReports(
+                conditionCaptor.capture(),
                 any(Pageable.class)
         );
+
+        AdminReportSearchCondition condition = conditionCaptor.getValue();
+
+        assertThat(condition.targetType()).isEqualTo(ReportTargetType.LOBBY_USER);
+        assertThat(condition.status()).isEqualTo(ReportStatus.PENDING);
     }
 
     @Test
-    @DisplayName("필터가 없으면 전체 신고 목록을 조회한다")
+    @DisplayName("필터가 없으면 null 조건 객체로 전체 신고 목록을 조회한다")
     void getReports_withoutFilters() {
         // given
         Report report = report(
@@ -108,8 +115,10 @@ class AdminReportQueryServiceTest {
                 ReportStatus.PENDING
         );
 
-        when(reportRepository.findAllBy(any(Pageable.class)))
-                .thenReturn(new SliceImpl<>(List.of(report)));
+        when(reportRepository.searchAdminReports(
+                any(AdminReportSearchCondition.class),
+                any(Pageable.class)
+        )).thenReturn(new SliceImpl<>(List.of(report)));
 
         // when
         var response = adminReportQueryService.getReports(
@@ -124,7 +133,18 @@ class AdminReportQueryServiceTest {
         assertThat(response.page()).isEqualTo(0);
         assertThat(response.size()).isEqualTo(20);
 
-        verify(reportRepository).findAllBy(any(Pageable.class));
+        ArgumentCaptor<AdminReportSearchCondition> conditionCaptor =
+                ArgumentCaptor.forClass(AdminReportSearchCondition.class);
+
+        verify(reportRepository).searchAdminReports(
+                conditionCaptor.capture(),
+                any(Pageable.class)
+        );
+
+        AdminReportSearchCondition condition = conditionCaptor.getValue();
+
+        assertThat(condition.targetType()).isNull();
+        assertThat(condition.status()).isNull();
     }
 
     @Test

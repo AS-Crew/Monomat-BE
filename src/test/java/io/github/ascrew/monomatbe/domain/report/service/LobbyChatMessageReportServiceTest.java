@@ -468,6 +468,46 @@ class LobbyChatMessageReportServiceTest {
         verify(snapshotRepository, never()).save(any());
     }
 
+    @Test
+    @DisplayName("CHAT 타입이 아닌 메시지는 신고할 수 없는 메시지로 처리한다")
+    void reportLobbyChatMessage_failsWhenMessageTypeIsNotChat() {
+        User reporter = createUser(REPORTER_ID, "reporter");
+        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
+
+        ChatMessageDto systemMessage = ChatMessageDto.builder()
+                .messageId(MESSAGE_ID)
+                .type(ChatMessageDto.MessageType.SYSTEM)
+                .roomId(INVITE_CODE)
+                .sender(SENDER_IDENTIFIER)
+                .senderId(SENDER_ID)
+                .senderNickname(SENDER_NICKNAME)
+                .content("시스템 메시지")
+                .timestamp(SENT_AT)
+                .sentAt(SENT_AT)
+                .build();
+
+        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
+        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
+        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
+                .thenReturn(Optional.of(systemMessage));
+
+        assertThatThrownBy(() -> service.reportLobbyChatMessage(
+                INVITE_CODE,
+                MESSAGE_ID,
+                REPORTER_ID,
+                REPORTER_IDENTIFIER,
+                new LobbyChatMessageReportRequest("신고")
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+
+        verify(lockManager, never()).tryLock(any(), any(), any());
+        verify(reportRepository, never()).save(any());
+        verify(snapshotRepository, never()).save(any());
+    }
+
     private ChatMessageDto reportableChatMessage() {
         return ChatMessageDto.builder()
                 .messageId(MESSAGE_ID)

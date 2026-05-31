@@ -250,7 +250,7 @@ public class LobbyChatMessageReportService {
                 || chatMessage.getMessageId().isBlank()
                 || chatMessage.getContent() == null
                 || chatMessage.getContent().isBlank()
-                || chatMessage.getType() == null
+                || chatMessage.getType() != ChatMessageDto.MessageType.CHAT
                 || resolveSentAtText(chatMessage) == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_INVALID_CHAT_MESSAGE);
         }

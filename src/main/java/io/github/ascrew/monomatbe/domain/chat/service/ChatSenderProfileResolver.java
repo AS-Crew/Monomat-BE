@@ -27,6 +27,11 @@ import java.util.Map;
  * [장애 정책]
  * 채팅 전송은 실시간성이 중요하므로, 프로필 캐시/조회 실패만으로 메시지 전송을 막지 않는다.
  * 조회 실패 시 userIdentifier만 포함하고 senderId / nickname은 null로 둔다.
+ *
+ * [캐시 정책]
+ * - 정상 조회된 resolved profile만 Redis에 캐싱한다.
+ * - 조회 실패 또는 존재하지 않는 userIdentifier로 생성된 unresolved profile은 캐싱하지 않는다.
+ * - unresolved profile은 채팅 전송 fallback 용도로만 사용한다.
  */
 @Slf4j
 @Component
@@ -77,7 +82,7 @@ public class ChatSenderProfileResolver {
         }
 
         ChatSenderProfile loaded = loadProfile(userIdentifier);
-        cacheProfile(key, loaded);
+        cacheResolvedProfile(key, loaded);
 
         return loaded;
     }
@@ -107,6 +112,14 @@ public class ChatSenderProfileResolver {
 
             return ChatSenderProfile.unresolved(userIdentifier);
         }
+    }
+
+    private void cacheResolvedProfile(String key, ChatSenderProfile profile) {
+        if (!profile.isResolved()) {
+            return;
+        }
+
+        cacheProfile(key, profile);
     }
 
     private void cacheProfile(String key, ChatSenderProfile profile) {

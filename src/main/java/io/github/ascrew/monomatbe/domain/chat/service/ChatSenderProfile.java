@@ -36,6 +36,20 @@ public class ChatSenderProfile {
      */
     private String nickname;
 
+    /**
+     * 실제 사용자 프로필이 정상 조회된 상태인지 확인한다.
+     *
+     * unresolved profile은 채팅 전송 fallback 용도로만 사용하고,
+     * Redis 캐시에 저장하지 않는다.
+     *
+     * @return userId와 nickname이 모두 유효하면 true
+     */
+    public boolean isResolved() {
+        return userId != null
+                && nickname != null
+                && !nickname.isBlank();
+    }
+
     public static ChatSenderProfile unresolved(String userIdentifier) {
         return ChatSenderProfile.builder()
                 .userIdentifier(userIdentifier)

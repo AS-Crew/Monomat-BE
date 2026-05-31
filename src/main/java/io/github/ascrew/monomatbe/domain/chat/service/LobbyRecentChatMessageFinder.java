@@ -28,6 +28,12 @@ import java.util.Optional;
  *   RecentChatMessageLookupException으로 올린다.
  * - 개별 payload 역직렬화 실패는 해당 payload만 건너뛴다.
  *
+ * [조회 정책]
+ * - Redis List 구조상 messageId 단건 조회를 위해 최근 채팅 payload를 순회한다.
+ * - 불필요한 JSON 역직렬화 비용을 줄이기 위해 payload 문자열에 target messageId가
+ *   포함된 경우에만 역직렬화를 수행한다.
+ * - 문자열 포함 여부는 1차 필터일 뿐이므로, 역직렬화 후 hasMessageId()로 최종 검증한다.
+ *
  * [주의]
  * 권한 검증은 수행하지 않는다.
  * 신고자 권한 검증은 LobbyChatMessageReportService에서 수행한다.
@@ -75,9 +81,14 @@ public class LobbyRecentChatMessageFinder {
         }
 
         return payloads.stream()
+                .filter(payload -> mayContainMessageId(payload, messageId))
                 .map(payload -> deserializeOrNull(lobbyCode, payload))
                 .filter(message -> hasMessageId(message, messageId))
                 .findFirst();
+    }
+
+    private boolean mayContainMessageId(String payload, String messageId) {
+        return payload != null && payload.contains(messageId);
     }
 
     private ChatMessageDto deserializeOrNull(String lobbyCode, String payload) {

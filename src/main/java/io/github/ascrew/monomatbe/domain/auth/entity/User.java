@@ -62,7 +62,7 @@ public class User {
         LocalDateTime now = LocalDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
-        // 서비스 코드에서 누락해도 안전한 기본값을 DB 저장 전에 보정
+
         if (this.status == null) {
             this.status = UserStatus.ACTIVE;
         }
@@ -73,8 +73,16 @@ public class User {
 
     @PreUpdate
     public void preUpdate() {
-        // 모든 업데이트 시각을 일관되게 갱신
         this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 정식 회원 닉네임 변경 시 사용합니다.
+     *
+     * @param username 변경할 닉네임
+     */
+    public void updateUsername(String username) {
+        this.username = username;
     }
 
     /**

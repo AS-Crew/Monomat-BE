@@ -21,6 +21,16 @@ import lombok.NoArgsConstructor;
 public class ChatMessageDto {
 
     /*
+     * 서버가 생성한 채팅 메시지 식별자
+     *
+     * [용도]
+     * - 로비 최근 채팅 Redis List에서 특정 메시지를 찾는다.
+     * - 채팅 메시지 신고 API의 path variable로 사용한다.
+     * - 클라이언트가 보낸 값은 신뢰하지 않고 서버에서 새로 생성한다.
+     */
+    private String messageId;
+
+    /*
      * 메시지 유형
      *
      * FE는 이 값을 기준으로 일반 채팅, 시스템 메시지, 입장/퇴장/강퇴,
@@ -39,10 +49,32 @@ public class ChatMessageDto {
     /*
      * 발신자 식별자
      *
+     * [하위 호환성]
+     * 기존 FE와 WebSocket 계약에서 sender는 userIdentifier로 사용되고 있으므로 유지한다.
+     *
+     * [주의]
      * 클라이언트가 보낸 sender 값은 신뢰하지 않는다.
-     * ChatService에서 STOMP 세션에 저장된 userIdentifier로 덮어쓴다.
+     * 서버에서 STOMP 세션에 저장된 userIdentifier로 덮어쓴다.
      */
     private String sender;
+
+    /*
+     * 발신자 users.id
+     *
+     * [용도]
+     * - 채팅 메시지 신고 시 sender 스냅샷으로 저장한다.
+     * - 자기 자신의 메시지 신고 차단에 사용한다.
+     */
+    private Long senderId;
+
+    /*
+     * 발신자 표시 닉네임
+     *
+     * [용도]
+     * - 최근 채팅 복원 UI
+     * - 채팅 메시지 신고 스냅샷
+     */
+    private String senderNickname;
 
     /*
      * 메시지 본문
@@ -55,10 +87,20 @@ public class ChatMessageDto {
     /*
      * 메시지 발신 시각
      *
-     * 클라이언트 timestamp는 신뢰하지 않고,
-     * 서버에서 생성한 시각으로 덮어쓰는 방향으로 후속 단계에서 정리한다.
+     * [하위 호환성]
+     * 기존 FE와 WebSocket 계약에서 timestamp를 사용하고 있으므로 유지한다.
+     * 신규 코드에서는 sentAt과 동일한 서버 생성 UTC ISO-8601 문자열을 저장한다.
      */
     private String timestamp;
+
+    /*
+     * 메시지 발신 시각
+     *
+     * [용도]
+     * - 채팅 메시지 신고 스냅샷의 sentAt으로 저장한다.
+     * - timestamp보다 의미가 명확한 필드명으로 신규 계약에서 사용한다.
+     */
+    private String sentAt;
 
     /**
      * 로비 채팅 메시지 타입 표준

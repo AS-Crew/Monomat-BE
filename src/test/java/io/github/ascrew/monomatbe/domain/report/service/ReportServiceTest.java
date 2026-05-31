@@ -97,6 +97,7 @@ class ReportServiceTest {
                     .lobby(report.getLobby())
                     .targetType(report.getTargetType())
                     .targetId(report.getTargetId())
+                    .targetReference(report.getTargetReference())
                     .reason(report.getReason())
                     .status(ReportStatus.PENDING)
                     .createdAt(report.getCreatedAt())
@@ -114,6 +115,7 @@ class ReportServiceTest {
         assertThat(response.lobbyId()).isEqualTo(10L);
         assertThat(response.targetType()).isEqualTo(ReportTargetType.LOBBY.name());
         assertThat(response.targetId()).isEqualTo(10L);
+        assertThat(response.targetReference()).isNull();
         assertThat(response.reason()).isEqualTo("부적절한 로비 제목입니다.");
         assertThat(response.status()).isEqualTo(ReportStatus.PENDING.name());
 
@@ -173,6 +175,7 @@ class ReportServiceTest {
                     .lobby(report.getLobby())
                     .targetType(report.getTargetType())
                     .targetId(report.getTargetId())
+                    .targetReference(report.getTargetReference())
                     .reason(report.getReason())
                     .status(ReportStatus.PENDING)
                     .createdAt(report.getCreatedAt())
@@ -191,6 +194,7 @@ class ReportServiceTest {
         assertThat(response.lobbyId()).isEqualTo(10L);
         assertThat(response.targetType()).isEqualTo(ReportTargetType.LOBBY_USER.name());
         assertThat(response.targetId()).isEqualTo(2L);
+        assertThat(response.targetReference()).isNull();
         assertThat(response.reason()).isEqualTo("채팅 도배");
         assertThat(response.status()).isEqualTo(ReportStatus.PENDING.name());
 

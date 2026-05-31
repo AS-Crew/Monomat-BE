@@ -3,7 +3,15 @@ package io.github.ascrew.monomatbe.domain.report.repository;
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
+import org.springframework.data.repository.query.Param;
+
+import java.util.Optional;
 
 /**
  * report 테이블 접근 JPA 리포지토리
@@ -12,29 +20,17 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * - 신고 저장
  * - 동일 사용자의 동일 대상 PENDING 중복 신고 여부 확인
  * - 신고 누적 카운트 조회
+ * - 관리자 신고 목록/상세 조회
+ * - 관리자 신고 처리 상태 변경용 비관적 락 조회
  *
  * [중복 신고 기준]
  * 동일 사용자가 같은 로비에서 같은 targetType/targetId에 대해
  * 아직 처리되지 않은 PENDING 신고를 이미 생성했다면 중복 신고로 본다.
  */
-public interface ReportRepository extends JpaRepository<Report, Long> {
+public interface ReportRepository extends JpaRepository<Report, Long>, ReportRepositoryCustom {
 
     /**
      * 동일 사용자의 동일 대상 미처리 신고 존재 여부를 확인한다.
-     *
-     * 로비 자체 신고:
-     * - reporterId = 신고자 users.id
-     * - lobbyId = 신고 대상 GAME_LOBBY.id
-     * - targetType = LOBBY
-     * - targetId = GAME_LOBBY.id
-     * - status = PENDING
-     *
-     * 로비 유저 신고:
-     * - reporterId = 신고자 users.id
-     * - lobbyId = 신고가 발생한 GAME_LOBBY.id
-     * - targetType = LOBBY_USER
-     * - targetId = 신고 대상 users.id
-     * - status = PENDING
      */
     boolean existsByReporterIdAndLobbyIdAndTargetTypeAndTargetIdAndStatus(
             Long reporterId,
@@ -46,10 +42,6 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
 
     /**
      * 특정 신고 대상의 미처리 신고 누적 수를 조회한다.
-     *
-     * 예:
-     * - 특정 로비에 대한 PENDING 신고 수
-     * - 특정 유저에 대한 PENDING 신고 수
      */
     long countByTargetTypeAndTargetIdAndStatus(
             ReportTargetType targetType,
@@ -59,12 +51,43 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
 
     /**
      * 특정 로비에서 발생한 미처리 신고 누적 수를 조회한다.
-     *
-     * 로비 자체 신고와 로비 유저 신고를 모두 포함해
-     * 해당 로비의 운영 위험도를 판단할 때 사용할 수 있다.
      */
     long countByLobbyIdAndStatus(
             Long lobbyId,
             ReportStatus status
     );
+
+    /**
+     * 관리자 신고 상세 조회.
+     *
+     * reporter와 lobby는 상세 응답에 필요하므로 fetch join으로 함께 조회한다.
+     */
+    @Query("""
+            select report
+            from Report report
+            join fetch report.reporter
+            join fetch report.lobby
+            where report.id = :reportId
+            """)
+    Optional<Report> findDetailById(@Param("reportId") Long reportId);
+
+    /**
+     * 관리자 신고 처리 상태 변경용 조회.
+     *
+     * 같은 신고를 여러 관리자가 동시에 처리하는 상황을 방지하기 위해
+     * PESSIMISTIC_WRITE 락을 획득한다.
+     *
+     * 락 획득 대기 시간이 과도하게 길어질 경우 커넥션 풀이 고갈될 수 있으므로
+     * jakarta.persistence.lock.timeout 힌트로 최대 대기 시간을 제한한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints({
+            @QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000")
+    })
+    @Query("""
+            select report
+            from Report report
+            where report.id = :reportId
+            """)
+    Optional<Report> findByIdForUpdate(@Param("reportId") Long reportId);
 }

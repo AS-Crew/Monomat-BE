@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Optional;
+
 /**
  * 로비 채팅 메시지 신고 스냅샷 Repository
  *
@@ -25,6 +27,14 @@ public interface LobbyChatMessageReportSnapshotRepository
      * @return 존재 여부
      */
     boolean existsByReportId(Long reportId);
+
+    /**
+     * 특정 report에 연결된 채팅 메시지 스냅샷을 조회한다.
+     *
+     * @param reportId report.id
+     * @return 채팅 메시지 신고 스냅샷
+     */
+    Optional<LobbyChatMessageReportSnapshot> findByReportId(Long reportId);
 
     /**
      * 동일 사용자가 동일 로비에서 동일 채팅 메시지를 이미 PENDING 상태로 신고했는지 확인한다.

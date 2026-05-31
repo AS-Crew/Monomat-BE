@@ -17,12 +17,14 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 /**
- * 사용자 기본 엔티티.
+ * 사용자 기본 엔티티
  *
  * 게스트/회원을 하나의 users 테이블로 통합 관리합니다.
  * 인증 방식(게스트/회원)은 userType으로 구분하고,
+ * 서비스 인가 권한은 role로 구분하며,
  * 공통 프로필 정보(닉네임, 상태, 생성일 등)는 이 엔티티에서 관리합니다.
  */
 @Getter
@@ -33,20 +35,29 @@ import java.time.LocalDateTime;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class User {
 
+    private static final int USERNAME_MAX_LENGTH = 50;
+    private static final int USER_TYPE_MAX_LENGTH = 20;
+    private static final int USER_STATUS_MAX_LENGTH = 20;
+    private static final int USER_ROLE_MAX_LENGTH = 20;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "username", nullable = false, unique = true, length = 50)
+    @Column(name = "username", nullable = false, unique = true, length = USERNAME_MAX_LENGTH)
     private String username;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "user_type", nullable = false, length = 20)
+    @Column(name = "user_type", nullable = false, length = USER_TYPE_MAX_LENGTH)
     private UserType userType;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "status", nullable = false, length = USER_STATUS_MAX_LENGTH)
     private UserStatus status;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false, length = USER_ROLE_MAX_LENGTH)
+    private UserRole role;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -59,7 +70,7 @@ public class User {
 
     @PrePersist
     public void prePersist() {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         this.createdAt = now;
         this.updatedAt = now;
 
@@ -69,11 +80,14 @@ public class User {
         if (this.userType == null) {
             this.userType = UserType.GUEST;
         }
+        if (this.role == null) {
+            this.role = UserRole.USER;
+        }
     }
 
     @PreUpdate
     public void preUpdate() {
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     /**

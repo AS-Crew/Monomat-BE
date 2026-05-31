@@ -104,6 +104,7 @@ public class LoginAuthService {
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
                 user.getId(),
                 userType,
+                user.getRole(),
                 userIdentifier
         );
 

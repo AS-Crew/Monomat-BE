@@ -11,9 +11,9 @@ import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
 import io.github.ascrew.monomatbe.domain.report.repository.LobbyChatMessageReportSnapshotRepository;
 import io.github.ascrew.monomatbe.domain.report.repository.ReportRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -72,9 +72,9 @@ public class AdminReportQueryService {
                 Sort.by(Sort.Direction.DESC, "createdAt")
         );
 
-        Page<Report> reportPage = findReports(targetType, status, pageable);
+        Slice<Report> reportSlice = findReports(targetType, status, pageable);
 
-        List<AdminReportListItemResponse> items = reportPage.getContent()
+        List<AdminReportListItemResponse> items = reportSlice.getContent()
                 .stream()
                 .map(this::toListItemResponse)
                 .toList();
@@ -83,7 +83,7 @@ public class AdminReportQueryService {
                 items,
                 resolvedPage,
                 resolvedSize,
-                reportPage.hasNext()
+                reportSlice.hasNext()
         );
     }
 
@@ -103,7 +103,7 @@ public class AdminReportQueryService {
         return toDetailResponse(report);
     }
 
-    private Page<Report> findReports(
+    private Slice<Report> findReports(
             ReportTargetType targetType,
             ReportStatus status,
             Pageable pageable

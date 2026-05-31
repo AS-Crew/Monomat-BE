@@ -4,8 +4,8 @@ import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
 import jakarta.persistence.LockModeType;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -59,36 +59,39 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     );
 
     /**
-     * 관리자 신고 목록 조회
+     * 관리자 신고 목록 조회.
+     *
+     * AdminReportPageResponse는 totalCount/totalPages를 반환하지 않고 hasNext만 사용한다.
+     * 따라서 Page 대신 Slice를 사용해 불필요한 count query를 제거한다.
      *
      * reporter와 lobby는 목록 응답에 필요하므로 EntityGraph로 함께 로딩한다.
      */
     @EntityGraph(attributePaths = {"reporter", "lobby"})
-    Page<Report> findByTargetTypeAndStatus(
+    Slice<Report> findByTargetTypeAndStatus(
             ReportTargetType targetType,
             ReportStatus status,
             Pageable pageable
     );
 
     @EntityGraph(attributePaths = {"reporter", "lobby"})
-    Page<Report> findByTargetType(
+    Slice<Report> findByTargetType(
             ReportTargetType targetType,
             Pageable pageable
     );
 
     @EntityGraph(attributePaths = {"reporter", "lobby"})
-    Page<Report> findByStatus(
+    Slice<Report> findByStatus(
             ReportStatus status,
             Pageable pageable
     );
 
     @EntityGraph(attributePaths = {"reporter", "lobby"})
-    Page<Report> findAllBy(
+    Slice<Report> findAllBy(
             Pageable pageable
     );
 
     /**
-     * 관리자 신고 상세 조회
+     * 관리자 신고 상세 조회.
      *
      * reporter와 lobby는 상세 응답에 필요하므로 fetch join으로 함께 조회한다.
      */
@@ -102,7 +105,7 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     Optional<Report> findDetailById(@Param("reportId") Long reportId);
 
     /**
-     * 관리자 신고 처리 상태 변경용 조회
+     * 관리자 신고 처리 상태 변경용 조회.
      *
      * 같은 신고를 여러 관리자가 동시에 처리하는 상황을 방지하기 위해
      * PESSIMISTIC_WRITE 락을 획득한다.

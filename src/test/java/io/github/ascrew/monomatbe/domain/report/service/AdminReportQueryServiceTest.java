@@ -16,7 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
@@ -69,7 +69,7 @@ class AdminReportQueryServiceTest {
                 eq(ReportTargetType.LOBBY_USER),
                 eq(ReportStatus.PENDING),
                 any(Pageable.class)
-        )).thenReturn(new PageImpl<>(List.of(report)));
+        )).thenReturn(new SliceImpl<>(List.of(report)));
 
         // when
         var response = adminReportQueryService.getReports(
@@ -109,7 +109,7 @@ class AdminReportQueryServiceTest {
         );
 
         when(reportRepository.findAllBy(any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of(report)));
+                .thenReturn(new SliceImpl<>(List.of(report)));
 
         // when
         var response = adminReportQueryService.getReports(

@@ -12,20 +12,23 @@ class FuzzyMatcherTest {
     @DisplayName("정답 후보 길이에 따른 허용 임계 거리(Threshold) 반환 테스트")
     void getThresholdTest() {
         // 1~2글자: 0
-        assertThat(FuzzyMatcher.getThreshold(1)).isZero();
-        assertThat(FuzzyMatcher.getThreshold(2)).isZero();
+        assertThat(FuzzyMatcher.getThreshold("가")).isZero();
+        assertThat(FuzzyMatcher.getThreshold("가나")).isZero();
 
-        // 3~5글자: 1
-        assertThat(FuzzyMatcher.getThreshold(3)).isEqualTo(1);
-        assertThat(FuzzyMatcher.getThreshold(5)).isEqualTo(1);
+        // 5글자 이하 ASCII 영문/숫자: 0
+        assertThat(FuzzyMatcher.getThreshold("bts")).isZero();
+        assertThat(FuzzyMatcher.getThreshold("ive")).isZero();
+
+        // 3~5글자 (그 외): 1
+        assertThat(FuzzyMatcher.getThreshold("가나다")).isEqualTo(1);
+        assertThat(FuzzyMatcher.getThreshold("가나다라마")).isEqualTo(1);
 
         // 6~9글자: 2
-        assertThat(FuzzyMatcher.getThreshold(6)).isEqualTo(2);
-        assertThat(FuzzyMatcher.getThreshold(9)).isEqualTo(2);
+        assertThat(FuzzyMatcher.getThreshold("가나다라마바")).isEqualTo(2);
+        assertThat(FuzzyMatcher.getThreshold("가나다라마바사아자")).isEqualTo(2);
 
         // 10글자 이상: 3
-        assertThat(FuzzyMatcher.getThreshold(10)).isEqualTo(3);
-        assertThat(FuzzyMatcher.getThreshold(15)).isEqualTo(3);
+        assertThat(FuzzyMatcher.getThreshold("가나다라마바사아자차카")).isEqualTo(3);
     }
 
     private boolean isMatchNormalized(String answer, String target) {
@@ -39,10 +42,11 @@ class FuzzyMatcherTest {
         assertThat(isMatchNormalized("가나", "가나")).isTrue();
         assertThat(isMatchNormalized("가다", "가나")).isFalse();
 
-        // 2. 중간 글자 (3~5글자, 임계치 1) -> 1글자 차이 허용
+        // 2. 중간 글자 (3~5글자, 임계치 1) -> 한글 등은 허용, ASCII 영문은 5자 이하 비허용
         assertThat(isMatchNormalized("bts", "bts")).isTrue();
-        assertThat(isMatchNormalized("bts", "bta")).isTrue(); // 3글자, 1글자 차이 허용
-        assertThat(isMatchNormalized("bts", "baa")).isFalse(); // 2글자 차이 불가
+        assertThat(isMatchNormalized("bts", "bta")).isFalse(); // ASCII 5자 이하이므로 1글자 차이 비허용
+        assertThat(isMatchNormalized("가나다", "가나라")).isTrue(); // 한글 3자이므로 1글자 차이 허용
+        assertThat(isMatchNormalized("가나다", "가라마")).isFalse(); // 2글자 차이 불가
 
         // 3. 긴 글자 (6~9글자, 임계치 2) -> 2글자 차이 허용
         assertThat(isMatchNormalized("다이너마이트", "다이너마이트")).isTrue();

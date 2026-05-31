@@ -12,23 +12,41 @@ public final class FuzzyMatcher {
      *
      * [정책]
      * - 1~2글자: 오타 비허용 (임계 거리 0)
-     * - 3~5글자: 임계 거리 1 허용
+     * - 5글자 이하이면서 ASCII 영문/숫자로만 이루어진 정답: 오타 비허용 (임계 거리 0)
+     * - 3~5글자 (그 외): 임계 거리 1 허용
      * - 6~9글자: 임계 거리 2 허용
      * - 10글자 이상: 임계 거리 3 허용
      *
-     * @param targetLength 정규화된 정답 후보 문자열의 길이
+     * @param normalizedTarget 정규화된 정답 후보 문자열
      * @return 허용할 수 있는 최대 Levenshtein Distance
      */
-    public static int getThreshold(int targetLength) {
-        if (targetLength <= 2) {
+    public static int getThreshold(String normalizedTarget) {
+        int length = normalizedTarget.length();
+
+        if (length <= 2) {
             return 0;
-        } else if (targetLength <= 5) {
-            return 1;
-        } else if (targetLength <= 9) {
-            return 2;
-        } else {
-            return 3;
         }
+
+        if (isAsciiAlphaNumeric(normalizedTarget) && length <= 5) {
+            return 0;
+        }
+
+        if (length <= 5) {
+            return 1;
+        }
+
+        if (length <= 9) {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static boolean isAsciiAlphaNumeric(String value) {
+        return value.chars().allMatch(ch ->
+                (ch >= 'a' && ch <= 'z') ||
+                (ch >= '0' && ch <= '9')
+        );
     }
 
     /**
@@ -46,12 +64,12 @@ public final class FuzzyMatcher {
             return true;
         }
 
-        int targetLength = normalizedTarget.length();
-        int threshold = getThreshold(targetLength);
+        int threshold = getThreshold(normalizedTarget);
         if (threshold == 0) {
             return false;
         }
 
+        int targetLength = normalizedTarget.length();
         // 사용자가 적은 답안이 타겟보다 너무 길거나 짧으면 Levenshtein 연산 필요 없이 탈락시킬 수 있는 조기 최적화
         if (Math.abs(normalizedAnswer.length() - targetLength) > threshold) {
             return false;

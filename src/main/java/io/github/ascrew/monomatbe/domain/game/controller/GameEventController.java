@@ -1,8 +1,11 @@
 package io.github.ascrew.monomatbe.domain.game.controller;
 
+import io.github.ascrew.monomatbe.domain.game.dto.GameChatMessageDto;
 import io.github.ascrew.monomatbe.domain.game.dto.ReadyToPlayRequest;
+import io.github.ascrew.monomatbe.domain.game.service.GameAnswerService;
 import io.github.ascrew.monomatbe.domain.game.service.GameRoundStartService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -16,6 +19,7 @@ import org.springframework.stereotype.Controller;
 public class GameEventController {
 
     private final GameRoundStartService gameRoundStartService;
+    private final GameAnswerService gameAnswerService;
 
     @MessageMapping("/game/{code}/ready-to-play")
     public void readyToPlay(
@@ -34,5 +38,19 @@ public class GameEventController {
         }
 
         gameRoundStartService.processReadyToPlay(code, principal.userIdentifier(), request.roundNo());
+    }
+
+    @MessageMapping("/game/{code}/chat")
+    public void handleGameChat(
+            @DestinationVariable("code") String code,
+            @Payload @Valid GameChatMessageDto messageDto,
+            CustomPrincipal principal) {
+
+        if (principal == null || principal.userIdentifier() == null) {
+            log.warn("GameEventController: 인증 정보 없음 - code: {}", code);
+            return;
+        }
+
+        gameAnswerService.processGameChat(code, principal.userIdentifier(), messageDto);
     }
 }

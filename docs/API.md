@@ -1605,6 +1605,123 @@ SEND /app/lobby/{code}/kick
 
 ---
 
+## 🎮 인게임 (In-Game API)
+
+인게임 세션 생성 이후 라운드 준비, IFrame 재생 동기화 및 단일 대화창 정답 판단에 사용되는 REST 및 STOMP API 규격입니다.
+
+### REST API
+
+#### 1) 서버 현재 시간 조회 (Clock Skew 보정용)
+- **URL**: `GET /api/system/time`
+- **설명**: YouTube IFrame API 재생 시간의 초 단위 동기화(Clock skew 보정)를 위해 서버 기준 밀리초를 조회합니다.
+- **응답 (Response)**:
+  ```json
+  {
+    "serverTime": 1716500000000
+  }
+  ```
+
+#### 2) 현재 라운드 정보 조회 (새로고침 및 중도 합류용)
+- **URL**: `GET /api/game/{code}/round/current`
+- **설명**: 사용자가 게임 중간에 강제 새로고침을 하거나 세션이 일시 단절되었다 복구되었을 때, 뷰 복원을 지원하기 위해 현재 진행 중인 라운드의 세부 정보 및 재생 개시 시각을 반환합니다.
+- **응답 (Response)**:
+  ```json
+  {
+    "status": "PLAYING", // READY, PLAYING, FINISHED
+    "currentRoundNo": 1,
+    "timeLimitSeconds": 30,
+    "playbackStartedAt": 1716500000000 // 아직 재생 전인 경우 null
+  }
+  ```
+
+---
+
+### STOMP API
+
+#### 3) 유튜브 IFrame 로딩 완료 (Ready To Play) 송신
+- **Destination**: `SEND /app/game/{code}/ready-to-play`
+- **설명**: 클라이언트가 비디오 로드 완료 및 준비 상태를 서버에 전송합니다. 모든 참가자가 해당 신호를 보내거나, 10초 타임아웃이 지나면 실제 라운드 비디오 재생이 트리거됩니다.
+- **Body**:
+  ```json
+  {
+    "roundNo": 1
+  }
+  ```
+
+#### 4) 인게임 라운드 시작 및 비디오 재생 이벤트 구독
+- **Destination**: `SUBSCRIBE /topic/game/{code}/round`
+- **설명**: 새로운 라운드가 준비되거나, 모든 참가자가 준비를 완료하여 비디오 재생을 개시할 때 전파되는 이벤트를 수신합니다.
+- **라운드 준비 알림 (ROUND_READY)**:
+  ```json
+  {
+    "type": "ROUND_READY",
+    "videoId": "dQw4w9WgXcQ",
+    "youtubeUrl": "https://youtube.com/watch?v=dQw4w9WgXcQ",
+    "startTime": 10,
+    "endTime": 40,
+    "timeLimitSeconds": 30,
+    "roundNo": 1,
+    "serverStartedAt": 1716500000000
+  }
+  ```
+  *(정답, 힌트 등은 스포일러 방지를 위해 ROUND_READY 시점에는 일절 포함되지 않습니다)*
+- **재생 개시 알림 (ROUND_PLAYBACK_STARTED)**:
+  ```json
+  {
+    "type": "ROUND_PLAYBACK_STARTED",
+    "roundNo": 1,
+    "serverStartedAt": 1716500000000,
+    "durationSeconds": 30
+  }
+  ```
+
+#### 5) 인게임 전용 채팅 송신 및 브로드캐스트
+- **송신**: `SEND /app/game/{code}/chat`
+- **Body**:
+  ```json
+  {
+    "roundNo": 1,
+    "content": "제출할 채팅 혹은 정답"
+  }
+  ```
+- **구독 (수신)**: `SUBSCRIBE /topic/game/{code}/chat`
+  - **일반 채팅 및 오답 수신 (CHAT)**:
+    ```json
+    {
+      "type": "CHAT",
+      "roomId": "GAME12",
+      "sender": "닉네임",
+      "content": "가나다라마",
+      "timestamp": "2026-05-30T21:46:52"
+    }
+    ```
+    *(정답을 이미 맞춘 사람이 채팅에 정답을 포함할 경우, 스포일러 방지를 위해 본문 content가 "***" 로 마스킹 처리되어 브로드캐스트됩니다)*
+  - **최초 정답 공지 (SYSTEM)**: 미정답자였던 사용자가 정답을 입력하면 본문은 차단되고 전체 사용자에게 시스템 정답 공지가 브로드캐스트됩니다.
+    ```json
+    {
+      "type": "SYSTEM",
+      "roomId": "GAME12",
+      "sender": "SYSTEM",
+      "content": "닉네임님이 정답을 맞췄습니다!",
+      "timestamp": "2026-05-30T21:46:52"
+    }
+    ```
+
+#### 6) 정답 성공 개별 통지 구독
+- **Destination**: `SUBSCRIBE /user/queue/game/answers`
+- **설명**: 자신이 제출한 채팅이 정답으로 승인되었을 때, 개별 축하 메시지 및 오타 허용(Fuzzy Match) 여부를 직접 통지 받습니다.
+- **Response**:
+  ```json
+  {
+    "type": "ROUND_CORRECT",
+    "roundNo": 1,
+    "isFuzzy": true, // 오타 허용으로 맞춘 경우 true, 완전 일치일 시 false
+    "message": "오타 허용 정답입니다!"
+  }
+  ```
+
+---
+
 ## 에러 응답
 
 ### STOMP ERROR 프레임
@@ -1728,4 +1845,3 @@ REST join 성공 후에도 다음 상황에서는 WebSocket SUBSCRIBE가 실패�
 | 맵 아이템(문제) CRUD     | `GET/POST/PUT/DELETE /api/maps/{mapId}/items` |
 | YouTube URL 유효성 검증 | `POST /api/youtube/validate`                  |
 | 로비 맵 변경            | `PATCH /api/lobbies/{inviteCode}/map`         |
-| 인게임 WebSocket      | `/app/game/{code}/**`                         |

@@ -154,4 +154,12 @@ public class RedisScriptConfig {
         redisScript.setResultType(String.class);
         return redisScript;
     }
+
+    @Bean
+    public RedisScript<String> submitGameAnswerScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/submit_game_answer.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
 }

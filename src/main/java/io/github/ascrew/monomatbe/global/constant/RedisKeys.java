@@ -729,6 +729,28 @@ public final class RedisKeys {
     }
 
     /**
+     * 특정 라운드의 캐싱된 문제 데이터 Hash 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:data"
+     */
+    public static String gameSessionRoundDataKey(String lobbyCode, int roundNo) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":data";
+    }
+
+    /**
+     * 특정 라운드에서 정답을 맞춘 유저 식별자 Set 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:correct_players"
+     */
+    public static String gameSessionRoundCorrectPlayersKey(String lobbyCode, int roundNo) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":correct_players";
+    }
+
+    /**
      * 특정 라운드의 재생 시작 시각 필드명을 반환합니다.
      *
      * @param roundNo 라운드 번호

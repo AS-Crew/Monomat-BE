@@ -4,12 +4,14 @@ import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
 import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
@@ -109,8 +111,14 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
      *
      * 같은 신고를 여러 관리자가 동시에 처리하는 상황을 방지하기 위해
      * PESSIMISTIC_WRITE 락을 획득한다.
+     *
+     * 락 획득 대기 시간이 과도하게 길어질 경우 커넥션 풀이 고갈될 수 있으므로
+     * jakarta.persistence.lock.timeout 힌트로 최대 대기 시간을 제한한다.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints({
+            @QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000")
+    })
     @Query("""
             select report
             from Report report

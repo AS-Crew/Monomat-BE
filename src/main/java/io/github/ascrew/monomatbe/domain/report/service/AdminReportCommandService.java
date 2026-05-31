@@ -9,18 +9,21 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * 관리자 신고 처리 Command 서비스
+ * 관리자 신고 처리 Command 서비스.
  *
  * [책임]
  * - 신고 처리 상태 변경
  * - 이미 처리된 신고 재처리 방지
  * - PENDING으로 되돌리는 잘못된 요청 차단
  * - 유효 신고 처리 시 후속 제재 연계를 위한 이벤트 발행
+ *
+ * [이벤트 처리 정책]
+ * 서비스는 ReportResolvedEvent를 단순 발행한다.
+ * 실제 계정 제재, 로비 폐쇄, 메시지 숨김 등은 후속 listener에서
+ * @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)로 처리한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -86,7 +89,7 @@ public class AdminReportCommandService {
         switch (status) {
             case RESOLVED -> {
                 report.resolve();
-                publishReportResolvedEventAfterCommit(report);
+                publishReportResolvedEvent(report);
             }
             case DISMISSED -> report.dismiss();
             case PENDING -> throw new ResponseStatusException(
@@ -96,26 +99,14 @@ public class AdminReportCommandService {
         }
     }
 
-    private void publishReportResolvedEventAfterCommit(Report report) {
-        ReportResolvedEvent event = new ReportResolvedEvent(
+    private void publishReportResolvedEvent(Report report) {
+        eventPublisher.publishEvent(new ReportResolvedEvent(
                 report.getId(),
                 report.getReporter().getId(),
                 report.getLobby().getId(),
                 report.getTargetType(),
                 report.getTargetId(),
                 report.getTargetReference()
-        );
-
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            eventPublisher.publishEvent(event);
-            return;
-        }
-
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                eventPublisher.publishEvent(event);
-            }
-        });
+        ));
     }
 }

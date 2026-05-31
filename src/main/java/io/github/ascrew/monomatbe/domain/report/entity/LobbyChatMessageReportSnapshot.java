@@ -7,7 +7,6 @@ import jakarta.persistence.ForeignKey;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
@@ -36,34 +35,22 @@ import java.time.LocalDateTime;
  * - senderId: users.id, 조회 실패 또는 과거 메시지 호환성 때문에 nullable
  * - senderNickname: 신고 시점의 표시 닉네임
  * - content: 신고 시점의 메시지 본문
- * - messageType: CHAT, SYSTEM 등 메시지 타입
+ * - messageType: CHAT
  * - sentAt: 메시지 발신 시각
  *
  * [Report와 분리하는 이유]
  * Report는 로비/유저/채팅 등 모든 신고의 공통 정보만 가진다.
  * 채팅 메시지 전용 필드를 Report에 직접 추가하면 다른 신고 타입에서 null 컬럼이 늘어나므로
  * 채팅 신고 스냅샷 책임을 별도 엔티티로 분리한다.
+ *
+ * [스키마 관리 기준]
+ * 운영 DB 스키마와 인덱스는 Flyway migration SQL을 기준으로 관리한다.
+ * 따라서 이 엔티티에는 테이블명과 컬럼 매핑만 둔다.
  */
 @Getter
 @Entity
 @Builder
-@Table(
-        name = "lobby_chat_message_report_snapshot",
-        indexes = {
-                @Index(
-                        name = "idx_lobby_chat_message_snapshot_message_id",
-                        columnList = "message_id"
-                ),
-                @Index(
-                        name = "idx_lobby_chat_message_snapshot_sender_id",
-                        columnList = "sender_id"
-                ),
-                @Index(
-                        name = "idx_lobby_chat_message_snapshot_sent_at",
-                        columnList = "sent_at"
-                )
-        }
-)
+@Table(name = "lobby_chat_message_report_snapshot")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class LobbyChatMessageReportSnapshot {
@@ -94,8 +81,6 @@ public class LobbyChatMessageReportSnapshot {
 
     /**
      * Redis 최근 채팅 메시지 식별자
-     *
-     * 1단계에서 서버가 생성한 UUID 기반 messageId를 저장한다.
      */
     @Column(name = "message_id", nullable = false, length = MESSAGE_ID_MAX_LENGTH)
     private String messageId;

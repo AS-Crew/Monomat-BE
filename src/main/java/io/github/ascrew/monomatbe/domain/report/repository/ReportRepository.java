@@ -3,6 +3,9 @@ package io.github.ascrew.monomatbe.domain.report.repository;
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
@@ -12,6 +15,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * - 신고 저장
  * - 동일 사용자의 동일 대상 PENDING 중복 신고 여부 확인
  * - 신고 누적 카운트 조회
+ * - 관리자 신고 목록 조회
  *
  * [중복 신고 기준]
  * 동일 사용자가 같은 로비에서 같은 targetType/targetId에 대해
@@ -66,5 +70,35 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     long countByLobbyIdAndStatus(
             Long lobbyId,
             ReportStatus status
+    );
+
+    /**
+     * 관리자 신고 목록 조회
+     *
+     * targetType/status가 null이면 해당 필터를 적용하지 않는다.
+     * reporter와 lobby는 목록 응답에 바로 필요하므로 EntityGraph로 함께 로딩한다.
+     */
+    @EntityGraph(attributePaths = {"reporter", "lobby"})
+    Page<Report> findByTargetTypeAndStatus(
+            ReportTargetType targetType,
+            ReportStatus status,
+            Pageable pageable
+    );
+
+    @EntityGraph(attributePaths = {"reporter", "lobby"})
+    Page<Report> findByTargetType(
+            ReportTargetType targetType,
+            Pageable pageable
+    );
+
+    @EntityGraph(attributePaths = {"reporter", "lobby"})
+    Page<Report> findByStatus(
+            ReportStatus status,
+            Pageable pageable
+    );
+
+    @EntityGraph(attributePaths = {"reporter", "lobby"})
+    Page<Report> findAllBy(
+            Pageable pageable
     );
 }

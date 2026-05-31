@@ -17,9 +17,10 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 /**
- * 사용자 기본 엔티티.
+ * 사용자 기본 엔티티
  *
  * 게스트/회원을 하나의 users 테이블로 통합 관리합니다.
  * 인증 방식(게스트/회원)은 userType으로 구분하고,
@@ -69,7 +70,7 @@ public class User {
 
     @PrePersist
     public void prePersist() {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         this.createdAt = now;
         this.updatedAt = now;
 
@@ -86,7 +87,7 @@ public class User {
 
     @PreUpdate
     public void preUpdate() {
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     /**

@@ -21,6 +21,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 /**
  * 신고 엔티티
@@ -53,6 +54,10 @@ import java.time.LocalDateTime;
  * [중복 신고 정책]
  * 동일 사용자가 동일 로비에서 동일 대상에 대해 PENDING 신고를 중복 생성하지 못하도록
  * 서비스 레이어와 Repository 조회 메서드에서 방어한다.
+ *
+ * [시간 정책]
+ * 채팅 메시지 sentAt이 UTC 기준으로 생성/파싱되므로,
+ * 신고 엔티티의 createdAt/resolvedAt도 UTC 기준으로 저장한다.
  */
 @Getter
 @Entity
@@ -157,7 +162,7 @@ public class Report {
             this.status = ReportStatus.PENDING;
         }
         if (this.createdAt == null) {
-            this.createdAt = LocalDateTime.now();
+            this.createdAt = utcNow();
         }
     }
 
@@ -166,7 +171,7 @@ public class Report {
      */
     public void resolve() {
         this.status = ReportStatus.RESOLVED;
-        this.resolvedAt = LocalDateTime.now();
+        this.resolvedAt = utcNow();
     }
 
     /**
@@ -174,6 +179,10 @@ public class Report {
      */
     public void dismiss() {
         this.status = ReportStatus.DISMISSED;
-        this.resolvedAt = LocalDateTime.now();
+        this.resolvedAt = utcNow();
+    }
+
+    private static LocalDateTime utcNow() {
+        return LocalDateTime.now(ZoneOffset.UTC);
     }
 }

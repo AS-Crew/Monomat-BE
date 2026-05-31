@@ -3,10 +3,12 @@ package io.github.ascrew.monomatbe.domain.report.repository;
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -20,6 +22,7 @@ import java.util.Optional;
  * - 동일 사용자의 동일 대상 PENDING 중복 신고 여부 확인
  * - 신고 누적 카운트 조회
  * - 관리자 신고 목록/상세 조회
+ * - 관리자 신고 처리 상태 변경용 비관적 락 조회
  *
  * [중복 신고 기준]
  * 동일 사용자가 같은 로비에서 같은 targetType/targetId에 대해
@@ -56,7 +59,7 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     );
 
     /**
-     * 관리자 신고 목록 조회.
+     * 관리자 신고 목록 조회
      *
      * reporter와 lobby는 목록 응답에 필요하므로 EntityGraph로 함께 로딩한다.
      */
@@ -97,4 +100,18 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
             where report.id = :reportId
             """)
     Optional<Report> findDetailById(@Param("reportId") Long reportId);
+
+    /**
+     * 관리자 신고 처리 상태 변경용 조회
+     *
+     * 같은 신고를 여러 관리자가 동시에 처리하는 상황을 방지하기 위해
+     * PESSIMISTIC_WRITE 락을 획득한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select report
+            from Report report
+            where report.id = :reportId
+            """)
+    Optional<Report> findByIdForUpdate(@Param("reportId") Long reportId);
 }

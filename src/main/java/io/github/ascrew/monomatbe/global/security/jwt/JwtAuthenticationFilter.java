@@ -31,9 +31,16 @@ import java.util.List;
  * [처리 흐름]
  * 1. Authorization 헤더에서 Bearer 토큰 추출
  * 2. JWT 파싱 및 서명 검증
- * 3. userId, userIdentifier, userType, userRole 클레임 추출
- * 4. 클레임 null 검증 — 하나라도 누락 시 인증 실패 처리
+ * 3. userId, userIdentifier, userType 클레임 추출
+ * 4. userRole 클레임 추출. 기존 토큰 호환을 위해 누락 시 USER로 처리
  * 5. CustomPrincipal 생성 후 SecurityContext 저장
+ *
+ * [하위호환성 정책]
+ * userRole claim은 #122에서 새로 추가된 claim이다.
+ * 배포 전 발급된 기존 Access Token에는 userRole이 없을 수 있으므로,
+ * 전환 기간 동안 userRole 누락 토큰은 USER 권한으로 처리한다.
+ *
+ * 잘못된 userRole 값은 위변조 또는 비정상 토큰으로 보고 인증 실패 처리한다.
  */
 @Slf4j
 @Component
@@ -87,7 +94,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Long userId = Long.valueOf(claims.getSubject());
                 String userIdentifier = claims.get(JwtClaims.USER_IDENTIFIER, String.class);
                 UserType userType = UserType.valueOf(claims.get(JwtClaims.USER_TYPE, String.class));
-                UserRole userRole = UserRole.valueOf(claims.get(JwtClaims.USER_ROLE, String.class));
+                UserRole userRole = resolveUserRole(claims);
 
                 if (!isActiveSession(userIdentifier)) {
                     SecurityContextHolder.clearContext();
@@ -131,18 +138,39 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      * - subject        : userId
      * - userIdentifier : Redis/WebSocket 세션 식별자
      * - userType       : GUEST | REGISTERED
-     * - userRole       : USER | ADMIN
+     *
+     * [userRole 제외 이유]
+     * userRole은 #122에서 추가된 claim이므로 기존 발급 토큰에는 없을 수 있다.
+     * 누락 시 USER로 fallback 처리한다.
      */
     private boolean isValidClaims(Claims claims) {
         String subject = claims.getSubject();
         String userIdentifier = claims.get(JwtClaims.USER_IDENTIFIER, String.class);
         String userType = claims.get(JwtClaims.USER_TYPE, String.class);
-        String userRole = claims.get(JwtClaims.USER_ROLE, String.class);
 
         return subject != null && !subject.isBlank()
                 && userIdentifier != null
-                && userType != null
-                && userRole != null;
+                && userType != null;
+    }
+
+    /**
+     * userRole claim을 권한 enum으로 변환한다.
+     *
+     * [전환 기간 하위호환성]
+     * 기존 Access Token에는 userRole claim이 없으므로 USER로 간주한다.
+     *
+     * [보안]
+     * claim 값이 존재하지만 UserRole enum에 없는 값이면 IllegalArgumentException을 발생시켜
+     * 인증 실패로 처리한다.
+     */
+    private UserRole resolveUserRole(Claims claims) {
+        String userRole = claims.get(JwtClaims.USER_ROLE, String.class);
+
+        if (userRole == null || userRole.isBlank()) {
+            return UserRole.USER;
+        }
+
+        return UserRole.valueOf(userRole);
     }
 
     private String extractToken(HttpServletRequest request) {

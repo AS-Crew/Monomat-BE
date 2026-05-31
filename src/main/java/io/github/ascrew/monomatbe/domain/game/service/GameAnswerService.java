@@ -57,19 +57,25 @@ public class GameAnswerService {
         }
 
         String sessionKey = RedisKeys.gameSessionKey(code);
-        Map<Object, Object> sessionMeta = redisTemplate.opsForHash().entries(sessionKey);
-        if (sessionMeta.isEmpty()) {
+        List<Object> fields = List.of(
+                "status",
+                "current_round_no",
+                "time_limit_seconds",
+                RedisKeys.gameSessionRoundPlaybackStartedAtField(messageDto.roundNo())
+        );
+        List<Object> values = redisTemplate.opsForHash().multiGet(sessionKey, fields);
+        if (values == null || values.get(0) == null) {
             log.warn("processGameChat: 활성화된 게임 세션이 없음 - code: {}", code);
             return;
         }
 
-        String status = (String) sessionMeta.get("status");
+        String status = (String) values.get(0);
         if (!"PLAYING".equals(status)) {
             log.warn("processGameChat: 게임 진행 중이 아님 (status: {}) - code: {}", status, code);
             return;
         }
 
-        String currentRoundNoStr = (String) sessionMeta.get("current_round_no");
+        String currentRoundNoStr = (String) values.get(1);
         int currentRoundNo = currentRoundNoStr != null ? Integer.parseInt(currentRoundNoStr) : 1;
         if (messageDto.roundNo() != currentRoundNo) {
             log.warn("processGameChat: 라운드 번호 불일치 - code: {}, expected: {}, actual: {}", 
@@ -78,8 +84,8 @@ public class GameAnswerService {
         }
 
         // 2. 시간 초과 검증 (지연 완충 시간 1.5초 고려)
-        String playbackStartedAtStr = (String) sessionMeta.get(RedisKeys.gameSessionRoundPlaybackStartedAtField(currentRoundNo));
-        String timeLimitStr = (String) sessionMeta.get("time_limit_seconds");
+        String playbackStartedAtStr = (String) values.get(3);
+        String timeLimitStr = (String) values.get(2);
         int timeLimitSeconds = timeLimitStr != null ? Integer.parseInt(timeLimitStr) : 30;
 
         if (playbackStartedAtStr != null) {
@@ -99,11 +105,11 @@ public class GameAnswerService {
 
         // 4. 캐싱된 문제 정답 로드
         String roundDataKey = RedisKeys.gameSessionRoundDataKey(code, currentRoundNo);
-        String answersJson = (String) redisTemplate.opsForHash().get(roundDataKey, "answers");
-        List<String> rawAnswers = Collections.emptyList();
-        if (answersJson != null) {
+        String normalizedAnswersJson = (String) redisTemplate.opsForHash().get(roundDataKey, "normalized_answers");
+        List<String> normalizedAnswers = Collections.emptyList();
+        if (normalizedAnswersJson != null) {
             try {
-                rawAnswers = jsonMapper.readValue(answersJson, new TypeReference<List<String>>() {});
+                normalizedAnswers = jsonMapper.readValue(normalizedAnswersJson, new TypeReference<List<String>>() {});
             } catch (Exception e) {
                 log.error("processGameChat: 정답 캐시 역직렬화 실패 - key: {}", roundDataKey, e);
             }
@@ -112,13 +118,14 @@ public class GameAnswerService {
         // 5. 정답자 대화 처리 (스포일러 트롤링 필터 적용)
         if (Boolean.TRUE.equals(isAlreadyCorrect)) {
             String content = messageDto.content();
-            // 정답을 맞춘 유저의 채팅 중 정답과 100% 일치하거나 오타 매칭이 되는 부분은 마스킹 처리하여 스포일러 방지
-            for (String rawAnswer : rawAnswers) {
-                String normalizedTarget = AnswerNormalizer.normalize(rawAnswer);
-                String normalizedAnswer = AnswerNormalizer.normalize(content);
-                if (normalizedAnswer.contains(normalizedTarget) || FuzzyMatcher.isMatch(normalizedAnswer, normalizedTarget)) {
-                    content = "***";
-                    break;
+            String normalizedAnswer = AnswerNormalizer.normalize(content);
+            if (!normalizedAnswer.isEmpty()) {
+                // 정답을 맞춘 유저의 채팅 중 정답과 100% 일치하거나 오타 매칭이 되는 부분은 마스킹 처리하여 스포일러 방지
+                for (String normalizedTarget : normalizedAnswers) {
+                    if (normalizedAnswer.contains(normalizedTarget) || FuzzyMatcher.isMatch(normalizedAnswer, normalizedTarget)) {
+                        content = "***";
+                        break;
+                    }
                 }
             }
             broadcastChatMessage(code, userIdentifier, content);
@@ -131,8 +138,7 @@ public class GameAnswerService {
 
         String normalizedUserAnswer = AnswerNormalizer.normalize(messageDto.content());
         if (!normalizedUserAnswer.isEmpty()) {
-            for (String rawAnswer : rawAnswers) {
-                String normalizedTarget = AnswerNormalizer.normalize(rawAnswer);
+            for (String normalizedTarget : normalizedAnswers) {
                 if (normalizedUserAnswer.equals(normalizedTarget)) {
                     isCorrect = true;
                     isFuzzy = false;

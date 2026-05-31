@@ -21,6 +21,9 @@ import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
+import io.github.ascrew.monomatbe.domain.map.support.AnswerNormalizer;
 
 import java.util.Collections;
 import java.util.List;
@@ -46,6 +49,7 @@ public class GameSessionCreateService {
     private final GameParticipantResolver gameParticipantResolver;
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<String> initGameSessionScript;
+    private final JsonMapper jsonMapper;
 
     /**
      * 로비 게임 시작 시 호출되어 게임 세션을 초기화한다.
@@ -129,7 +133,21 @@ public class GameSessionCreateService {
             int roundNo = i + 1;
             String roundDataKey = RedisKeys.gameSessionRoundDataKey(code, roundNo);
             java.util.Map<String, String> roundData = new java.util.HashMap<>();
-            roundData.put("answers", item.getAnswers()); // 이미 JSON List 포맷 문자열
+            roundData.put("answers", item.getAnswers());
+            
+            // 정규화된 정답 목록 캐싱 추가
+            try {
+                List<String> rawAnswers = jsonMapper.readValue(item.getAnswers(), new TypeReference<List<String>>() {});
+                List<String> normalizedAnswers = rawAnswers.stream()
+                        .map(AnswerNormalizer::normalize)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+                roundData.put("normalized_answers", jsonMapper.writeValueAsString(normalizedAnswers));
+            } catch (Exception e) {
+                log.error("createGameSession: 정답 데이터 정규화 캐싱 실패 - item id: {}", item.getId(), e);
+                roundData.put("normalized_answers", "[]");
+            }
+
             roundData.put("title", item.getTitle() == null ? "" : item.getTitle());
             roundData.put("artist", item.getArtist() == null ? "" : item.getArtist());
             redisTemplate.opsForHash().putAll(roundDataKey, roundData);

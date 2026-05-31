@@ -93,9 +93,10 @@ class GameChatAnswerIntegrationTest {
             redisTemplate.opsForHash().put(sessionKey, RedisKeys.gameSessionRoundPlaybackStartedAtField(currentRoundNo), String.valueOf(playbackStartedAt));
         }
 
-        // 정답 데이터 설정 (answers는 JSON List 문자열)
+        // 정답 데이터 설정 (answers 및 normalized_answers)
         String roundDataKey = RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, currentRoundNo);
         redisTemplate.opsForHash().put(roundDataKey, "answers", "[\"dynamite\",\"다이너마이트\"]");
+        redisTemplate.opsForHash().put(roundDataKey, "normalized_answers", "[\"dynamite\",\"다이너마이트\"]");
     }
 
     @Test

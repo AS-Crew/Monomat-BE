@@ -21,6 +21,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -119,15 +122,16 @@ public class LobbyChatMessageReportService {
             String reason,
             String inviteCode
     ) {
-        boolean locked = lockManager.tryLock(
+        LobbyChatMessageReportLock lock = lockManager.tryLock(
                 reporter.getId(),
                 lobby.getId(),
                 messageId
-        );
+        ).orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                ERROR_DUPLICATE_REPORT
+        ));
 
-        if (!locked) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_REPORT);
-        }
+        boolean unlockAfterCompletion = registerUnlockAfterTransaction(lock);
 
         try {
             validateDuplicatePendingReport(
@@ -157,13 +161,32 @@ public class LobbyChatMessageReportService {
             );
 
             return ReportResponse.from(report);
-        } finally {
-            lockManager.unlock(
-                    reporter.getId(),
-                    lobby.getId(),
-                    messageId
+        } catch (DataIntegrityViolationException e) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    ERROR_DUPLICATE_REPORT,
+                    e
             );
+        } finally {
+            if (!unlockAfterCompletion) {
+                lockManager.unlock(lock);
+            }
         }
+    }
+
+    private boolean registerUnlockAfterTransaction(LobbyChatMessageReportLock lock) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return false;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                lockManager.unlock(lock);
+            }
+        });
+
+        return true;
     }
 
     private void validateMessageId(String messageId) {

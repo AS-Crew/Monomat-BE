@@ -25,7 +25,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -51,6 +54,10 @@ class LobbyChatMessageReportServiceTest {
     private static final String SENDER_IDENTIFIER = "33333333-3333-3333-3333-333333333333";
     private static final String SENDER_NICKNAME = "신고대상";
     private static final String SENT_AT = "2026-05-30T12:00:00.123Z";
+
+    private static final String LOCK_KEY =
+            "lock:report:lobby-chat-message:1:10:22222222-2222-2222-2222-222222222222";
+    private static final String LOCK_TOKEN = "lock-token";
 
     @Mock
     private ReportRepository reportRepository;
@@ -89,8 +96,8 @@ class LobbyChatMessageReportServiceTest {
     }
 
     @Test
-    @DisplayName("로비 채팅 메시지를 신고하면 Report와 Snapshot을 저장하고 lock을 해제한다")
-    void reportLobbyChatMessage_success() {
+    @DisplayName("로비 채팅 메시지를 신고하면 Report와 Snapshot을 저장하고 트랜잭션 동기화가 없으면 finally에서 lock을 해제한다")
+    void reportLobbyChatMessage_success_withoutTransactionSynchronization() {
         // given
         User reporter = createUser(REPORTER_ID, "reporter");
         GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
@@ -103,7 +110,7 @@ class LobbyChatMessageReportServiceTest {
         when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
                 .thenReturn(Optional.of(chatMessage));
         when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
-                .thenReturn(true);
+                .thenReturn(Optional.of(reportLock()));
         when(snapshotRepository.existsPendingReportByReporterAndLobbyAndMessageId(
                 REPORTER_ID,
                 LOBBY_ID,
@@ -183,7 +190,78 @@ class LobbyChatMessageReportServiceTest {
                 123_000_000
         ));
 
-        verify(lockManager).unlock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
+        verify(lockManager).unlock(reportLock());
+    }
+
+    @Test
+    @DisplayName("트랜잭션 동기화가 활성화되어 있으면 lock 해제를 afterCompletion으로 지연한다")
+    void reportLobbyChatMessage_unlocksAfterTransactionCompletionWhenSynchronizationActive() {
+        // given
+        User reporter = createUser(REPORTER_ID, "reporter");
+        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
+        ChatMessageDto chatMessage = reportableChatMessage();
+
+        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
+        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
+        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
+                .thenReturn(Optional.of(chatMessage));
+        when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
+                .thenReturn(Optional.of(reportLock()));
+        when(snapshotRepository.existsPendingReportByReporterAndLobbyAndMessageId(
+                REPORTER_ID,
+                LOBBY_ID,
+                MESSAGE_ID,
+                ReportTargetType.LOBBY_CHAT_MESSAGE,
+                ReportStatus.PENDING
+        )).thenReturn(false);
+        when(reportRepository.save(any(Report.class))).thenAnswer(invocation -> {
+            Report report = invocation.getArgument(0);
+            report.prePersist();
+
+            return Report.builder()
+                    .id(REPORT_ID)
+                    .reporter(report.getReporter())
+                    .lobby(report.getLobby())
+                    .targetType(report.getTargetType())
+                    .targetId(report.getTargetId())
+                    .targetReference(report.getTargetReference())
+                    .reason(report.getReason())
+                    .status(ReportStatus.PENDING)
+                    .createdAt(report.getCreatedAt())
+                    .build();
+        });
+
+        TransactionSynchronizationManager.initSynchronization();
+
+        try {
+            // when
+            var response = service.reportLobbyChatMessage(
+                    INVITE_CODE,
+                    MESSAGE_ID,
+                    REPORTER_ID,
+                    REPORTER_IDENTIFIER,
+                    new LobbyChatMessageReportRequest("신고")
+            );
+
+            // then
+            assertThat(response.reportId()).isEqualTo(REPORT_ID);
+
+            verify(lockManager, never()).unlock(any());
+
+            assertThat(TransactionSynchronizationManager.getSynchronizations())
+                    .hasSize(1);
+
+            TransactionSynchronization synchronization =
+                    TransactionSynchronizationManager.getSynchronizations().get(0);
+
+            synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED);
+
+            verify(lockManager).unlock(reportLock());
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
@@ -370,7 +448,7 @@ class LobbyChatMessageReportServiceTest {
         when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
                 .thenReturn(Optional.of(reportableChatMessage()));
         when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
-                .thenReturn(false);
+                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.reportLobbyChatMessage(
                 INVITE_CODE,
@@ -391,6 +469,7 @@ class LobbyChatMessageReportServiceTest {
         );
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
+        verify(lockManager, never()).unlock(any());
     }
 
     @Test
@@ -406,7 +485,7 @@ class LobbyChatMessageReportServiceTest {
         when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
                 .thenReturn(Optional.of(reportableChatMessage()));
         when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
-                .thenReturn(true);
+                .thenReturn(Optional.of(reportLock()));
         when(snapshotRepository.existsPendingReportByReporterAndLobbyAndMessageId(
                 REPORTER_ID,
                 LOBBY_ID,
@@ -427,7 +506,45 @@ class LobbyChatMessageReportServiceTest {
 
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
-        verify(lockManager).unlock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
+        verify(lockManager).unlock(reportLock());
+    }
+
+    @Test
+    @DisplayName("DB unique 제약 위반이 발생하면 409를 반환하고 lock을 해제한다")
+    void reportLobbyChatMessage_failsWhenDatabaseUniqueConstraintViolated() {
+        User reporter = createUser(REPORTER_ID, "reporter");
+        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
+
+        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
+        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
+        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
+                .thenReturn(Optional.of(reportableChatMessage()));
+        when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
+                .thenReturn(Optional.of(reportLock()));
+        when(snapshotRepository.existsPendingReportByReporterAndLobbyAndMessageId(
+                REPORTER_ID,
+                LOBBY_ID,
+                MESSAGE_ID,
+                ReportTargetType.LOBBY_CHAT_MESSAGE,
+                ReportStatus.PENDING
+        )).thenReturn(false);
+        when(reportRepository.save(any(Report.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate pending report"));
+
+        assertThatThrownBy(() -> service.reportLobbyChatMessage(
+                INVITE_CODE,
+                MESSAGE_ID,
+                REPORTER_ID,
+                REPORTER_IDENTIFIER,
+                new LobbyChatMessageReportRequest("신고")
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+
+        verify(snapshotRepository, never()).save(any());
+        verify(lockManager).unlock(reportLock());
     }
 
     @Test
@@ -506,6 +623,16 @@ class LobbyChatMessageReportServiceTest {
         verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
+    }
+
+    private LobbyChatMessageReportLock reportLock() {
+        return new LobbyChatMessageReportLock(
+                LOCK_KEY,
+                LOCK_TOKEN,
+                REPORTER_ID,
+                LOBBY_ID,
+                MESSAGE_ID
+        );
     }
 
     private ChatMessageDto reportableChatMessage() {

@@ -6,12 +6,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,46 +42,75 @@ class LobbyChatMessageReportLockManagerTest {
     }
 
     @Test
-    @DisplayName("Redis setIfAbsent가 true면 lock 획득에 성공한다")
+    @DisplayName("Redis setIfAbsent가 true면 lock 정보를 반환한다")
     void tryLock_success() {
         // given
         when(valueOperations.setIfAbsent(
                 eq(LOCK_KEY),
-                eq("1"),
+                any(String.class),
                 any(Duration.class)
         )).thenReturn(true);
 
         // when
-        boolean result = lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
+        Optional<LobbyChatMessageReportLock> result = lockManager.tryLock(
+                REPORTER_ID,
+                LOBBY_ID,
+                MESSAGE_ID
+        );
 
         // then
-        assertThat(result).isTrue();
+        assertThat(result).isPresent();
+
+        LobbyChatMessageReportLock lock = result.get();
+
+        assertThat(lock.key()).isEqualTo(LOCK_KEY);
+        assertThat(lock.token()).isNotBlank();
+        assertThat(lock.reporterId()).isEqualTo(REPORTER_ID);
+        assertThat(lock.lobbyId()).isEqualTo(LOBBY_ID);
+        assertThat(lock.messageId()).isEqualTo(MESSAGE_ID);
     }
 
     @Test
-    @DisplayName("Redis setIfAbsent가 false면 lock 획득에 실패한다")
+    @DisplayName("Redis setIfAbsent가 false면 Optional.empty를 반환한다")
     void tryLock_failsWhenLockAlreadyExists() {
         // given
         when(valueOperations.setIfAbsent(
                 eq(LOCK_KEY),
-                eq("1"),
+                any(String.class),
                 any(Duration.class)
         )).thenReturn(false);
 
         // when
-        boolean result = lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
+        Optional<LobbyChatMessageReportLock> result = lockManager.tryLock(
+                REPORTER_ID,
+                LOBBY_ID,
+                MESSAGE_ID
+        );
 
         // then
-        assertThat(result).isFalse();
+        assertThat(result).isEmpty();
     }
 
     @Test
-    @DisplayName("unlock은 lock key를 삭제한다")
-    void unlock_deletesLockKey() {
+    @DisplayName("unlock은 Lua compare-and-delete 스크립트를 실행한다")
+    void unlock_executesCompareAndDeleteScript() {
+        // given
+        LobbyChatMessageReportLock lock = new LobbyChatMessageReportLock(
+                LOCK_KEY,
+                "lock-token",
+                REPORTER_ID,
+                LOBBY_ID,
+                MESSAGE_ID
+        );
+
         // when
-        lockManager.unlock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
+        lockManager.unlock(lock);
 
         // then
-        verify(redisTemplate).delete(LOCK_KEY);
+        verify(redisTemplate).execute(
+                any(RedisScript.class),
+                eq(List.of(LOCK_KEY)),
+                eq("lock-token")
+        );
     }
 }

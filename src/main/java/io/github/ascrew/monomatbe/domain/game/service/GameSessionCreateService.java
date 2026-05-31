@@ -72,6 +72,14 @@ public class GameSessionCreateService {
         long serverStartedAt = System.currentTimeMillis();
         java.time.LocalDateTime startedAt = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(serverStartedAt), java.time.ZoneId.systemDefault());
 
+        // 0. 기존 미종료 활성 세션 정리 (정체 방지)
+        gameSessionJpaRepository.findActiveSessionByLobbyCode(code)
+                .ifPresent(oldSession -> {
+                    log.warn("미종료된 이전 게임 세션 발견 - 강제 FINISHED 처리. code: {}, oldSessionId: {}", code, oldSession.getId());
+                    oldSession.finish();
+                    gameSessionJpaRepository.save(oldSession);
+                });
+
         // 2. DB 세션 생성
         GameSession gameSession = GameSession.builder()
                 .lobby(lobby)

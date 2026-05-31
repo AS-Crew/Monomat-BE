@@ -15,6 +15,8 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
+import org.springframework.context.ApplicationContext;
+
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +40,8 @@ class GameRoundStartServiceTest {
     private ValueOperations<String, String> valueOperations;
     @Mock
     private org.springframework.scheduling.TaskScheduler taskScheduler;
+    @Mock
+    private ApplicationContext applicationContext;
 
     private GameRoundStartService gameRoundStartService;
 
@@ -47,7 +51,7 @@ class GameRoundStartServiceTest {
 
     @BeforeEach
     void setUp() {
-        gameRoundStartService = new GameRoundStartService(redisTemplate, messagingTemplate, readyToPlayScript, taskScheduler);
+        gameRoundStartService = new GameRoundStartService(redisTemplate, messagingTemplate, readyToPlayScript, taskScheduler, applicationContext);
     }
 
     @Test

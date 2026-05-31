@@ -1674,6 +1674,34 @@ SEND /app/lobby/{code}/kick
     "durationSeconds": 30
   }
   ```
+- **라운드 종료 및 결과 알림 (ROUND_END)**:
+  - **구독 경로**: `SUBSCRIBE /topic/game/{code}/round-end`
+  - **수신 메시지 (RoundMetadataDto)**:
+    ```json
+    {
+      "type": "ROUND_END",
+      "title": "곡 제목",
+      "artist": "가수명",
+      "answer": "대표 정답",
+      "thumbnailUrl": "https://img.youtube.com/vi/.../maxresdefault.jpg",
+      "rankings": [
+        {
+          "userIdentifier": "f8f6aa1b-3dd8-4b20-8ec8-9f7c7e0dd0fc",
+          "nickname": "유저닉네임1",
+          "score": 140,
+          "rank": 1,
+          "scoreAdded": 140
+        },
+        {
+          "userIdentifier": "a9f8bb2c-4dd9-4b30-9fc9-9f7c7e0ee1fd",
+          "nickname": "유저닉네임2",
+          "score": 100,
+          "rank": 2,
+          "scoreAdded": 100
+        }
+      ]
+    }
+    ```
 
 #### 5) 인게임 전용 채팅 송신 및 브로드캐스트
 - **송신**: `SEND /app/game/{code}/chat`

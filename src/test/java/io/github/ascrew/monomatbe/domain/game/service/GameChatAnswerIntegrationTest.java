@@ -1,5 +1,7 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
+import io.github.ascrew.monomatbe.domain.chat.service.ChatSenderProfile;
+import io.github.ascrew.monomatbe.domain.chat.service.ChatSenderProfileResolver;
 import io.github.ascrew.monomatbe.domain.game.dto.GameChatMessageDto;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundCorrectResponse;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
@@ -52,6 +54,9 @@ class GameChatAnswerIntegrationTest {
     @MockitoBean
     private LobbyPlayerNicknameResolver nicknameResolver;
 
+    @MockitoBean
+    private ChatSenderProfileResolver chatSenderProfileResolver;
+
     @BeforeEach
     void setUp() {
         // Mock 기본 셋팅
@@ -62,6 +67,13 @@ class GameChatAnswerIntegrationTest {
         nicknameMap.put(USER_ID, NICKNAME);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(nicknameMap);
         when(nicknameResolver.fallbackNickname(USER_ID)).thenReturn(NICKNAME);
+
+        ChatSenderProfile profile = ChatSenderProfile.builder()
+                .userIdentifier(USER_ID)
+                .userId(1L)
+                .nickname(NICKNAME)
+                .build();
+        when(chatSenderProfileResolver.resolve(USER_ID)).thenReturn(profile);
     }
 
     @AfterEach
@@ -177,6 +189,27 @@ class GameChatAnswerIntegrationTest {
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
         assertThat(broadcasted.getContent()).isEqualTo("***"); // 정답 문자 스포일러 차단
+    }
+
+    @Test
+    @DisplayName("이미 정답을 맞춘 사용자의 메시지에 정답 키워드가 포함(부분 스포일러)되어 있으면 *** 로 마스킹 처리된다")
+    void correctPlayerSubstringSpoilerFilteredWithMasking() {
+        // given
+        givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
+        // 정답자로 등록 처리
+        redisTemplate.opsForSet().add(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1), USER_ID);
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "정답은 다이너마이트 입니다!");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        
+        ChatMessageDto broadcasted = chatCaptor.getValue();
+        assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
+        assertThat(broadcasted.getContent()).isEqualTo("***"); // 포함된 정답 스포일러 차단
     }
 
     @Test

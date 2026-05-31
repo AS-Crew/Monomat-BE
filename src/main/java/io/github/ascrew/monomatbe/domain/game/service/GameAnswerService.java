@@ -1,7 +1,7 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.ascrew.monomatbe.domain.chat.service.ChatSenderProfile;
+import io.github.ascrew.monomatbe.domain.chat.service.ChatSenderProfileResolver;
 import io.github.ascrew.monomatbe.domain.game.dto.GameChatMessageDto;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundCorrectResponse;
 import io.github.ascrew.monomatbe.domain.game.support.FuzzyMatcher;
@@ -15,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -33,7 +35,8 @@ public class GameAnswerService {
     private final SimpMessagingTemplate messagingTemplate;
     private final LobbyRepository lobbyRepository;
     private final LobbyPlayerNicknameResolver lobbyPlayerNicknameResolver;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ChatSenderProfileResolver chatSenderProfileResolver;
+    private final JsonMapper jsonMapper;
 
     /**
      * 인게임 전용 채팅 인입 시 정답 여부를 판별하여 처리합니다.
@@ -100,7 +103,7 @@ public class GameAnswerService {
         List<String> rawAnswers = Collections.emptyList();
         if (answersJson != null) {
             try {
-                rawAnswers = objectMapper.readValue(answersJson, new TypeReference<List<String>>() {});
+                rawAnswers = jsonMapper.readValue(answersJson, new TypeReference<List<String>>() {});
             } catch (Exception e) {
                 log.error("processGameChat: 정답 캐시 역직렬화 실패 - key: {}", roundDataKey, e);
             }
@@ -113,7 +116,7 @@ public class GameAnswerService {
             for (String rawAnswer : rawAnswers) {
                 String normalizedTarget = AnswerNormalizer.normalize(rawAnswer);
                 String normalizedAnswer = AnswerNormalizer.normalize(content);
-                if (FuzzyMatcher.isMatch(normalizedAnswer, normalizedTarget)) {
+                if (normalizedAnswer.contains(normalizedTarget) || FuzzyMatcher.isMatch(normalizedAnswer, normalizedTarget)) {
                     content = "***";
                     break;
                 }
@@ -197,7 +200,14 @@ public class GameAnswerService {
     }
 
     private String getNickname(String userIdentifier) {
-        Map<String, String> resolved = lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(userIdentifier));
-        return resolved.getOrDefault(userIdentifier, lobbyPlayerNicknameResolver.fallbackNickname(userIdentifier));
+        try {
+            ChatSenderProfile profile = chatSenderProfileResolver.resolve(userIdentifier);
+            if (profile != null && profile.getNickname() != null) {
+                return profile.getNickname();
+            }
+        } catch (Exception e) {
+            log.warn("getNickname: 캐시 프로필 조회 실패. userIdentifier: {}", userIdentifier, e);
+        }
+        return lobbyPlayerNicknameResolver.fallbackNickname(userIdentifier);
     }
 }

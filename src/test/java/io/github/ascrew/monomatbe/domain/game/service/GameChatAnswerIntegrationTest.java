@@ -214,8 +214,8 @@ class GameChatAnswerIntegrationTest {
     }
 
     @Test
-    @DisplayName("제한 시간이 지나서 들어온 정답 제출은 오답처럼 일반 채팅으로 송출된다")
-    void timeoutAnswerBroadcastsAsNormalChat() {
+    @DisplayName("제한 시간이 지나서 들어온 정답 제출은 정답일 경우 ***로 마스킹 처리되어 일반 채팅으로 송출된다")
+    void timeoutAnswerWithCorrectWordIsMasked() {
         // given (현재 시간 대비 32초 전 재생 시작하여 제한시간 30초 만료됨)
         long startedAt = System.currentTimeMillis() - (32 * 1000L);
         givenGameSession("PLAYING", 1, 30, startedAt);
@@ -230,9 +230,48 @@ class GameChatAnswerIntegrationTest {
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
-        assertThat(broadcasted.getContent()).isEqualTo("다이너마이트"); // 만료되었으므로 정답 처리 없이 텍스트 노출
+        assertThat(broadcasted.getContent()).isEqualTo("***"); // 만료된 정답 제출은 스포일러 방지를 위해 마스킹 처리됨
+
+        Boolean isCorrect = redisTemplate.opsForSet().isMember(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1), USER_ID);
+        assertThat(isCorrect).isFalse(); // 정답 처리는 되지 않음
+    }
+
+    @Test
+    @DisplayName("제한 시간이 지나서 들어온 일반 채팅(오답)은 마스킹 없이 그대로 송출된다")
+    void timeoutAnswerWithWrongWordIsBroadcastedAsIs() {
+        // given
+        long startedAt = System.currentTimeMillis() - (32 * 1000L);
+        givenGameSession("PLAYING", 1, 30, startedAt);
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "그냥 일반 채팅");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        
+        ChatMessageDto broadcasted = chatCaptor.getValue();
+        assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
+        assertThat(broadcasted.getContent()).isEqualTo("그냥 일반 채팅");
 
         Boolean isCorrect = redisTemplate.opsForSet().isMember(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1), USER_ID);
         assertThat(isCorrect).isFalse();
+    }
+
+    @Test
+    @DisplayName("Java RedisKeys 필드명 포맷과 Lua 스크립트 내부 하드코딩 필드명이 일치하는지 검증한다")
+    void validateJavaAndLuaRedisFieldContract() throws java.io.IOException {
+        // Given
+        String expectedFieldPrefix = "playback_started_at:";
+        int testRoundNo = 5;
+        String javaGeneratedField = RedisKeys.gameSessionRoundPlaybackStartedAtField(testRoundNo);
+        assertThat(javaGeneratedField).isEqualTo(expectedFieldPrefix + testRoundNo);
+
+        // Lua 파일 내에서 해당 패턴이 존재하는지 검증
+        org.springframework.core.io.ClassPathResource resource = new org.springframework.core.io.ClassPathResource("scripts/submit_game_answer.lua");
+        String luaContent = new String(resource.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        
+        assertThat(luaContent).contains("'playback_started_at:'");
     }
 }

@@ -195,8 +195,8 @@ public class GameAnswerService {
                 sendDirectCorrectResponse(userIdentifier, currentRoundNo, isFuzzy);
             } else if ("ALREADY_CORRECT".equals(result)) {
                 broadcastChatMessage(code, userIdentifier, messageDto.content());
-            } else if ("TIMEOUT".equals(result)) {
-                log.info("processGameChat: Lua 검증 기준 제출 시간 초과 - code: {}, user: {}", code, userIdentifier);
+            } else if ("TIMEOUT".equals(result) || "ROUND_NOT_STARTED".equals(result)) {
+                log.info("processGameChat: Lua 검증 기준 제출 시간 초과 또는 미시작 (result: {}) - code: {}, user: {}", result, code, userIdentifier);
                 String content = messageDto.content();
                 for (String normalizedTarget : normalizedAnswers) {
                     if (normalizedUserAnswer.contains(normalizedTarget) || FuzzyMatcher.isMatch(normalizedUserAnswer, normalizedTarget)) {

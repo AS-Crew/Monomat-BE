@@ -21,17 +21,21 @@ if currentRoundNo ~= requestRoundNo then
 end
 
 -- 3. 시간 초과 검증 (지연 완충 시간 1.5초 고려)
-local playbackStartedKey = 'playback_started_at_round_' .. requestRoundNo
+-- Java RedisKeys.gameSessionRoundPlaybackStartedAtField() 계약과 일치하는 필드명 사용
+local playbackStartedKey = 'playback_started_at:' .. requestRoundNo
 local playbackStartedAtStr = redis.call('HGET', sessionKey, playbackStartedKey)
 local timeLimitStr = redis.call('HGET', sessionKey, 'time_limit_seconds')
 
-if playbackStartedAtStr and timeLimitStr then
-    local playbackStartedAt = tonumber(playbackStartedAtStr)
-    local timeLimitSeconds = tonumber(timeLimitStr)
-    local limitTimeMillis = playbackStartedAt + (timeLimitSeconds * 1000) + 1500
-    if nowMillis > limitTimeMillis then
-        return 'TIMEOUT'
-    end
+-- 라운드 재생 시작 시간이나 제한 시간 설정이 아직 기록되지 않은 경우 정답 제출 거부
+if not playbackStartedAtStr or not timeLimitStr then
+    return 'ROUND_NOT_STARTED'
+end
+
+local playbackStartedAt = tonumber(playbackStartedAtStr)
+local timeLimitSeconds = tonumber(timeLimitStr)
+local limitTimeMillis = playbackStartedAt + (timeLimitSeconds * 1000) + 1500
+if nowMillis > limitTimeMillis then
+    return 'TIMEOUT'
 end
 
 -- 4. 중복 정답 여부 검증

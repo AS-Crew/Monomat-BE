@@ -4,8 +4,8 @@ import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
-import io.github.ascrew.monomatbe.domain.chat.service.RecentChatMessageLookupException;
 import io.github.ascrew.monomatbe.domain.chat.service.LobbyRecentChatMessageFinder;
+import io.github.ascrew.monomatbe.domain.chat.service.RecentChatMessageLookupException;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
@@ -115,6 +115,7 @@ class LobbyChatMessageReportServiceTest {
                     .lobby(report.getLobby())
                     .targetType(report.getTargetType())
                     .targetId(report.getTargetId())
+                    .targetReference(report.getTargetReference())
                     .reason(report.getReason())
                     .status(ReportStatus.PENDING)
                     .createdAt(report.getCreatedAt())
@@ -136,8 +137,21 @@ class LobbyChatMessageReportServiceTest {
         assertThat(response.lobbyId()).isEqualTo(LOBBY_ID);
         assertThat(response.targetType()).isEqualTo(ReportTargetType.LOBBY_CHAT_MESSAGE.name());
         assertThat(response.targetId()).isEqualTo(LOBBY_ID);
+        assertThat(response.targetReference()).isEqualTo(MESSAGE_ID);
         assertThat(response.reason()).isEqualTo("부적절한 채팅입니다.");
         assertThat(response.status()).isEqualTo(ReportStatus.PENDING.name());
+
+        ArgumentCaptor<Report> reportCaptor = ArgumentCaptor.forClass(Report.class);
+        verify(reportRepository).save(reportCaptor.capture());
+
+        Report savedReport = reportCaptor.getValue();
+
+        assertThat(savedReport.getReporter()).isEqualTo(reporter);
+        assertThat(savedReport.getLobby()).isEqualTo(lobby);
+        assertThat(savedReport.getTargetType()).isEqualTo(ReportTargetType.LOBBY_CHAT_MESSAGE);
+        assertThat(savedReport.getTargetId()).isEqualTo(LOBBY_ID);
+        assertThat(savedReport.getTargetReference()).isEqualTo(MESSAGE_ID);
+        assertThat(savedReport.getReason()).isEqualTo("부적절한 채팅입니다.");
 
         ArgumentCaptor<LobbyChatMessageReportSnapshot> snapshotCaptor =
                 ArgumentCaptor.forClass(LobbyChatMessageReportSnapshot.class);
@@ -153,7 +167,15 @@ class LobbyChatMessageReportServiceTest {
         assertThat(snapshot.getSenderNickname()).isEqualTo(SENDER_NICKNAME);
         assertThat(snapshot.getContent()).isEqualTo("신고 대상 메시지");
         assertThat(snapshot.getMessageType()).isEqualTo(ChatMessageDto.MessageType.CHAT.name());
-        assertThat(snapshot.getSentAt()).isEqualTo(LocalDateTime.of(2026, 5, 30, 12, 0, 0, 123_000_000));
+        assertThat(snapshot.getSentAt()).isEqualTo(LocalDateTime.of(
+                2026,
+                5,
+                30,
+                12,
+                0,
+                0,
+                123_000_000
+        ));
     }
 
     @Test
@@ -247,6 +269,36 @@ class LobbyChatMessageReportServiceTest {
         ))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+
+        verify(reportRepository, never()).save(any());
+        verify(snapshotRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("최근 채팅 저장소 조회 실패 시 503을 반환한다")
+    void reportLobbyChatMessage_failsWithServiceUnavailableWhenRecentChatLookupFails() {
+        User reporter = createUser(REPORTER_ID, "reporter");
+        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
+
+        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
+        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
+        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
+                .thenThrow(new RecentChatMessageLookupException(
+                        "lookup failed",
+                        new RuntimeException("redis down")
+                ));
+
+        assertThatThrownBy(() -> service.reportLobbyChatMessage(
+                INVITE_CODE,
+                MESSAGE_ID,
+                REPORTER_ID,
+                REPORTER_IDENTIFIER,
+                new LobbyChatMessageReportRequest("신고")
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
 
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
@@ -357,33 +409,6 @@ class LobbyChatMessageReportServiceTest {
         ))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
-
-        verify(reportRepository, never()).save(any());
-        verify(snapshotRepository, never()).save(any());
-    }
-
-    @Test
-    @DisplayName("최근 채팅 저장소 조회 실패 시 503을 반환한다")
-    void reportLobbyChatMessage_failsWithServiceUnavailableWhenRecentChatLookupFails() {
-        User reporter = createUser(REPORTER_ID, "reporter");
-        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
-
-        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
-        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
-        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
-                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
-        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
-                .thenThrow(new RecentChatMessageLookupException("lookup failed", new RuntimeException()));
-
-        assertThatThrownBy(() -> service.reportLobbyChatMessage(
-                INVITE_CODE,
-                MESSAGE_ID,
-                REPORTER_ID,
-                REPORTER_IDENTIFIER,
-                new LobbyChatMessageReportRequest("신고")
-        ))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
 
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());

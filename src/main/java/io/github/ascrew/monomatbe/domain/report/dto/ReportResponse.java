@@ -19,6 +19,7 @@ public record ReportResponse(
         Long lobbyId,
         String targetType,
         Long targetId,
+        String targetReference,
         String reason,
         String status,
         LocalDateTime createdAt
@@ -37,6 +38,7 @@ public record ReportResponse(
                 .lobbyId(report.getLobby().getId())
                 .targetType(report.getTargetType().name())
                 .targetId(report.getTargetId())
+                .targetReference(report.getTargetReference())
                 .reason(report.getReason())
                 .status(report.getStatus().name())
                 .createdAt(report.getCreatedAt())

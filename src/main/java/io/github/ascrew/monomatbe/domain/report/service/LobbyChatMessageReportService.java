@@ -28,6 +28,22 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
+/**
+ * 로비 채팅 메시지 신고 서비스
+ *
+ * [책임]
+ * - 로비 채팅 메시지 신고 생성
+ * - 신고자/로비/참여자 검증
+ * - Redis 최근 채팅 messageId 조회
+ * - 자기 메시지 신고 차단
+ * - 동일 사용자의 동일 메시지 PENDING 중복 신고 차단
+ * - 신고 시점 채팅 메시지 스냅샷 저장
+ *
+ * [분리 이유]
+ * 기존 ReportService는 로비 신고와 로비 유저 신고를 담당한다.
+ * 채팅 메시지 신고는 Redis 최근 채팅 조회와 스냅샷 저장 책임이 추가되므로
+ * 기존 ReportService에 넣으면 책임이 과도하게 커진다.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -67,6 +83,20 @@ public class LobbyChatMessageReportService {
     private final LobbyRepository lobbyRepository;
     private final LobbyRecentChatMessageFinder lobbyRecentChatMessageFinder;
 
+    /**
+     * 로비 채팅 메시지 신고를 생성한다.
+     *
+     * [처리 순서]
+     * 1. 신고자 조회
+     * 2. 로비 DB 스냅샷 조회
+     * 3. Redis 기준 신고자 로비 참여 권한 검증
+     * 4. Redis 최근 채팅에서 messageId 조회
+     * 5. 자기 메시지 신고 차단
+     * 6. 사유 정규화
+     * 7. 동일 사용자의 동일 messageId PENDING 신고 중복 차단
+     * 8. Report 저장
+     * 9. 채팅 메시지 신고 스냅샷 저장
+     */
     @Transactional
     public ReportResponse reportLobbyChatMessage(
             String inviteCode,
@@ -99,6 +129,7 @@ public class LobbyChatMessageReportService {
                 .lobby(lobby)
                 .targetType(ReportTargetType.LOBBY_CHAT_MESSAGE)
                 .targetId(lobby.getId())
+                .targetReference(messageId)
                 .reason(reason)
                 .build());
 

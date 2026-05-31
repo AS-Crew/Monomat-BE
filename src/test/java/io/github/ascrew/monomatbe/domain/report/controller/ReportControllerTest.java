@@ -61,6 +61,7 @@ class ReportControllerTest {
         ReportResponse expected = reportResponse(
                 ReportTargetType.LOBBY,
                 LOBBY_ID,
+                null,
                 "로비 신고"
         );
 
@@ -98,6 +99,7 @@ class ReportControllerTest {
         ReportResponse expected = reportResponse(
                 ReportTargetType.LOBBY_USER,
                 TARGET_USER_ID,
+                null,
                 "유저 신고"
         );
 
@@ -139,6 +141,7 @@ class ReportControllerTest {
         ReportResponse expected = reportResponse(
                 ReportTargetType.LOBBY_CHAT_MESSAGE,
                 LOBBY_ID,
+                MESSAGE_ID,
                 "채팅 메시지 신고"
         );
 
@@ -182,6 +185,7 @@ class ReportControllerTest {
     private ReportResponse reportResponse(
             ReportTargetType targetType,
             Long targetId,
+            String targetReference,
             String reason
     ) {
         return ReportResponse.builder()
@@ -190,6 +194,7 @@ class ReportControllerTest {
                 .lobbyId(LOBBY_ID)
                 .targetType(targetType.name())
                 .targetId(targetId)
+                .targetReference(targetReference)
                 .reason(reason)
                 .status(ReportStatus.PENDING.name())
                 .createdAt(LocalDateTime.of(2026, 5, 30, 12, 0))

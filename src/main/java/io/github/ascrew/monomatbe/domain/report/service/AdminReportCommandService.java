@@ -2,11 +2,15 @@ package io.github.ascrew.monomatbe.domain.report.service;
 
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
+import io.github.ascrew.monomatbe.domain.report.event.ReportResolvedEvent;
 import io.github.ascrew.monomatbe.domain.report.repository.ReportRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -16,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
  * - 신고 처리 상태 변경
  * - 이미 처리된 신고 재처리 방지
  * - PENDING으로 되돌리는 잘못된 요청 차단
+ * - 유효 신고 처리 시 후속 제재 연계를 위한 이벤트 발행
  */
 @Service
 @RequiredArgsConstructor
@@ -29,6 +34,7 @@ public class AdminReportCommandService {
             "이미 처리된 신고입니다.";
 
     private final ReportRepository reportRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 신고 처리 상태를 변경한다.
@@ -78,12 +84,38 @@ public class AdminReportCommandService {
 
     private void applyStatus(Report report, ReportStatus status) {
         switch (status) {
-            case RESOLVED -> report.resolve();
+            case RESOLVED -> {
+                report.resolve();
+                publishReportResolvedEventAfterCommit(report);
+            }
             case DISMISSED -> report.dismiss();
             case PENDING -> throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     ERROR_INVALID_TARGET_STATUS
             );
         }
+    }
+
+    private void publishReportResolvedEventAfterCommit(Report report) {
+        ReportResolvedEvent event = new ReportResolvedEvent(
+                report.getId(),
+                report.getReporter().getId(),
+                report.getLobby().getId(),
+                report.getTargetType(),
+                report.getTargetId(),
+                report.getTargetReference()
+        );
+
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            eventPublisher.publishEvent(event);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                eventPublisher.publishEvent(event);
+            }
+        });
     }
 }

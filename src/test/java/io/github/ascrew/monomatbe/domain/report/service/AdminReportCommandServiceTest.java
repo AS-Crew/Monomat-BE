@@ -8,12 +8,15 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.report.entity.Report;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportStatus;
 import io.github.ascrew.monomatbe.domain.report.entity.ReportTargetType;
+import io.github.ascrew.monomatbe.domain.report.event.ReportResolvedEvent;
 import io.github.ascrew.monomatbe.domain.report.repository.ReportRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -22,6 +25,8 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AdminReportCommandServiceTest {
@@ -31,6 +36,9 @@ class AdminReportCommandServiceTest {
     @Mock
     private ReportRepository reportRepository;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private AdminReportCommandService adminReportCommandService;
 
     @BeforeEach
@@ -38,12 +46,13 @@ class AdminReportCommandServiceTest {
         MockitoAnnotations.openMocks(this);
 
         adminReportCommandService = new AdminReportCommandService(
-                reportRepository
+                reportRepository,
+                eventPublisher
         );
     }
 
     @Test
-    @DisplayName("PENDING 신고를 RESOLVED 상태로 처리한다")
+    @DisplayName("PENDING 신고를 RESOLVED 상태로 처리하고 ReportResolvedEvent를 발행한다")
     void updateReportStatus_resolved() {
         // given
         Report report = report(ReportStatus.PENDING);
@@ -60,6 +69,20 @@ class AdminReportCommandServiceTest {
         // then
         assertThat(report.getStatus()).isEqualTo(ReportStatus.RESOLVED);
         assertThat(report.getResolvedAt()).isNotNull();
+
+        ArgumentCaptor<ReportResolvedEvent> eventCaptor =
+                ArgumentCaptor.forClass(ReportResolvedEvent.class);
+
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+
+        ReportResolvedEvent event = eventCaptor.getValue();
+
+        assertThat(event.reportId()).isEqualTo(REPORT_ID);
+        assertThat(event.reporterId()).isEqualTo(10L);
+        assertThat(event.lobbyId()).isEqualTo(20L);
+        assertThat(event.targetType()).isEqualTo(ReportTargetType.LOBBY);
+        assertThat(event.targetId()).isEqualTo(20L);
+        assertThat(event.targetReference()).isNull();
     }
 
     @Test
@@ -80,6 +103,8 @@ class AdminReportCommandServiceTest {
         // then
         assertThat(report.getStatus()).isEqualTo(ReportStatus.DISMISSED);
         assertThat(report.getResolvedAt()).isNotNull();
+
+        verify(eventPublisher, never()).publishEvent(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

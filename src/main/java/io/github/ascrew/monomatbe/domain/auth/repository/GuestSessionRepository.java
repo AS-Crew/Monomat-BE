@@ -58,4 +58,20 @@ public interface GuestSessionRepository extends JpaRepository<GuestSession, Long
     List<UserIdentifierProfileProjection> findProfilesByGuestTokenIn(
             @Param("guestTokens") Collection<String> guestTokens
     );
+
+    /**
+     * 특정 게스트 사용자의 guestToken을 조회한다.
+     *
+     * [사용 목적]
+     * 사용자의 닉네임이 변경된 경우, guestToken 기반 채팅 발신자 프로필 캐시를 제거하기 위해 사용한다.
+     *
+     * @param userId 사용자 ID
+     * @return guestToken 목록
+     */
+    @Query("""
+            select g.guestToken
+            from GuestSession g
+            where g.user.id = :userId
+            """)
+    List<String> findGuestTokensByUserId(@Param("userId") Long userId);
 }

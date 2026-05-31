@@ -66,6 +66,27 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
             @Param("sessionIds") Collection<String> sessionIds
     );
 
+    /**
+     * 특정 사용자의 활성 회원 세션 식별자를 조회한다.
+     *
+     * [사용 목적]
+     * 사용자의 닉네임이 변경된 경우, sessionId 기반 채팅 발신자 프로필 캐시를 제거하기 위해 사용한다.
+     *
+     * @param userId 사용자 ID
+     * @param status 조회할 세션 상태
+     * @return 활성 sessionId 목록
+     */
+    @Query("""
+            select s.sessionId
+            from UserSession s
+            where s.user.id = :userId
+              and s.status = :status
+            """)
+    List<String> findSessionIdsByUserIdAndStatus(
+            @Param("userId") Long userId,
+            @Param("status") UserSessionStatus status
+    );
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from UserSession s where s.sessionId = :sessionId")
     Optional<UserSession> findBySessionIdForUpdate(@Param("sessionId") String sessionId);

@@ -1,5 +1,7 @@
 local sessionKey = KEYS[1]
 local correctPlayersKey = KEYS[2]
+local roundDataKey = KEYS[3]
+local correctTimesKey = KEYS[4]
 
 local userIdentifier = ARGV[1]
 local requestRoundNo = tonumber(ARGV[2])
@@ -44,6 +46,15 @@ if isMember == 1 then
     return 'ALREADY_CORRECT'
 end
 
--- 5. 정답자 등록
+-- 5. 정답 시간 기록 및 정답자 등록
+redis.call('HSET', correctTimesKey, userIdentifier, tostring(nowMillis))
 redis.call('SADD', correctPlayersKey, userIdentifier)
-return 'CORRECT_FIRST'
+
+-- 6. 최초 정답자(1등) 여부 판별 (HSETNX)
+local isFirst = redis.call('HSETNX', roundDataKey, 'first_correct_user_id', userIdentifier)
+if isFirst == 1 then
+    return 'CORRECT_FIRST_PLACE'
+else
+    return 'CORRECT'
+end
+

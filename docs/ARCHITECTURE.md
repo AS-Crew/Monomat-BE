@@ -148,6 +148,8 @@ src/main/java/io/github/ascrew/monomatbe/
 │       │   ├── GameAnswerService.java              # 정답 검증 및 판별 비즈니스
 │       │   ├── GameParticipantResolver.java        # WebSocket 세션 참가자 검증
 │       │   ├── GameRealtimeNotifier.java           # 인게임 Pub/Sub 브로드캐스트
+│       │   ├── GameRoundEndService.java            # 라운드 종료 처리 및 점수 합산 반영 비즈니스
+│       │   ├── GameRoundProgressService.java       # 라운드 진행 관리 및 타이머/스케줄러 조정 서비스
 │       │   ├── GameRoundStartService.java          # 라운드 데이터 웜업 및 라운드 준비/재생 제어
 │       │   ├── GameSessionCreateService.java       # 게임 세션 및 라운드 초기 데이터 생성
 │       │   └── GameSessionQueryService.java        # 현재 게임 세션 및 라운드 상태 조회
@@ -839,8 +841,10 @@ GameRealtimeNotifier / LobbyRealtimeNotifier
 | `game:session:{lobbyCode}` | Hash | 인게임 세션 메타데이터 |
 | `game:session:{lobbyCode}:rounds` | List | 출제된 라운드 목록 |
 | `game:session:{lobbyCode}:players` | Hash | 인게임 플레이어 점수 |
-| `game:session:{lobbyCode}:round:{roundNo}:data` | Hash | 라운드 정답(JSON list), 비디오 제목, 아티스트 메타데이터 |
+| `game:session:{lobbyCode}:round:{roundNo}:data` | Hash | 라운드 정답(JSON list), 비디오 제목, 아티스트 메타데이터 및 최초 정답자 ID (`first_correct_user_id`) |
 | `game:session:{lobbyCode}:round:{roundNo}:correct_players` | Set | 해당 라운드에서 이미 정답을 맞춘 플레이어 목록 (스포일러 판정용) |
+| `game:session:{lobbyCode}:round:{roundNo}:correct_times` | Hash | 해당 라운드 정답 제출 시간 정보 |
+| `game:session:{lobbyCode}:round:{roundNo}:ended_lock` | String | 라운드 종료 중복 실행 방지 분산 락 |
 | `game:session:{lobbyCode}:round:{roundNo}:ready_players` | Set | 해당 라운드 시작 전 YouTube IFrame 준비 완료 신호를 보낸 플레이어 목록 |
 
 
@@ -1092,3 +1096,11 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - **송신 규칙**: 사용자가 텍스트를 입력하고 전송할 때는 모두 `SEND /app/game/{code}/chat`으로 단일하게 송신합니다.
 - **개별 결과 수신**: 자신이 제출한 채팅이 정답에 해당할 경우, 서버는 일반 채팅 브로드캐스트를 중단(Drop)하고, 해당 사용자에게 `/user/queue/game/answers` 채널로 개별 정답 성공 통지(`ROUND_CORRECT`)를 보냅니다.
   - 이 통지에는 오타 허용으로 정답 처리되었는지를 알 수 있는 `isFuzzy` 필드가 포함되어 있으므로, FE는 이를 활용하여 사용자에게 "오타 허용 정답!" 같은 전용 연출을 표시할 수 있습니다.
+
+#### 3) 라운드 종료 결과 노출 및 랭킹 갱신 (핵심 계약)
+- **라운드 종료 수신**: FE는 `/topic/game/{code}/round-end` 채널을 구독하여 라운드 종료 이벤트를 수신합니다.
+  - 이 이벤트는 각 라운드의 제한 시간이 종료되거나 모든 플레이어가 정답을 입력했을 때 서버에 의해 자동으로 트리거됩니다.
+- **결과 노출 데이터**: 수신된 `RoundMetadataDto`에는 정답 곡 정보(`title`, `artist`, `answer`, `thumbnailUrl`)와 함께 플레이어들의 득점 및 실시간 순위 정보인 `rankings` 리스트가 포함되어 있습니다.
+- **랭킹 및 가점 연출**: `rankings` 리스트 내부의 각 객체는 `PlayerRankingDto` 타입으로, 플레이어의 현재 총점(`score`), 순위(`rank`), 그리고 해당 라운드에서 획득한 가점(`scoreAdded` - 1등 140점, 그 외 정답자 100점, 오답자 0점)을 가지고 있습니다. FE는 `scoreAdded`를 활용하여 "+140" 등 가점 애니메이션을 UI상에 연출하고 랭킹 리스트를 갱신합니다.
+- **자동 전환**: 라운드가 종료된 후 10초간 결과 화면을 노출한 뒤, 서버에 의해 자동으로 다음 라운드가 준비 상태(`ROUND_READY`)로 넘어가게 되므로 FE는 이에 맞춰 인게임 화면으로 복귀하여 비디오 재생 준비 신호를 다시 송신해야 합니다. 마지막 라운드인 경우에는 로비 및 게임 상태가 `FINISHED`로 변경되며 결과화면으로 자동 전환됩니다.
+

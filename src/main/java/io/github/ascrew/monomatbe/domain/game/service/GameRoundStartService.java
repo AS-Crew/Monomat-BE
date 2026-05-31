@@ -6,6 +6,7 @@ import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -24,16 +25,19 @@ public class GameRoundStartService {
     private final SimpMessagingTemplate messagingTemplate;
     private final RedisScript<String> readyToPlayScript;
     private final TaskScheduler taskScheduler;
+    private final ApplicationContext applicationContext;
 
     public GameRoundStartService(
             StringRedisTemplate redisTemplate,
             SimpMessagingTemplate messagingTemplate,
             @Qualifier("readyToPlayScript") RedisScript<String> readyToPlayScript,
-            TaskScheduler taskScheduler) {
+            TaskScheduler taskScheduler,
+            ApplicationContext applicationContext) {
         this.redisTemplate = redisTemplate;
         this.messagingTemplate = messagingTemplate;
         this.readyToPlayScript = readyToPlayScript;
         this.taskScheduler = taskScheduler;
+        this.applicationContext = applicationContext;
     }
 
     public void scheduleForcePlaybackStart(String lobbyCode, int roundNo, int timeLimitSeconds) {
@@ -101,6 +105,14 @@ public class GameRoundStartService {
                     .build();
 
             messagingTemplate.convertAndSend(StompDestinations.subscribeGameRound(lobbyCode), dto);
+
+            // 라운드 종료 스케줄링 호출
+            try {
+                GameRoundProgressService progressService = applicationContext.getBean(GameRoundProgressService.class);
+                progressService.scheduleRoundEnd(lobbyCode, roundNo, durationSeconds);
+            } catch (Exception e) {
+                log.error("라운드 종료 자동 스케줄링 예약 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
+            }
         } else {
             log.info("이미 다른 스레드/서버에서 재생 시작 시각이 기록되어 브로드캐스트를 스킵합니다 - code: {}, roundNo: {}", lobbyCode, roundNo);
         }

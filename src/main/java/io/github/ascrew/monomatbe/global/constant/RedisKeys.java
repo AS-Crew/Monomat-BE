@@ -759,4 +759,26 @@ public final class RedisKeys {
     public static String gameSessionRoundPlaybackStartedAtField(int roundNo) {
         return "playback_started_at:" + roundNo;
     }
+
+    /**
+     * 특정 라운드에서 정답을 맞춘 유저들의 제출 시각을 저장하는 Hash 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:correct_times"
+     */
+    public static String gameSessionRoundCorrectTimesKey(String lobbyCode, int roundNo) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":correct_times";
+    }
+
+    /**
+     * 특정 라운드의 종료 중복 방지 락 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:ended_lock"
+     */
+    public static String gameSessionRoundEndedLockKey(String lobbyCode, int roundNo) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":ended_lock";
+    }
 }

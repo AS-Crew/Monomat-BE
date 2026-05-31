@@ -82,6 +82,7 @@ class GameChatAnswerIntegrationTest {
         redisTemplate.delete(RedisKeys.gameSessionKey(LOBBY_CODE));
         redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1));
+        redisTemplate.delete(RedisKeys.gameSessionRoundCorrectTimesKey(LOBBY_CODE, 1));
     }
 
     private void givenGameSession(String status, int currentRoundNo, int timeLimit, Long playbackStartedAt) {

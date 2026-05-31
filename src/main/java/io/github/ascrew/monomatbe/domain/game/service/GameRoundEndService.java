@@ -116,7 +116,6 @@ public class GameRoundEndService {
             if (scoreAdded > 0) {
                 dbPlayer.addScore(scoreAdded);
                 gameSessionPlayerJpaRepository.save(dbPlayer);
-                redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
             }
         }
 
@@ -203,7 +202,14 @@ public class GameRoundEndService {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                log.info("라운드 종료 트랜잭션 커밋 완료 - 브로드캐스트 전송. code: {}, roundNo: {}, isLast: {}", lobbyCode, roundNo, isLastRound);
+                log.info("라운드 종료 트랜잭션 커밋 완료 - Redis 점수 반영 및 브로드캐스트 전송. code: {}, roundNo: {}, isLast: {}", lobbyCode, roundNo, isLastRound);
+                
+                scoreAddedMap.forEach((identifier, scoreAdded) -> {
+                    if (scoreAdded > 0) {
+                        redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
+                    }
+                });
+
                 gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
 
                 GameRoundProgressService progressService = applicationContext.getBean(GameRoundProgressService.class);
@@ -215,6 +221,14 @@ public class GameRoundEndService {
                     }
                 } else {
                     progressService.scheduleNextRound(lobbyCode, roundNo + 1);
+                }
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_ROLLED_BACK) {
+                    log.warn("라운드 종료 트랜잭션 롤백 감지 - 멱등 락 해제. code: {}, roundNo: {}", lobbyCode, roundNo);
+                    redisTemplate.delete(endedLockKey);
                 }
             }
         });

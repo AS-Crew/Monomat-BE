@@ -39,6 +39,7 @@ public class GameAnswerService {
     private final ChatSenderProfileResolver chatSenderProfileResolver;
     private final JsonMapper jsonMapper;
     private final RedisScript<String> submitGameAnswerScript;
+    private final GameRoundEndService gameRoundEndService;
 
     /**
      * 인게임 전용 채팅 인입 시 정답 여부를 판별하여 처리합니다.
@@ -193,6 +194,9 @@ public class GameAnswerService {
 
                 // 정답 달성자 본인에게 개인 축하 응답 전송
                 sendDirectCorrectResponse(userIdentifier, currentRoundNo, isFuzzy);
+
+                // 모든 플레이어가 정답을 맞췄을 경우 라운드 즉시 조기 종료 트리거
+                checkAndTriggerEarlyRoundEnd(code, currentRoundNo, correctPlayersKey);
             } else if ("ALREADY_CORRECT".equals(result)) {
                 broadcastChatMessage(code, userIdentifier, messageDto.content());
             } else if ("TIMEOUT".equals(result) || "ROUND_NOT_STARTED".equals(result)) {
@@ -265,5 +269,20 @@ public class GameAnswerService {
                 || messageDto.content() == null
                 || messageDto.content().isBlank()
                 || messageDto.content().length() > 500;
+    }
+
+    private void checkAndTriggerEarlyRoundEnd(String code, int roundNo, String correctPlayersKey) {
+        try {
+            String playersKey = RedisKeys.gameSessionPlayersKey(code);
+            Long totalPlayers = redisTemplate.opsForHash().size(playersKey);
+            Long correctPlayers = redisTemplate.opsForSet().size(correctPlayersKey);
+
+            if (totalPlayers != null && correctPlayers != null && correctPlayers >= totalPlayers && totalPlayers > 0) {
+                log.info("checkAndTriggerEarlyRoundEnd: 모든 플레이어가 정답을 맞췄습니다. 라운드를 즉시 조기 종료합니다. - code: {}, roundNo: {}", code, roundNo);
+                gameRoundEndService.endRound(code, roundNo);
+            }
+        } catch (Exception e) {
+            log.error("checkAndTriggerEarlyRoundEnd: 조기 종료 트리거 처리 중 오류 발생 - code: {}, roundNo: {}", code, roundNo, e);
+        }
     }
 }

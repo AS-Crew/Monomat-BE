@@ -70,6 +70,9 @@ class LobbyChatMessageReportServiceTest {
     @Mock
     private LobbyRecentChatMessageFinder lobbyRecentChatMessageFinder;
 
+    @Mock
+    private LobbyChatMessageReportLockManager lockManager;
+
     private LobbyChatMessageReportService service;
 
     @BeforeEach
@@ -80,12 +83,13 @@ class LobbyChatMessageReportServiceTest {
                 userRepository,
                 gameLobbyJpaRepository,
                 lobbyRepository,
-                lobbyRecentChatMessageFinder
+                lobbyRecentChatMessageFinder,
+                lockManager
         );
     }
 
     @Test
-    @DisplayName("로비 채팅 메시지를 신고하면 Report와 Snapshot을 저장한다")
+    @DisplayName("로비 채팅 메시지를 신고하면 Report와 Snapshot을 저장하고 lock을 해제한다")
     void reportLobbyChatMessage_success() {
         // given
         User reporter = createUser(REPORTER_ID, "reporter");
@@ -98,6 +102,8 @@ class LobbyChatMessageReportServiceTest {
                 .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
         when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
                 .thenReturn(Optional.of(chatMessage));
+        when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
+                .thenReturn(true);
         when(snapshotRepository.existsPendingReportByReporterAndLobbyAndMessageId(
                 REPORTER_ID,
                 LOBBY_ID,
@@ -176,6 +182,8 @@ class LobbyChatMessageReportServiceTest {
                 0,
                 123_000_000
         ));
+
+        verify(lockManager).unlock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
     }
 
     @Test
@@ -191,6 +199,7 @@ class LobbyChatMessageReportServiceTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED));
 
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }
@@ -217,6 +226,7 @@ class LobbyChatMessageReportServiceTest {
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
 
         verify(lobbyRecentChatMessageFinder, never()).findByMessageId(any(), any());
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }
@@ -243,6 +253,7 @@ class LobbyChatMessageReportServiceTest {
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
 
         verify(lobbyRecentChatMessageFinder, never()).findByMessageId(any(), any());
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }
@@ -270,6 +281,7 @@ class LobbyChatMessageReportServiceTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
 
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }
@@ -300,6 +312,7 @@ class LobbyChatMessageReportServiceTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
 
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }
@@ -339,12 +352,49 @@ class LobbyChatMessageReportServiceTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST));
 
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }
 
     @Test
-    @DisplayName("동일 사용자의 동일 메시지 PENDING 신고가 있으면 409를 반환한다")
+    @DisplayName("동일 신고 lock 획득에 실패하면 409를 반환한다")
+    void reportLobbyChatMessage_failsWhenDuplicateLockExists() {
+        User reporter = createUser(REPORTER_ID, "reporter");
+        GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
+
+        when(userRepository.findById(REPORTER_ID)).thenReturn(Optional.of(reporter));
+        when(gameLobbyJpaRepository.findByInviteCode(INVITE_CODE)).thenReturn(Optional.of(lobby));
+        when(lobbyRepository.getUserAccessStatus(INVITE_CODE, REPORTER_IDENTIFIER))
+                .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
+        when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
+                .thenReturn(Optional.of(reportableChatMessage()));
+        when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
+                .thenReturn(false);
+
+        assertThatThrownBy(() -> service.reportLobbyChatMessage(
+                INVITE_CODE,
+                MESSAGE_ID,
+                REPORTER_ID,
+                REPORTER_IDENTIFIER,
+                new LobbyChatMessageReportRequest("신고")
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+
+        verify(snapshotRepository, never()).existsPendingReportByReporterAndLobbyAndMessageId(
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        );
+        verify(reportRepository, never()).save(any());
+        verify(snapshotRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("동일 사용자의 동일 메시지 PENDING 신고가 있으면 409를 반환하고 lock을 해제한다")
     void reportLobbyChatMessage_failsWhenDuplicatePendingReportExists() {
         User reporter = createUser(REPORTER_ID, "reporter");
         GameLobby lobby = createLobby(LOBBY_ID, INVITE_CODE, false);
@@ -355,6 +405,8 @@ class LobbyChatMessageReportServiceTest {
                 .thenReturn(LobbyUserAccessStatus.PARTICIPANT);
         when(lobbyRecentChatMessageFinder.findByMessageId(INVITE_CODE, MESSAGE_ID))
                 .thenReturn(Optional.of(reportableChatMessage()));
+        when(lockManager.tryLock(REPORTER_ID, LOBBY_ID, MESSAGE_ID))
+                .thenReturn(true);
         when(snapshotRepository.existsPendingReportByReporterAndLobbyAndMessageId(
                 REPORTER_ID,
                 LOBBY_ID,
@@ -375,6 +427,7 @@ class LobbyChatMessageReportServiceTest {
 
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
+        verify(lockManager).unlock(REPORTER_ID, LOBBY_ID, MESSAGE_ID);
     }
 
     @Test
@@ -410,6 +463,7 @@ class LobbyChatMessageReportServiceTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
 
+        verify(lockManager, never()).tryLock(any(), any(), any());
         verify(reportRepository, never()).save(any());
         verify(snapshotRepository, never()).save(any());
     }

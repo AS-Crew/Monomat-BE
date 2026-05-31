@@ -37,12 +37,8 @@ import java.time.ZoneOffset;
  * - Redis 최근 채팅 messageId 조회
  * - 자기 메시지 신고 차단
  * - 동일 사용자의 동일 메시지 PENDING 중복 신고 차단
+ * - 동시 중복 신고 방지 lock 처리
  * - 신고 시점 채팅 메시지 스냅샷 저장
- *
- * [분리 이유]
- * 기존 ReportService는 로비 신고와 로비 유저 신고를 담당한다.
- * 채팅 메시지 신고는 Redis 최근 채팅 조회와 스냅샷 저장 책임이 추가되므로
- * 기존 ReportService에 넣으면 책임이 과도하게 커진다.
  */
 @Slf4j
 @Service
@@ -82,21 +78,8 @@ public class LobbyChatMessageReportService {
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyRepository lobbyRepository;
     private final LobbyRecentChatMessageFinder lobbyRecentChatMessageFinder;
+    private final LobbyChatMessageReportLockManager lockManager;
 
-    /**
-     * 로비 채팅 메시지 신고를 생성한다.
-     *
-     * [처리 순서]
-     * 1. 신고자 조회
-     * 2. 로비 DB 스냅샷 조회
-     * 3. Redis 기준 신고자 로비 참여 권한 검증
-     * 4. Redis 최근 채팅에서 messageId 조회
-     * 5. 자기 메시지 신고 차단
-     * 6. 사유 정규화
-     * 7. 동일 사용자의 동일 messageId PENDING 신고 중복 차단
-     * 8. Report 저장
-     * 9. 채팅 메시지 신고 스냅샷 저장
-     */
     @Transactional
     public ReportResponse reportLobbyChatMessage(
             String inviteCode,
@@ -118,33 +101,69 @@ public class LobbyChatMessageReportService {
 
         String reason = normalizeReason(request.reason());
 
-        validateDuplicatePendingReport(
+        return createReportWithLock(
+                reporter,
+                lobby,
+                messageId,
+                chatMessage,
+                reason,
+                inviteCode
+        );
+    }
+
+    private ReportResponse createReportWithLock(
+            User reporter,
+            GameLobby lobby,
+            String messageId,
+            ChatMessageDto chatMessage,
+            String reason,
+            String inviteCode
+    ) {
+        boolean locked = lockManager.tryLock(
                 reporter.getId(),
                 lobby.getId(),
                 messageId
         );
 
-        Report report = reportRepository.save(Report.builder()
-                .reporter(reporter)
-                .lobby(lobby)
-                .targetType(ReportTargetType.LOBBY_CHAT_MESSAGE)
-                .targetId(lobby.getId())
-                .targetReference(messageId)
-                .reason(reason)
-                .build());
+        if (!locked) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_REPORT);
+        }
 
-        snapshotRepository.save(toSnapshot(report, chatMessage));
+        try {
+            validateDuplicatePendingReport(
+                    reporter.getId(),
+                    lobby.getId(),
+                    messageId
+            );
 
-        log.info(
-                "로비 채팅 메시지 신고 접수 완료 - reportId: {}, reporterId: {}, lobbyId: {}, inviteCode: {}, messageId: {}",
-                report.getId(),
-                reporter.getId(),
-                lobby.getId(),
-                inviteCode,
-                messageId
-        );
+            Report report = reportRepository.save(Report.builder()
+                    .reporter(reporter)
+                    .lobby(lobby)
+                    .targetType(ReportTargetType.LOBBY_CHAT_MESSAGE)
+                    .targetId(lobby.getId())
+                    .targetReference(messageId)
+                    .reason(reason)
+                    .build());
 
-        return ReportResponse.from(report);
+            snapshotRepository.save(toSnapshot(report, chatMessage));
+
+            log.info(
+                    "로비 채팅 메시지 신고 접수 완료 - reportId: {}, reporterId: {}, lobbyId: {}, inviteCode: {}, messageId: {}",
+                    report.getId(),
+                    reporter.getId(),
+                    lobby.getId(),
+                    inviteCode,
+                    messageId
+            );
+
+            return ReportResponse.from(report);
+        } finally {
+            lockManager.unlock(
+                    reporter.getId(),
+                    lobby.getId(),
+                    messageId
+            );
+        }
     }
 
     private void validateMessageId(String messageId) {

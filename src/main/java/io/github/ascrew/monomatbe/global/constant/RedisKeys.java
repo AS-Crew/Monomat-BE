@@ -46,6 +46,9 @@ public final class RedisKeys {
     /** 채팅 발신자 프로필 캐시 키 접두사 */
     private static final String CHAT_SENDER_PROFILE_PREFIX = "chat:sender-profile:";
 
+    /** 로비 채팅 메시지 신고 중복 방지 lock 키 접두사 */
+    private static final String LOBBY_CHAT_MESSAGE_REPORT_LOCK_PREFIX = "lock:report:lobby-chat-message:";
+
     /** 로비 내 사용자별 현재 유효 WebSocket 세션 키 접미사 */
     private static final String USER_SESSION_SUFFIX = ":user_session:";
 
@@ -330,6 +333,37 @@ public final class RedisKeys {
      */
     public static String lobbyRecentChatMessagesKey(String code) {
         return LOBBY_PREFIX + code + RECENT_CHAT_MESSAGES_SUFFIX;
+    }
+
+    /**
+     * 로비 채팅 메시지 신고 중복 방지 lock key를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : lock:report:lobby-chat-message:{reporterId}:{lobbyId}:{messageId}
+     * - Type  : String
+     * - Value : "1"
+     * - TTL   : 짧은 시간
+     *
+     * [사용 목적]
+     * 동일 사용자의 동일 로비/동일 채팅 메시지 신고가 동시에 들어올 때
+     * DB 중복 조회와 저장 사이의 race condition을 방지한다.
+     *
+     * @param reporterId 신고자 users.id
+     * @param lobbyId 로비 ID
+     * @param messageId 채팅 메시지 ID
+     * @return Redis lock key
+     */
+    public static String lobbyChatMessageReportLockKey(
+            Long reporterId,
+            Long lobbyId,
+            String messageId
+    ) {
+        return LOBBY_CHAT_MESSAGE_REPORT_LOCK_PREFIX
+                + reporterId
+                + ":"
+                + lobbyId
+                + ":"
+                + messageId;
     }
 
     /**

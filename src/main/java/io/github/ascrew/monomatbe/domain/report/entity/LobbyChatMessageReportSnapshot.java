@@ -18,6 +18,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 /**
  * 로비 채팅 메시지 신고 스냅샷 엔티티
@@ -46,6 +47,10 @@ import java.time.LocalDateTime;
  * [스키마 관리 기준]
  * 운영 DB 스키마와 인덱스는 Flyway migration SQL을 기준으로 관리한다.
  * 따라서 이 엔티티에는 테이블명과 컬럼 매핑만 둔다.
+ *
+ * [시간 정책]
+ * sentAt이 UTC 기준으로 파싱되어 저장되므로,
+ * 스냅샷 저장 시각인 createdAt도 UTC 기준으로 저장한다.
  */
 @Getter
 @Entity
@@ -137,7 +142,7 @@ public class LobbyChatMessageReportSnapshot {
     @PrePersist
     public void prePersist() {
         if (this.createdAt == null) {
-            this.createdAt = LocalDateTime.now();
+            this.createdAt = LocalDateTime.now(ZoneOffset.UTC);
         }
     }
 }

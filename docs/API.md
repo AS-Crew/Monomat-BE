@@ -909,18 +909,26 @@ GET /api/lobbies/{code}/chats/recent
 ```json
 [
   {
+    "messageId": "0f1b2c3d-1111-2222-3333-444444444444",
     "type": "CHAT",
     "roomId": "ABC123",
     "sender": "11111111-1111-1111-1111-111111111111",
+    "senderId": 1,
+    "senderNickname": "모노유저",
     "content": "안녕하세요",
-    "timestamp": "2026-05-30T12:00:00"
+    "timestamp": "2026-05-30T12:00:00.123Z",
+    "sentAt": "2026-05-30T12:00:00.123Z"
   },
   {
+    "messageId": "9a8b7c6d-1111-2222-3333-444444444444",
     "type": "CHAT",
     "roomId": "ABC123",
     "sender": "22222222-2222-2222-2222-222222222222",
+    "senderId": 2,
+    "senderNickname": "게스트123",
     "content": "준비됐어요",
-    "timestamp": "2026-05-30T12:00:03"
+    "timestamp": "2026-05-30T12:00:03.456Z",
+    "sentAt": "2026-05-30T12:00:03.456Z"
   }
 ]
 ```
@@ -933,13 +941,17 @@ GET /api/lobbies/{code}/chats/recent
 
 **Response Fields**
 
-| 필드          | 타입     | 설명                        |
-| ----------- | ------ | ------------------------- |
-| `type`      | String | 메시지 타입. 일반 사용자 채팅은 `CHAT` |
-| `roomId`    | String | 로비 초대 코드                  |
-| `sender`    | String | 메시지 발신자 userIdentifier    |
-| `content`   | String | 채팅 메시지 본문                 |
-| `timestamp` | String | 서버에서 생성한 메시지 발신 시각        |
+| 필드               | 타입          | 설명                                                        |
+| ---------------- | ----------- | --------------------------------------------------------- |
+| `messageId`      | String      | 서버가 생성한 채팅 메시지 식별자. 채팅 메시지 신고 API에서 사용                    |
+| `type`           | String      | 메시지 타입. 일반 사용자 채팅은 `CHAT`                                 |
+| `roomId`         | String      | 로비 초대 코드                                                  |
+| `sender`         | String      | 메시지 발신자 userIdentifier                                    |
+| `senderId`       | Long|null   | 메시지 발신자 `users.id`. 조회 실패 또는 과거 payload 호환성 때문에 `null` 가능 |
+| `senderNickname` | String|null | 메시지 발신자 닉네임. 조회 실패 또는 과거 payload 호환성 때문에 `null` 가능        |
+| `content`        | String      | 채팅 메시지 본문                                                 |
+| `timestamp`      | String      | 기존 FE 호환용 서버 생성 발신 시각. UTC ISO-8601 문자열                   |
+| `sentAt`         | String      | 신규 의미 기반 발신 시각. UTC ISO-8601 문자열                          |
 
 **Error**
 
@@ -971,6 +983,113 @@ GET /api/lobbies/{code}/chats/recent
 
 > 최근 채팅 조회는 로비 참여 확정 이후 호출해야 합니다.
 > REST join 성공만으로는 실제 로비 참여자가 아니며, 최종 참여 확정 기준은 WebSocket SUBSCRIBE 성공입니다.
+
+---
+
+#### 로비 채팅 메시지 신고
+
+
+```http
+POST /api/lobbies/{code}/chats/{messageId}/reports
+```
+
+특정 로비 안의 채팅 메시지를 신고합니다.
+JWT Access Token이 필요하며, 게스트와 정식 회원 모두 신고할 수 있습니다.
+
+**정책**
+
+* 현재 로비 참여자만 신고할 수 있습니다.
+* 강퇴된 사용자는 신고할 수 없습니다.
+* 자기 자신이 작성한 채팅 메시지는 신고할 수 없습니다.
+* 동일 사용자가 같은 로비의 같은 채팅 메시지에 대해 처리되지 않은 `PENDING` 신고를 중복 생성할 수 없습니다.
+* Redis 최근 채팅은 TTL이 있으므로, 신고 접수 시점의 메시지 원문과 발신자 정보를 DB 스냅샷으로 저장합니다.
+* 신고 대상 메시지는 Redis 최근 채팅 목록에 남아 있어야 합니다. TTL 만료 또는 최근 채팅 범위 밖으로 밀려난 메시지는 신고할 수 없습니다.
+
+**Request Header**
+
+| 헤더              | 필수 | 설명                     |
+| --------------- | -- | ---------------------- |
+| `Authorization` | ✅  | `Bearer {accessToken}` |
+
+**Path Variable**
+
+| 이름          | 타입     | 설명              |
+| ----------- | ------ | --------------- |
+| `code`      | String | 로비 초대 코드        |
+| `messageId` | String | 신고 대상 채팅 메시지 ID |
+
+**Request Body**
+
+```json
+{
+  "reason": "부적절한 채팅 메시지입니다."
+}
+```
+
+| 필드       | 타입     | 필수 | 설명                    |
+| -------- | ------ | -- | --------------------- |
+| `reason` | String | ✅  | 신고 사유. 공백 불가, 최대 500자 |
+
+**Response `201 Created`**
+
+```json
+{
+  "reportId": 100,
+  "reporterId": 1,
+  "lobbyId": 10,
+  "targetType": "LOBBY_CHAT_MESSAGE",
+  "targetId": 10,
+  "reason": "부적절한 채팅 메시지입니다.",
+  "status": "PENDING",
+  "createdAt": "2026-05-30T12:00:00"
+}
+```
+
+**Response Fields**
+
+| 필드           | 타입     | 설명                                                       |
+| ------------ | ------ | -------------------------------------------------------- |
+| `reportId`   | Long   | 생성된 신고 ID                                                |
+| `reporterId` | Long   | 신고자 `users.id`                                           |
+| `lobbyId`    | Long   | 신고가 발생한 로비 ID                                            |
+| `targetType` | String | 신고 대상 타입. 채팅 메시지 신고는 `LOBBY_CHAT_MESSAGE`                |
+| `targetId`   | Long   | 공통 신고 구조 유지를 위해 로비 ID 저장. 실제 `messageId`는 신고 스냅샷 테이블에 저장 |
+| `reason`     | String | trim 정규화된 신고 사유                                          |
+| `status`     | String | 신고 처리 상태. 생성 직후 `PENDING`                                |
+| `createdAt`  | String | 신고 접수 시각                                                 |
+
+**Error**
+
+| 상태 코드              | 설명                                                           |
+| ------------------ | ------------------------------------------------------------ |
+| `400 Bad Request`  | 신고 사유가 비어 있음, messageId 누락, 자기 자신의 메시지 신고                    |
+| `401 Unauthorized` | JWT 토큰 없음, 만료, 또는 인증 주체가 유효하지 않은 경우                          |
+| `403 Forbidden`    | 로비 참여자가 아니거나 강퇴된 사용자가 신고하는 경우                                |
+| `404 Not Found`    | 존재하지 않는 로비, 존재하지 않는 신고자, Redis 최근 채팅에서 messageId를 찾을 수 없는 경우 |
+| `409 Conflict`     | 삭제된 로비 신고, 이미 접수된 중복 신고, 신고할 수 없는 깨진 채팅 메시지 payload          |
+
+**FE 처리 기준**
+
+| 상황                 | 처리 방식                      |
+| ------------------ | -------------------------- |
+| `201 Created`      | 신고 완료 toast 표시             |
+| `400 Bad Request`  | 자기 메시지 신고 또는 사유 입력 오류 안내   |
+| `401 Unauthorized` | 로그인/게스트 세션 재진입 처리          |
+| `403 Forbidden`    | 로비 접근 중단 또는 권한 없음 안내       |
+| `404 Not Found`    | 메시지가 만료되었거나 찾을 수 없다는 안내    |
+| `409 Conflict`     | 이미 신고했거나 신고할 수 없는 메시지라는 안내 |
+
+**프론트엔드 연동 흐름**
+
+```text
+1. GET /api/lobbies/{code}/chats/recent 응답 또는 WebSocket 실시간 메시지에서 messageId를 확보
+2. 사용자가 특정 메시지 신고 버튼 클릭
+3. POST /api/lobbies/{code}/chats/{messageId}/reports 호출
+4. 성공 시 신고 완료 안내
+```
+
+> `messageId`는 클라이언트가 생성하지 않습니다.
+> 서버가 채팅 메시지를 수신한 뒤 생성한 값을 그대로 사용해야 합니다.
 
 ---
 

@@ -706,6 +706,7 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available&page=0&siz
     {
       "code": "ABC123",
       "hostId": "f8f6aa1b-3dd8-4b20-8ec8-9f7c7e0dd0fc",
+      "hostNickname": "모노유저",
       "title": "K-POP 퀴즈방",
       "mapId": 1,
       "mapTitle": "K-POP 2세대",
@@ -719,6 +720,7 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available&page=0&siz
     {
       "code": "DEF456",
       "hostId": "b17f7ee0-614f-4f5f-b770-83f6d4b85f4a",
+      "hostNickname": "게스트1234",
       "title": "진행 중인 POP 퀴즈방",
       "mapId": 3,
       "mapTitle": "POP 히트곡",
@@ -751,6 +753,7 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available&page=0&siz
 | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
 | `code`                 | String  | 로비 초대 코드                                                                                                |
 | `hostId`               | String  | 방장 사용자 식별자                                                                                              |
+| `hostNickname`         | String  | 방장 닉네임. 정식 회원·게스트 모두 내려옵니다. 세션 만료 등으로 닉네임을 찾지 못하면 `Unknown-xxxxxx` 형태의 fallback 값을 내려줍니다.                  |
 | `title`                | String  | 로비 제목                                                                                                   |
 | `mapId`                | Long    | 선택된 맵 ID. 미선택 시 `null`                                                                                  |
 | `mapTitle`             | String  | 선택된 맵 제목. 미선택 시 `null`                                                                                  |

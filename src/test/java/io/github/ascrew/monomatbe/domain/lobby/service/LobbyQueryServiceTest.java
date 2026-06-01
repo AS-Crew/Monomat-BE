@@ -3,6 +3,7 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyListItemResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
@@ -19,11 +20,13 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -256,7 +259,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("MID-1", "OLD");
         assertThat(result.page()).isEqualTo(1);
         assertThat(result.size()).isEqualTo(2);
@@ -288,7 +291,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("LOBBY-5", "LOBBY-4");
         assertThat(result.hasNext()).isTrue();
     }
@@ -317,6 +320,86 @@ class LobbyQueryServiceTest {
         assertThat(result.page()).isEqualTo(10);
         assertThat(result.size()).isEqualTo(20);
         assertThat(result.hasNext()).isFalse();
+    }
+
+    @Test
+    @DisplayName("공개 로비 목록 페이징 조회는 정식 회원/게스트 방장 닉네임을 각각 채워 응답한다")
+    void getPublicLobbyPage_fillsHostNicknameForMemberAndGuestHosts() {
+        // given
+        String memberHostId = "member-session-id";
+        String guestHostId = "guest-token-id";
+
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobbyWithHost("ROOM-1", memberHostId, 2000L),
+                lobbyWithHost("ROOM-2", guestHostId, 1000L)
+        ));
+
+        /*
+         * 방장 닉네임 조회는 페이지 내 hostId 전체를 한 번에 넘긴다.
+         * 게스트/회원 식별자가 섞여 있어도 동일한 Map 조회로 닉네임이 채워져야 한다.
+         */
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(memberHostId, guestHostId)))
+                .thenReturn(Map.of(
+                        memberHostId, "정식회원닉",
+                        guestHostId, "게스트닉"
+                ));
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                20
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(
+                        LobbyListItemResponse::code,
+                        LobbyListItemResponse::hostId,
+                        LobbyListItemResponse::hostNickname
+                )
+                .containsExactly(
+                        tuple("ROOM-1", memberHostId, "정식회원닉"),
+                        tuple("ROOM-2", guestHostId, "게스트닉")
+                );
+
+        // N+1 방지: 페이지 내 방장 닉네임은 단 1회 조회로 처리한다.
+        verify(lobbyPlayerNicknameResolver, times(1)).resolveNicknameMap(any());
+    }
+
+    @Test
+    @DisplayName("방장 닉네임을 찾지 못하면 fallback 닉네임을 hostNickname으로 내려준다")
+    void getPublicLobbyPage_usesFallbackNicknameWhenHostNicknameMissing() {
+        // given
+        String hostId = "missing-host-id";
+
+        when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
+                lobbyWithHost("ROOM-1", hostId, 1000L)
+        ));
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostId)))
+                .thenReturn(Map.of());
+        when(lobbyPlayerNicknameResolver.fallbackNickname(hostId))
+                .thenReturn("Unknown-missin");
+
+        LobbySearchCondition condition = LobbySearchCondition.of(
+                null,
+                null,
+                "latest",
+                0,
+                20
+        );
+
+        // when
+        var result = lobbyQueryService.getPublicLobbyPage(condition);
+
+        // then
+        assertThat(result.items())
+                .extracting(LobbyListItemResponse::hostNickname)
+                .containsExactly("Unknown-missin");
     }
 
     @Test
@@ -594,7 +677,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("NEW", "MID");
         assertThat(result.page()).isEqualTo(0);
         assertThat(result.size()).isEqualTo(2);
@@ -628,7 +711,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("MATCHED");
 
         verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
@@ -658,7 +741,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("KPOP");
 
         verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
@@ -688,7 +771,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("NEW", "OLD");
 
         verify(lobbyRepository, never()).getPublicLobbyCodesByLatestIndex(anyLong(), anyInt());
@@ -739,7 +822,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("NEW", "MID");
         assertThat(result.hasNext()).isTrue();
 
@@ -777,7 +860,7 @@ class LobbyQueryServiceTest {
 
         // then
         assertThat(result.items())
-                .extracting(LobbyRedisDto::getCode)
+                .extracting(LobbyListItemResponse::code)
                 .containsExactly("ONLY");
         assertThat(result.hasNext()).isFalse();
     }
@@ -840,6 +923,34 @@ class LobbyQueryServiceTest {
                 .maxPlayers(maxPlayers)
                 .isPrivate(isPrivate)
                 .status(status.name())
+                .createdAtEpochMillis(createdAtEpochMillis)
+                .build();
+    }
+
+    /**
+     * 방장 닉네임 검증 테스트용 로비 DTO를 생성한다.
+     *
+     * [의도]
+     * 기존 lobby() fixture는 hostId를 고정값으로 채우기 때문에
+     * 회원/게스트 방장별 닉네임 매핑을 구분해 검증할 수 없다.
+     * 따라서 hostId를 직접 지정할 수 있는 fixture를 둔다.
+     */
+    private LobbyRedisDto lobbyWithHost(
+            String code,
+            String hostId,
+            Long createdAtEpochMillis
+    ) {
+        return LobbyRedisDto.builder()
+                .code(code)
+                .hostId(hostId)
+                .title("로비 " + code)
+                .mapId(1L)
+                .mapTitle("테스트 맵")
+                .mapCategory("K-POP")
+                .currentPlayers(2)
+                .maxPlayers(6)
+                .isPrivate(false)
+                .status(LobbyStatus.WAITING.name())
                 .createdAtEpochMillis(createdAtEpochMillis)
                 .build();
     }

@@ -50,6 +50,7 @@ public class GameRoundEndService {
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
     private final JsonMapper jsonMapper;
     private final ApplicationContext applicationContext;
+    private final GameSessionCleanupService gameSessionCleanupService;
 
     /**
      * 특정 라운드를 종료하고 점수 계산 및 DB/Redis 업데이트를 수행합니다.
@@ -219,6 +220,13 @@ public class GameRoundEndService {
                     } catch (Exception e) {
                         log.error("게임 종료 후 로비 갱신 알림 실패 - code: {}", lobbyCode, e);
                     }
+
+                    /*
+                     * 게임 정상 종료 - 게임 세션 Redis 키를 짧은 TTL(grace period)로 전환한다.
+                     * 점수 반영(HINCRBY) 이후에 호출해야 grace period 동안 최종 점수 조회가 가능하다.
+                     * 최종 점수/랭킹은 DB에 영구 저장되므로 grace period 후 만료되어도 안전하다.
+                     */
+                    gameSessionCleanupService.expireWithGracePeriod(lobbyCode);
                 } else {
                     progressService.scheduleNextRound(lobbyCode, roundNo + 1);
                 }

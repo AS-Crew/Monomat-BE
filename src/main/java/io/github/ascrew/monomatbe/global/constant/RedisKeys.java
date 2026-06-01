@@ -13,6 +13,8 @@
  */
 package io.github.ascrew.monomatbe.global.constant;
 
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
+
 public final class RedisKeys {
 
     // 인스턴스화 방지
@@ -405,7 +407,9 @@ public final class RedisKeys {
      * @return 닉네임 캐시 키
      */
     public static String userNicknameKey(String userIdentifier) {
-        return USER_NICKNAME_PREFIX + userIdentifier;
+        // 세션/게스트 토큰 성격의 식별자 원문을 Redis 키에 노출하지 않도록 SHA-256 해시를 사용한다.
+        // (운영자/모니터링/SCAN 과정의 식별자 노출 방지, 키 길이 고정)
+        return USER_NICKNAME_PREFIX + TokenHashUtils.sha256(userIdentifier);
     }
 
     /**

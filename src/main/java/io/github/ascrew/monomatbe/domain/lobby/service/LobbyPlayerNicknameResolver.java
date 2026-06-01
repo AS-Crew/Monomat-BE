@@ -1,12 +1,16 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.auth.service.UserNicknameLookupService;
+import io.github.ascrew.monomatbe.domain.lobby.config.LobbyNicknameCacheProperties;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.connection.RedisStringCommands;
+import org.springframework.data.redis.connection.StringRedisConnection;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.types.Expiration;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -37,7 +41,8 @@ import java.util.Map;
  *   상위 계층에서 fallbackNickname()으로 처리한다.
  * - 캐싱으로 인해 닉네임 변경이 최대 TTL만큼 로비 목록/상세에 지연 반영될 수 있다.
  *   닉네임 변경 즉시성이 요구되지 않으므로 이를 수용한다.
- * - 식별자 원문은 캐시 키(user:nickname:{userIdentifier})에만 사용되며 응답에 노출되지 않는다.
+ * - 캐시 키는 식별자 원문이 아니라 SHA-256 해시(user:nickname:{sha256(userIdentifier)})로 만들어,
+ *   Redis 키/모니터링/SCAN 어디에도 세션·토큰 원문이 노출되지 않는다.
  *
  * [장애 정책]
  * 캐시 조회/저장 실패만으로 목록 API를 실패시키지 않는다.
@@ -53,20 +58,9 @@ public class LobbyPlayerNicknameResolver {
     /** fallback 표시값에 사용할 식별자 해시 앞자리 길이 (SHA-256 hex 기준) */
     private static final int HASH_SUFFIX_LENGTH = 6;
 
-    /** TTL 프로퍼티가 비정상이거나 미주입된 경우 사용할 기본 캐시 TTL */
-    private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(10);
-
     private final StringRedisTemplate redisTemplate;
     private final UserNicknameLookupService userNicknameLookupService;
-
-    /**
-     * 닉네임 캐시 TTL.
-     *
-     * Spring Context 밖에서 생성되는 단위 테스트에서는 @Value가 주입되지 않을 수 있으므로
-     * effectiveCacheTtl()에서 null/zero/negative를 DEFAULT_CACHE_TTL로 보정한다.
-     */
-    @Value("${monomat.lobby.nickname-cache.ttl:PT10M}")
-    private Duration cacheTtl;
+    private final LobbyNicknameCacheProperties nicknameCacheProperties;
 
     /**
      * 여러 userIdentifier에 대응되는 닉네임을 한 번에 조회한다.
@@ -154,42 +148,44 @@ public class LobbyPlayerNicknameResolver {
     /**
      * DB에서 새로 조회된 닉네임만 캐시에 저장한다.
      *
+     * [batch 저장]
+     * 식별자 수만큼 개별 SET을 날리면 서버↔Redis RTT가 누적되어 캐시가 또 다른 병목이 된다.
+     * 따라서 executePipelined로 SET(+TTL)을 한 번에 묶어 round-trip을 줄인다.
+     *
+     * [장애 정책]
      * 저장 실패는 목록 응답에 영향을 주지 않도록 무시하고 로그만 남긴다.
+     * 로그에는 식별자 원문 대신 대상 개수만 남겨 식별자 노출을 막는다.
      */
     private void writeToCache(Map<String, String> loadedNicknames) {
         if (loadedNicknames.isEmpty()) {
             return;
         }
 
-        Duration ttl = effectiveCacheTtl();
+        Duration ttl = nicknameCacheProperties.getTtl();
 
-        loadedNicknames.forEach((userIdentifier, nickname) -> {
-            if (nickname == null || nickname.isBlank()) {
-                return;
-            }
-
-            try {
-                redisTemplate.opsForValue().set(
-                        RedisKeys.userNicknameKey(userIdentifier),
-                        nickname,
-                        ttl
-                );
-            } catch (RuntimeException e) {
-                log.warn(
-                        "닉네임 캐시 저장 실패 - 목록 응답은 계속 진행. userIdentifier: {}",
-                        userIdentifier,
-                        e
-                );
-            }
-        });
-    }
-
-    private Duration effectiveCacheTtl() {
-        if (cacheTtl == null || cacheTtl.isZero() || cacheTtl.isNegative()) {
-            return DEFAULT_CACHE_TTL;
+        try {
+            redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+                StringRedisConnection stringConnection = (StringRedisConnection) connection;
+                loadedNicknames.forEach((userIdentifier, nickname) -> {
+                    if (nickname == null || nickname.isBlank()) {
+                        return;
+                    }
+                    stringConnection.set(
+                            RedisKeys.userNicknameKey(userIdentifier),
+                            nickname,
+                            Expiration.from(ttl),
+                            RedisStringCommands.SetOption.upsert()
+                    );
+                });
+                return null;
+            });
+        } catch (RuntimeException e) {
+            log.warn(
+                    "닉네임 캐시 batch 저장 실패 - 목록 응답은 계속 진행. targetCount: {}",
+                    loadedNicknames.size(),
+                    e
+            );
         }
-
-        return cacheTtl;
     }
 
     /**

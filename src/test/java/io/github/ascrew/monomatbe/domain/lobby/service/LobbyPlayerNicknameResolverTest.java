@@ -1,22 +1,25 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.auth.service.UserNicknameLookupService;
+import io.github.ascrew.monomatbe.domain.lobby.config.LobbyNicknameCacheProperties;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.redis.connection.StringRedisConnection;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.types.Expiration;
 
-import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -43,12 +46,27 @@ class LobbyPlayerNicknameResolverTest {
 
     private final LobbyPlayerNicknameResolver resolver = new LobbyPlayerNicknameResolver(
             redisTemplate,
-            userNicknameLookupService
+            userNicknameLookupService,
+            new LobbyNicknameCacheProperties()
     );
 
     @BeforeEach
     void setUp() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    }
+
+    /**
+     * writeToCache의 executePipelined 콜백을 캡처해 mock StringRedisConnection에 실행시킨 뒤,
+     * batch SET이 어떤 키로 호출되었는지 검증할 수 있도록 connection을 반환한다.
+     */
+    @SuppressWarnings("unchecked")
+    private StringRedisConnection capturePipelineWrites() {
+        ArgumentCaptor<RedisCallback<Object>> captor = ArgumentCaptor.forClass(RedisCallback.class);
+        verify(redisTemplate).executePipelined(captor.capture());
+
+        StringRedisConnection connection = mock(StringRedisConnection.class);
+        captor.getValue().doInRedis(connection);
+        return connection;
     }
 
     @Test
@@ -77,15 +95,20 @@ class LobbyPlayerNicknameResolverTest {
                 .hasSize(2);
 
         verify(userNicknameLookupService).findNicknameMapByUserIdentifiers(userIdentifiers);
-        verify(valueOperations).set(
+
+        // 캐시 write는 executePipelined batch로 묶여 실행된다.
+        StringRedisConnection connection = capturePipelineWrites();
+        verify(connection).set(
                 eq(RedisKeys.userNicknameKey("guest-identifier")),
                 eq("게스트닉네임"),
-                any(Duration.class)
+                any(Expiration.class),
+                any()
         );
-        verify(valueOperations).set(
+        verify(connection).set(
                 eq(RedisKeys.userNicknameKey("registered-identifier")),
                 eq("회원닉네임"),
-                any(Duration.class)
+                any(Expiration.class),
+                any()
         );
     }
 
@@ -113,11 +136,20 @@ class LobbyPlayerNicknameResolverTest {
                 .hasSize(2);
 
         verify(userNicknameLookupService).findNicknameMapByUserIdentifiers(List.of("missed-identifier"));
-        // 적중분은 다시 캐싱하지 않는다.
-        verify(valueOperations, never()).set(
+
+        // miss 식별자만 batch SET되고, 적중분은 다시 캐싱하지 않는다.
+        StringRedisConnection connection = capturePipelineWrites();
+        verify(connection).set(
+                eq(RedisKeys.userNicknameKey("missed-identifier")),
+                eq("DB닉네임"),
+                any(Expiration.class),
+                any()
+        );
+        verify(connection, never()).set(
                 eq(RedisKeys.userNicknameKey("cached-identifier")),
-                anyString(),
-                any(Duration.class)
+                any(),
+                any(Expiration.class),
+                any()
         );
     }
 
@@ -138,7 +170,7 @@ class LobbyPlayerNicknameResolverTest {
                 .hasSize(2);
 
         verify(userNicknameLookupService, never()).findNicknameMapByUserIdentifiers(any());
-        verify(valueOperations, never()).set(anyString(), anyString(), any(Duration.class));
+        verify(redisTemplate, never()).executePipelined(any(RedisCallback.class));
     }
 
     @Test

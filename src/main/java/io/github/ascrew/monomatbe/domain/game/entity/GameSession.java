@@ -60,6 +60,7 @@ public class GameSession {
 
     public void finish() {
         this.status = GameSessionStatus.FINISHED;
+        this.endedAt = java.time.LocalDateTime.now();
     }
 
     public void nextRound() {

@@ -174,15 +174,6 @@ public class GameRoundEndService {
             }
         }
 
-        RoundMetadataDto metadataDto = RoundMetadataDto.builder()
-                .type("ROUND_END")
-                .title(title)
-                .artist(artist)
-                .answer(representativeAnswer)
-                .thumbnailUrl(thumbnailUrl)
-                .rankings(rankings)
-                .build();
-
         // 7. 다음 라운드 또는 게임 종료 전환
         boolean isLastRound = roundNo >= gameSession.getTotalQuestionCount();
 
@@ -196,7 +187,24 @@ public class GameRoundEndService {
 
             redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), "status", "FINISHED");
             redisTemplate.opsForHash().put(RedisKeys.lobbyKey(lobbyCode), "status", "FINISHED");
+        } else {
+            redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), "status", "ENDED");
         }
+
+        // 7.5. Redis에 라운드 종료 시각 기록
+        String endedAtField = RedisKeys.gameSessionRoundEndedAtField(roundNo);
+        redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), endedAtField, String.valueOf(System.currentTimeMillis()));
+
+        RoundMetadataDto metadataDto = RoundMetadataDto.builder()
+                .type("ROUND_END")
+                .title(title)
+                .artist(artist)
+                .answer(representativeAnswer)
+                .thumbnailUrl(thumbnailUrl)
+                .rankings(rankings)
+                .waitTimeSeconds(10)
+                .isLastRound(isLastRound)
+                .build();
 
         // 8. 트랜잭션 성공 후 STOMP 브로드캐스트 및 스케줄링 등록
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

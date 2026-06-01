@@ -20,6 +20,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 @Slf4j
 @Service
@@ -33,6 +35,8 @@ public class GameRoundProgressService {
     private final GameRealtimeNotifier gameRealtimeNotifier;
     private final ApplicationContext applicationContext;
 
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
+
     /**
      * 라운드 종료 스케줄링을 등록합니다. (재생 시작 시점 기준 1.5초 완충 시간 포함)
      */
@@ -40,14 +44,46 @@ public class GameRoundProgressService {
         long delayMillis = (timeLimitSeconds * 1000L) + 1500L;
         log.info("라운드 종료 자동 태스크 예약 - code: {}, roundNo: {}, delay: {}ms", lobbyCode, roundNo, delayMillis);
         
-        taskScheduler.schedule(() -> {
+        String key = lobbyCode + ":" + roundNo;
+        ScheduledFuture<?> future = taskScheduler.schedule(() -> {
             try {
+                scheduledTasks.remove(key);
                 GameRoundEndService endService = applicationContext.getBean(GameRoundEndService.class);
                 endService.endRound(lobbyCode, roundNo);
             } catch (Exception e) {
                 log.error("자동 라운드 종료 처리 중 예외 발생 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
             }
         }, Instant.now().plusMillis(delayMillis));
+
+        scheduledTasks.put(key, future);
+    }
+
+    /**
+     * 특정 라운드의 종료 타이머가 예약되어 있는지 확인합니다.
+     */
+    public boolean isRoundEndScheduled(String lobbyCode, int roundNo) {
+        String key = lobbyCode + ":" + roundNo;
+        ScheduledFuture<?> future = scheduledTasks.get(key);
+        return future != null && !future.isDone() && !future.isCancelled();
+    }
+
+    /**
+     * 유실된 라운드 종료 타이머를 특정 지연 시간으로 다시 등록합니다.
+     */
+    public void rescheduleRoundEnd(String lobbyCode, int roundNo, long remainingDelayMillis) {
+        log.info("유실된 라운드 종료 자동 태스크 복구 및 재등록 - code: {}, roundNo: {}, delay: {}ms", lobbyCode, roundNo, remainingDelayMillis);
+        String key = lobbyCode + ":" + roundNo;
+        ScheduledFuture<?> future = taskScheduler.schedule(() -> {
+            try {
+                scheduledTasks.remove(key);
+                GameRoundEndService endService = applicationContext.getBean(GameRoundEndService.class);
+                endService.endRound(lobbyCode, roundNo);
+            } catch (Exception e) {
+                log.error("자동 라운드 종료 처리 중 예외 발생 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
+            }
+        }, Instant.now().plusMillis(remainingDelayMillis));
+
+        scheduledTasks.put(key, future);
     }
 
     /**

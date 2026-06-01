@@ -6,6 +6,8 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundMetadataDto;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
+import io.github.ascrew.monomatbe.domain.game.dto.GameChatMessageDto;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionStatus;
@@ -20,6 +22,8 @@ import io.github.ascrew.monomatbe.domain.lobby.service.LobbyRealtimeNotifier;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -28,6 +32,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
@@ -51,6 +56,15 @@ class GameRoundProgressIntegrationTest {
 
     @Autowired
     private GameRoundEndService gameRoundEndService;
+
+    @Autowired
+    private GameRoundProgressService gameRoundProgressService;
+
+    @Autowired
+    private GameAnswerService gameAnswerService;
+
+    @Autowired
+    private GameLeaveEventHandler gameLeaveEventHandler;
 
     @Autowired
     private StringRedisTemplate redisTemplate;
@@ -81,6 +95,15 @@ class GameRoundProgressIntegrationTest {
 
     @MockitoBean
     private LobbyRealtimeNotifier lobbyRealtimeNotifier;
+
+    @MockitoBean
+    private SimpMessagingTemplate messagingTemplate;
+
+    @MockitoBean
+    private LobbyRepository lobbyRepository;
+
+    @MockitoBean
+    private GameRoundStartService gameRoundStartService;
 
     private GameLobby lobby;
     private GameSession gameSession;
@@ -145,6 +168,9 @@ class GameRoundProgressIntegrationTest {
         nicknames.put(USER_ID_2, "유저2");
         nicknames.put(USER_ID_3, "유저3");
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(nicknames);
+        when(nicknameResolver.fallbackNickname(USER_ID_1)).thenReturn("유저1");
+        when(nicknameResolver.fallbackNickname(USER_ID_2)).thenReturn("유저2");
+        when(nicknameResolver.fallbackNickname(USER_ID_3)).thenReturn("유저3");
 
         // MapItem mock
         MapItem mapItem = mock(MapItem.class);
@@ -156,6 +182,9 @@ class GameRoundProgressIntegrationTest {
 
         String roundsKey = RedisKeys.gameSessionRoundsKey(LOBBY_CODE);
         redisTemplate.opsForList().rightPushAll(roundsKey, "1001", "1002", "1003");
+
+        when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(true);
+        when(lobbyRepository.isParticipant(eq(LOBBY_CODE), anyString())).thenReturn(true);
     }
 
     @AfterEach
@@ -235,5 +264,91 @@ class GameRoundProgressIntegrationTest {
         assertThat(redisTemplate.opsForHash().get(RedisKeys.lobbyKey(LOBBY_CODE), "status")).isEqualTo("FINISHED");
 
         verify(lobbyRealtimeNotifier, times(1)).notifyLobbyInfoRefresh(eq(LOBBY_CODE), eq("SYSTEM"));
+    }
+
+    @Test
+    @DisplayName("다음 라운드 시작(startNextRound) 시 세션 상태가 READY가 되고 ROUND_READY 이벤트가 브로드캐스트된다")
+    void startNextRoundTransitionsToReadyAndBroadcasts() {
+        // given
+        // 2라운드 시작 시도
+        
+        // when
+        gameRoundProgressService.startNextRound(LOBBY_CODE, 2);
+
+        // then
+        assertThat(gameSession.getCurrentRoundNo()).isEqualTo(2);
+
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+        assertThat(redisTemplate.opsForHash().get(sessionKey, "current_round_no")).isEqualTo("2");
+        assertThat(redisTemplate.opsForHash().get(sessionKey, "status")).isEqualTo("READY");
+
+        ArgumentCaptor<RoundStartDto> captor = ArgumentCaptor.forClass(RoundStartDto.class);
+        verify(gameRealtimeNotifier, times(1)).notifyRoundStart(eq(LOBBY_CODE), captor.capture());
+        
+        RoundStartDto captured = captor.getValue();
+        assertThat(captured.type()).isEqualTo("ROUND_READY");
+        assertThat(captured.roundNo()).isEqualTo(2);
+        assertThat(captured.timeLimitSeconds()).isEqualTo(30);
+
+        verify(gameRoundStartService, times(1)).scheduleForcePlaybackStart(eq(LOBBY_CODE), eq(2), eq(30));
+    }
+
+    @Test
+    @DisplayName("플레이어 이탈 시 남은 플레이어들이 모두 정답 상태이면 라운드가 조기 종료된다")
+    void playerLeaveTriggersEarlyRoundEndIfAllRemainingCorrect() {
+        // given
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+        redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "current_round_no", "1");
+
+        String participantsKey = RedisKeys.lobbyParticipantsKey(LOBBY_CODE);
+        redisTemplate.opsForSet().add(participantsKey, USER_ID_1, USER_ID_2, USER_ID_3);
+
+        String correctPlayersKey = RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1);
+        redisTemplate.opsForSet().add(correctPlayersKey, USER_ID_1, USER_ID_2);
+
+        PlayerLeaveEvent leaveEvent = new PlayerLeaveEvent(LOBBY_CODE, USER_ID_3);
+
+        // when
+        gameLeaveEventHandler.handlePlayerLeave(leaveEvent);
+
+        // then
+        String endedLockKey = RedisKeys.gameSessionRoundEndedLockKey(LOBBY_CODE, 1);
+        assertThat(redisTemplate.hasKey(endedLockKey)).isTrue();
+        
+        verify(gameRealtimeNotifier, times(1)).notifyRoundEnd(eq(LOBBY_CODE), any(RoundMetadataDto.class));
+    }
+
+    @Test
+    @DisplayName("라운드가 이미 종료되어 round_ended_at 필드가 존재하면 정답을 제출해도 ROUND_ALREADY_ENDED 처리되어 정답자로 등록되지 않고 마스킹 채팅으로 전파된다")
+    void answerSubmissionBlockedIfRoundAlreadyEnded() {
+        // given
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+        redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "current_round_no", "1");
+        redisTemplate.opsForHash().put(sessionKey, "time_limit_seconds", "30");
+        
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.gameSessionRoundPlaybackStartedAtField(1), String.valueOf(System.currentTimeMillis() - 5000));
+
+        String roundDataKey = RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 1);
+        redisTemplate.opsForHash().put(roundDataKey, "normalized_answers", "[\"testanswer\"]");
+
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.gameSessionRoundEndedAtField(1), String.valueOf(System.currentTimeMillis() - 1000));
+
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "test answer");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID_1, messageDto);
+
+        // then
+        String correctPlayersKey = RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1);
+        assertThat(redisTemplate.opsForSet().isMember(correctPlayersKey, USER_ID_1)).isFalse();
+
+        ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        verify(messagingTemplate, times(1)).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        
+        ChatMessageDto capturedChat = chatCaptor.getValue();
+        assertThat(capturedChat.getContent()).isEqualTo("***");
+        assertThat(capturedChat.getSender()).isEqualTo("유저1");
     }
 }

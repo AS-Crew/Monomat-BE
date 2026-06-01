@@ -27,6 +27,10 @@ import java.util.List;
  * 모든 게임 세션 키는 생성 시 2시간 TTL을 가지므로 정리 실패는 치명적이지 않다.
  * 정리 실패 시 [MONITORING_REQUIRED] 로그와 실패 metric만 남기고 예외를 전파하지 않으며,
  * 2시간 TTL을 최종 안전망으로 삼는다. (별도 재처리 스케줄러를 두지 않는다)
+ *
+ * [집계 정책]
+ * 스크립트 반환값(처리한 키 수)을 파싱해 성공(>=1) / no-op(0) / 실패(null·파싱불가)를
+ * 구분 집계한다. no-op은 정상 종료(EXPIRE) 경로에서는 이상 신호이므로 별도 metric/로그로 분리한다.
  */
 @Slf4j
 @Service
@@ -81,13 +85,61 @@ public class GameSessionCleanupService {
                     ttlSeconds
             );
 
-            incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS);
-            log.info("게임 세션 Redis 키 정리 완료 - code: {}, mode: {}, processedKeys: {}",
-                    lobbyCode, mode, processed);
+            recordOutcome(lobbyCode, mode, processed);
         } catch (Exception e) {
             incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_FAILED);
             log.error("[MONITORING_REQUIRED] 게임 세션 Redis 키 정리 실패 - 2시간 TTL 자동 만료에 의존. "
                     + "code: {}, mode: {}", lobbyCode, mode, e);
+        }
+    }
+
+    /**
+     * 스크립트 반환값(처리한 키 수)을 파싱해 성공 / no-op / 실패를 구분 집계한다.
+     *
+     * <ul>
+     *   <li>{@code processed >= 1} : 성공 — SUCCESS metric + info 로그</li>
+     *   <li>{@code processed == 0} : 정리 대상 없음(no-op) — NOOP metric.
+     *       EXPIRE(정상 종료)에서는 세션이 이미 사라진 이상 신호이므로 warn, DELETE는 info.</li>
+     *   <li>{@code null}·파싱 불가 : 실패로 간주 — FAILED metric + [MONITORING_REQUIRED] 로그</li>
+     * </ul>
+     */
+    private void recordOutcome(String lobbyCode, String mode, String processed) {
+        Long count = parseProcessed(processed);
+        if (count == null) {
+            incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_FAILED);
+            log.error("[MONITORING_REQUIRED] 게임 세션 Redis 키 정리 반환값 파싱 불가 - 실패로 간주. "
+                    + "code: {}, mode: {}, processed: {}", lobbyCode, mode, processed);
+            return;
+        }
+
+        if (count >= 1) {
+            incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS);
+            log.info("게임 세션 Redis 키 정리 완료 - code: {}, mode: {}, processedKeys: {}",
+                    lobbyCode, mode, count);
+            return;
+        }
+
+        // count == 0 → 정리 대상 키 없음(no-op)
+        incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_NOOP);
+        if (MODE_EXPIRE.equals(mode)) {
+            log.warn("게임 세션 정리 대상 키 없음(no-op) - 정상 종료 경로에서 이상 신호. code: {}", lobbyCode);
+        } else {
+            log.info("게임 세션 정리 대상 키 없음(no-op) - code: {}, mode: {}", lobbyCode, mode);
+        }
+    }
+
+    /**
+     * 스크립트가 반환한 처리 키 수 문자열을 long으로 파싱한다.
+     * null이거나 숫자로 파싱할 수 없으면 null을 반환해 호출부가 실패로 처리하게 한다.
+     */
+    private Long parseProcessed(String processed) {
+        if (processed == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(processed.trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 

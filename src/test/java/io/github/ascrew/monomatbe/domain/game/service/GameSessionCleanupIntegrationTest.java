@@ -6,9 +6,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -18,6 +20,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 게임 세션 Redis 키 정리(cleanup) 통합 테스트
@@ -46,12 +49,26 @@ class GameSessionCleanupIntegrationTest {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
+    @Autowired
+    @Qualifier("cleanupGameSessionScript")
+    private RedisScript<String> cleanupGameSessionScript;
+
     @MockitoBean
     private SimpMessagingTemplate messagingTemplate;
 
     @AfterEach
     void tearDown() {
         redisTemplate.delete(allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS));
+        redisTemplate.delete(List.of(
+                RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS,
+                RedisKeys.METRIC_GAME_SESSION_CLEANUP_FAILED,
+                RedisKeys.METRIC_GAME_SESSION_CLEANUP_NOOP));
+    }
+
+    /** metric 카운터 현재값을 읽는다. (미설정 시 0) */
+    private long metricCount(String metricKey) {
+        String value = redisTemplate.opsForValue().get(metricKey);
+        return value == null ? 0L : Long.parseLong(value);
     }
 
     @Test
@@ -62,11 +79,15 @@ class GameSessionCleanupIntegrationTest {
         List<String> keys = allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS);
         assertThat(keys).allMatch(redisTemplate::hasKey);
 
+        long successBefore = metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS);
+
         // when
         gameSessionCleanupService.deleteNow(LOBBY_CODE);
 
         // then
         assertThat(keys).noneMatch(redisTemplate::hasKey);
+        assertThat(metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS))
+                .isEqualTo(successBefore + 1);
     }
 
     @Test
@@ -76,6 +97,7 @@ class GameSessionCleanupIntegrationTest {
         givenFullGameSession(LOBBY_CODE, TOTAL_ROUNDS);
         List<String> keys = allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS);
         keys.forEach(key -> redisTemplate.expire(key, Duration.ofSeconds(7200)));
+        long successBefore = metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS);
 
         // when
         gameSessionCleanupService.expireWithGracePeriod(LOBBY_CODE);
@@ -89,17 +111,54 @@ class GameSessionCleanupIntegrationTest {
                     .isGreaterThan(0L)
                     .isLessThanOrEqualTo(300L);
         }
+        assertThat(metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS))
+                .isEqualTo(successBefore + 1);
     }
 
     @Test
-    @DisplayName("게임 세션이 없으면 정리는 예외 없이 안전하게 no-op이다")
+    @DisplayName("EXPIRE 모드에서 ttlSeconds < 1이면 즉시만료 없이 스크립트가 fail-fast한다")
+    void expireScript_failsFastOnInvalidTtl() {
+        // given - 생성 시점처럼 2시간 TTL을 부여해 둔다
+        givenFullGameSession(LOBBY_CODE, TOTAL_ROUNDS);
+        List<String> keys = allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS);
+        keys.forEach(key -> redisTemplate.expire(key, Duration.ofSeconds(7200)));
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+
+        // when & then - ttl="0"(즉시만료 위험)/""(nil)은 스크립트가 실패해야 한다
+        assertThatThrownBy(() -> redisTemplate.execute(
+                cleanupGameSessionScript, List.of(sessionKey), "EXPIRE", "0"))
+                .isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> redisTemplate.execute(
+                cleanupGameSessionScript, List.of(sessionKey), "EXPIRE", ""))
+                .isInstanceOf(Exception.class);
+
+        // 키가 즉시 만료되지 않고 원래 TTL(2시간)을 유지한다
+        for (String key : keys) {
+            Long ttl = redisTemplate.getExpire(key);
+            assertThat(ttl)
+                    .as("key=%s TTL", key)
+                    .isNotNull()
+                    .isGreaterThan(300L);
+        }
+    }
+
+    @Test
+    @DisplayName("게임 세션이 없으면 정리는 예외 없이 no-op metric으로 집계되고 success는 오르지 않는다")
     void cleanup_isSafeNoOpWhenSessionMissing() {
         // given - 키를 전혀 만들지 않음
+        long noopBefore = metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_NOOP);
+        long successBefore = metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS);
 
         // when & then
         assertThatCode(() -> gameSessionCleanupService.deleteNow(LOBBY_CODE)).doesNotThrowAnyException();
         assertThatCode(() -> gameSessionCleanupService.expireWithGracePeriod(LOBBY_CODE)).doesNotThrowAnyException();
         assertThat(allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS)).noneMatch(redisTemplate::hasKey);
+
+        // deleteNow + expireWithGracePeriod 두 번 모두 정리 대상이 없어 NOOP만 2회 증가한다
+        assertThat(metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_NOOP))
+                .isEqualTo(noopBefore + 2);
+        assertThat(metricCount(RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS))
+                .isEqualTo(successBefore);
     }
 
     @Test

@@ -420,6 +420,10 @@ public final class RedisKeys {
     public static final String METRIC_GAME_SESSION_CLEANUP_FAILED =
             "metric:game:session:cleanup:failed";
 
+    /** 게임 세션 Redis 키 정리 no-op(정리 대상 키 없음) 횟수 metric counter */
+    public static final String METRIC_GAME_SESSION_CLEANUP_NOOP =
+            "metric:game:session:cleanup:noop";
+
     /** 게임 시작 전 stale ready 데이터 정리 횟수 */
     public static final String METRIC_LOBBY_READY_STALE_CLEANUP =
             "metric:lobby:ready:stale-cleanup";

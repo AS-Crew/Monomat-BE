@@ -10,6 +10,8 @@
 -- [정리 모드]
 --   - DELETE : 모든 키 즉시 삭제 (로비 폭파 / 게임 시작 DB 롤백 보상)
 --   - EXPIRE : 존재하는 키만 짧은 TTL로 전환 (게임 정상 종료 후 grace period)
+--             ttlSeconds >= 1 필수. 위반 시(nil/0/음수) 즉시만료·스크립트 에러를
+--             막기 위해 error_reply로 fail-fast한다.
 --
 -- [라운드 수 판별]
 --   game:session:{code} 해시의 total_question_count 필드를 우선 사용하고,
@@ -30,6 +32,14 @@ local sessionKey = KEYS[1]
 
 local mode = ARGV[1]            -- "DELETE" | "EXPIRE"
 local ttlSeconds = tonumber(ARGV[2])
+
+-- EXPIRE 모드 TTL 방어: 잘못된 TTL로 인한 즉시만료/스크립트 에러를 fail-fast로 차단
+-- (DELETE는 ttlSeconds를 사용하지 않으므로 검증 대상에서 제외)
+if mode == 'EXPIRE' then
+    if ttlSeconds == nil or ttlSeconds < 1 then
+        return redis.error_reply('INVALID_TTL: EXPIRE requires ttlSeconds >= 1')
+    end
+end
 
 local roundsKey  = sessionKey .. ':rounds'
 local playersKey = sessionKey .. ':players'

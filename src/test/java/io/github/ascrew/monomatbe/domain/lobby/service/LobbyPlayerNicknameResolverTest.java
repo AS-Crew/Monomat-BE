@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.auth.service.UserNicknameLookupService;
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -63,12 +64,29 @@ class LobbyPlayerNicknameResolverTest {
     }
 
     @Test
-    @DisplayName("fallbackNickname은 식별자의 하이픈을 제거한 앞 6자리를 suffix로 사용한다")
-    void fallbackNickname_returnsPrefixWithIdentifierSuffix() {
+    @DisplayName("fallbackNickname은 식별자의 SHA-256 해시 앞 6자리를 suffix로 사용한다")
+    void fallbackNickname_usesHashedSuffix() {
         String userIdentifier = "11111111-2222-3333-4444-555555555555";
 
         String result = resolver.fallbackNickname(userIdentifier);
 
-        assertThat(result).isEqualTo("Unknown-111111");
+        String expectedSuffix = TokenHashUtils.sha256(userIdentifier).substring(0, 6);
+        assertThat(result).isEqualTo("Unknown-" + expectedSuffix);
+    }
+
+    @Test
+    @DisplayName("fallbackNickname은 식별자 원문 fragment를 노출하지 않고 비가역 해시 포맷을 사용한다")
+    void fallbackNickname_doesNotExposeRawIdentifier() {
+        String userIdentifier = "11111111-2222-3333-4444-555555555555";
+
+        String result = resolver.fallbackNickname(userIdentifier);
+
+        // 식별자 원문(하이픈 제거 앞자리 포함)을 그대로 포함하면 안 된다.
+        assertThat(result)
+                .doesNotContain("111111")
+                .matches("Unknown-[0-9a-f]{6}");
+
+        // 결정적: 같은 식별자는 항상 같은 fallback 값으로 표시된다.
+        assertThat(resolver.fallbackNickname(userIdentifier)).isEqualTo(result);
     }
 }

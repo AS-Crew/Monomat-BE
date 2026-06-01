@@ -753,7 +753,7 @@ GET /api/lobbies?keyword=애니&mapCategory=J-POP&sort=most_available&page=0&siz
 | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------- |
 | `code`                 | String  | 로비 초대 코드                                                                                                |
 | `hostId`               | String  | 방장 사용자 식별자                                                                                              |
-| `hostNickname`         | String  | 방장 닉네임. 정식 회원·게스트 모두 내려옵니다. 세션 만료 등으로 닉네임을 찾지 못하면 `Unknown-xxxxxx` 형태의 fallback 값을 내려줍니다.                  |
+| `hostNickname`         | String  | 방장 닉네임. 정식 회원·게스트 모두 내려옵니다. 세션 만료 등으로 닉네임을 찾지 못하면 `Unknown-xxxxxx` 형태의 fallback 값을 내려줍니다. 이때 `xxxxxx`는 식별자의 SHA-256 해시 앞 6자리(비가역)이며 세션/토큰 원문을 포함하지 않습니다. |
 | `title`                | String  | 로비 제목                                                                                                   |
 | `mapId`                | Long    | 선택된 맵 ID. 미선택 시 `null`                                                                                  |
 | `mapTitle`             | String  | 선택된 맵 제목. 미선택 시 `null`                                                                                  |

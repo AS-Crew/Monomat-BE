@@ -13,7 +13,9 @@ public record RoundMetadataDto(
         String artist,
         String answer,
         String thumbnailUrl,
-        List<PlayerRankingDto> rankings
+        List<PlayerRankingDto> rankings,
+        int waitTimeSeconds,
+        boolean isLastRound
 ) {
 }
 

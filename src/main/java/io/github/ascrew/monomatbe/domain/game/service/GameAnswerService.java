@@ -66,10 +66,11 @@ public class GameAnswerService {
 
         String sessionKey = RedisKeys.gameSessionKey(code);
         List<Object> fields = List.of(
-                "status",
-                "current_round_no",
-                "time_limit_seconds",
-                RedisKeys.gameSessionRoundPlaybackStartedAtField(messageDto.roundNo())
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_CURRENT_ROUND_NO,
+                RedisKeys.FIELD_TIME_LIMIT_SECONDS,
+                RedisKeys.gameSessionRoundPlaybackStartedAtField(messageDto.roundNo()),
+                RedisKeys.FIELD_ROUND_PHASE
         );
         List<Object> values = redisTemplate.opsForHash().multiGet(sessionKey, fields);
         if (values == null || values.get(0) == null) {
@@ -78,8 +79,9 @@ public class GameAnswerService {
         }
 
         String status = (String) values.get(0);
-        if (!"PLAYING".equals(status)) {
-            log.warn("processGameChat: 게임 진행 중이 아님 (status: {}) - code: {}", status, code);
+        String roundPhase = (String) values.get(4);
+        if (!"PLAYING".equals(status) || !"PLAYING".equals(roundPhase)) {
+            log.warn("processGameChat: 게임 진행 중이 아님 (status: {}, phase: {}) - code: {}", status, roundPhase, code);
             return;
         }
 

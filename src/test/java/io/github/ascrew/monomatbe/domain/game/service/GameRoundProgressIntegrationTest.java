@@ -195,6 +195,7 @@ class GameRoundProgressIntegrationTest {
         redisTemplate.delete(RedisKeys.gameSessionRoundCorrectTimesKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundEndedLockKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundEndedLockKey(LOBBY_CODE, 3));
+        redisTemplate.delete(RedisKeys.gameSessionNextRoundLockKey(LOBBY_CODE, 2));
         redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 3));
         redisTemplate.delete(RedisKeys.gameSessionKey(LOBBY_CODE));
@@ -267,7 +268,7 @@ class GameRoundProgressIntegrationTest {
     }
 
     @Test
-    @DisplayName("다음 라운드 시작(startNextRound) 시 세션 상태가 READY가 되고 ROUND_READY 이벤트가 브로드캐스트된다")
+    @DisplayName("다음 라운드 시작(startNextRound) 시 세션 상태가 PLAYING이 되고 라운드 페이즈가 READY가 되며 ROUND_READY 이벤트가 브로드캐스트된다")
     void startNextRoundTransitionsToReadyAndBroadcasts() {
         // given
         // 2라운드 시작 시도
@@ -279,8 +280,9 @@ class GameRoundProgressIntegrationTest {
         assertThat(gameSession.getCurrentRoundNo()).isEqualTo(2);
 
         String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
-        assertThat(redisTemplate.opsForHash().get(sessionKey, "current_round_no")).isEqualTo("2");
-        assertThat(redisTemplate.opsForHash().get(sessionKey, "status")).isEqualTo("READY");
+        assertThat(redisTemplate.opsForHash().get(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO)).isEqualTo("2");
+        assertThat(redisTemplate.opsForHash().get(sessionKey, RedisKeys.FIELD_STATUS)).isEqualTo("PLAYING");
+        assertThat(redisTemplate.opsForHash().get(sessionKey, RedisKeys.FIELD_ROUND_PHASE)).isEqualTo("READY");
 
         ArgumentCaptor<RoundStartDto> captor = ArgumentCaptor.forClass(RoundStartDto.class);
         verify(gameRealtimeNotifier, times(1)).notifyRoundStart(eq(LOBBY_CODE), captor.capture());
@@ -299,6 +301,7 @@ class GameRoundProgressIntegrationTest {
         // given
         String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
         redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "round_phase", "PLAYING");
         redisTemplate.opsForHash().put(sessionKey, "current_round_no", "1");
 
         String participantsKey = RedisKeys.lobbyParticipantsKey(LOBBY_CODE);
@@ -324,9 +327,10 @@ class GameRoundProgressIntegrationTest {
     void answerSubmissionBlockedIfRoundAlreadyEnded() {
         // given
         String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
-        redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
-        redisTemplate.opsForHash().put(sessionKey, "current_round_no", "1");
-        redisTemplate.opsForHash().put(sessionKey, "time_limit_seconds", "30");
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_STATUS, "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_ROUND_PHASE, "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO, "1");
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_TIME_LIMIT_SECONDS, "30");
         
         redisTemplate.opsForHash().put(sessionKey, RedisKeys.gameSessionRoundPlaybackStartedAtField(1), String.valueOf(System.currentTimeMillis() - 5000));
 

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 @Slf4j
@@ -29,14 +30,16 @@ public class GameLeaveEventHandler {
             return;
         }
 
-        // 1. 게임 세션 존재 여부 및 status 검증
+        // 1. 게임 세션 존재 여부 및 status/round_phase 검증
         String sessionKey = RedisKeys.gameSessionKey(code);
-        String status = (String) redisTemplate.opsForHash().get(sessionKey, "status");
-        if (status == null || !"PLAYING".equals(status)) {
+        List<Object> hashValues = redisTemplate.opsForHash().multiGet(sessionKey, List.of(RedisKeys.FIELD_STATUS, RedisKeys.FIELD_ROUND_PHASE, RedisKeys.FIELD_CURRENT_ROUND_NO));
+        String status = (String) hashValues.get(0);
+        String roundPhase = (String) hashValues.get(1);
+        if (status == null || !"PLAYING".equals(status) || !"PLAYING".equals(roundPhase)) {
             return;
         }
 
-        String currentRoundNoStr = (String) redisTemplate.opsForHash().get(sessionKey, "current_round_no");
+        String currentRoundNoStr = (String) hashValues.get(2);
         if (currentRoundNoStr == null) {
             return;
         }

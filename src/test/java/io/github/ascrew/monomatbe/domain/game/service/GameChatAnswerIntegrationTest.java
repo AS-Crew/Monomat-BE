@@ -87,9 +87,10 @@ class GameChatAnswerIntegrationTest {
 
     private void givenGameSession(String status, int currentRoundNo, int timeLimit, Long playbackStartedAt) {
         String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
-        redisTemplate.opsForHash().put(sessionKey, "status", status);
-        redisTemplate.opsForHash().put(sessionKey, "current_round_no", String.valueOf(currentRoundNo));
-        redisTemplate.opsForHash().put(sessionKey, "time_limit_seconds", String.valueOf(timeLimit));
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_STATUS, "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_ROUND_PHASE, status);
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO, String.valueOf(currentRoundNo));
+        redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_TIME_LIMIT_SECONDS, String.valueOf(timeLimit));
         if (playbackStartedAt != null) {
             redisTemplate.opsForHash().put(sessionKey, RedisKeys.gameSessionRoundPlaybackStartedAtField(currentRoundNo), String.valueOf(playbackStartedAt));
         }

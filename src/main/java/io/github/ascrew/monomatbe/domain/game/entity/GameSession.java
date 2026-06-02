@@ -63,7 +63,10 @@ public class GameSession {
         this.endedAt = java.time.LocalDateTime.now();
     }
 
-    public void nextRound() {
-        this.currentRoundNo++;
+    public void moveToRound(int targetRoundNo) {
+        if (targetRoundNo <= this.currentRoundNo) {
+            throw new IllegalStateException("이미 진행된 라운드입니다. current: " + this.currentRoundNo + ", target: " + targetRoundNo);
+        }
+        this.currentRoundNo = targetRoundNo;
     }
 }

@@ -676,6 +676,12 @@ public final class RedisKeys {
 
     private static final String GAME_SESSION_PREFIX = "game:session:";
 
+    /** 게임 세션 Hash의 현재 라운드 번호 필드 */
+    public static final String FIELD_CURRENT_ROUND_NO = "current_round_no";
+
+    /** 게임 세션 Hash의 라운드 진행 단계 필드 (READY, PLAYING, ENDED, FINISHED) */
+    public static final String FIELD_ROUND_PHASE = "round_phase";
+
     /**
      * 게임 세션 메타데이터 키를 반환합니다.
      *
@@ -790,5 +796,16 @@ public final class RedisKeys {
      */
     public static String gameSessionRoundEndedLockKey(String lobbyCode, int roundNo) {
         return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":ended_lock";
+    }
+
+    /**
+     * 특정 라운드 시작 중복 방지 락 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:next_lock"
+     */
+    public static String gameSessionNextRoundLockKey(String lobbyCode, int roundNo) {
+        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":next_lock";
     }
 }

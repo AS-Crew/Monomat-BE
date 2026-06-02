@@ -61,7 +61,8 @@ class GameSessionCleanupIntegrationTest {
         redisTemplate.delete(allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS));
         redisTemplate.delete(List.of(
                 RedisKeys.METRIC_GAME_SESSION_CLEANUP_SUCCESS,
-                RedisKeys.METRIC_GAME_SESSION_CLEANUP_FAILED,
+                RedisKeys.METRIC_GAME_SESSION_CLEANUP_DELETE_FAILED,
+                RedisKeys.METRIC_GAME_SESSION_CLEANUP_EXPIRE_FAILED,
                 RedisKeys.METRIC_GAME_SESSION_CLEANUP_NOOP));
     }
 

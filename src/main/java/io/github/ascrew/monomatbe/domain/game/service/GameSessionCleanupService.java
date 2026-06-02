@@ -87,10 +87,20 @@ public class GameSessionCleanupService {
 
             recordOutcome(lobbyCode, mode, processed);
         } catch (Exception e) {
-            incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_FAILED);
+            incrementMetricQuietly(failedMetricFor(mode));
             log.error("[MONITORING_REQUIRED] 게임 세션 Redis 키 정리 실패 - 2시간 TTL 자동 만료에 의존. "
                     + "code: {}, mode: {}", lobbyCode, mode, e);
         }
+    }
+
+    /**
+     * 정리 모드에 따라 실패 metric 키를 선택한다.
+     * DELETE 실패(orphan 잔존)와 EXPIRE 실패(grace period 누락)는 영향도가 달라 분리 집계한다.
+     */
+    private String failedMetricFor(String mode) {
+        return MODE_DELETE.equals(mode)
+                ? RedisKeys.METRIC_GAME_SESSION_CLEANUP_DELETE_FAILED
+                : RedisKeys.METRIC_GAME_SESSION_CLEANUP_EXPIRE_FAILED;
     }
 
     /**
@@ -106,7 +116,7 @@ public class GameSessionCleanupService {
     private void recordOutcome(String lobbyCode, String mode, String processed) {
         Long count = parseProcessed(processed);
         if (count == null) {
-            incrementMetricQuietly(RedisKeys.METRIC_GAME_SESSION_CLEANUP_FAILED);
+            incrementMetricQuietly(failedMetricFor(mode));
             log.error("[MONITORING_REQUIRED] 게임 세션 Redis 키 정리 반환값 파싱 불가 - 실패로 간주. "
                     + "code: {}, mode: {}, processed: {}", lobbyCode, mode, processed);
             return;

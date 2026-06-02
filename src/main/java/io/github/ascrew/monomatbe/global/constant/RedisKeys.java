@@ -416,13 +416,49 @@ public final class RedisKeys {
     public static final String METRIC_GAME_SESSION_CLEANUP_SUCCESS =
             "metric:game:session:cleanup:success";
 
-    /** 게임 세션 Redis 키 정리 실패 횟수 metric counter (2시간 TTL이 최종 안전망) */
-    public static final String METRIC_GAME_SESSION_CLEANUP_FAILED =
-            "metric:game:session:cleanup:failed";
+    /**
+     * 게임 세션 Redis 키 즉시 삭제(DELETE) 실패 횟수 metric counter.
+     * DELETE 실패는 orphan 키 잔존(로비 폭파/롤백 보상 누락)을 의미해 EXPIRE 실패와 영향도가 다르다.
+     * (2시간 TTL이 최종 안전망)
+     */
+    public static final String METRIC_GAME_SESSION_CLEANUP_DELETE_FAILED =
+            "metric:game:session:cleanup:delete-failed";
+
+    /**
+     * 게임 세션 Redis 키 TTL 전환(EXPIRE) 실패 횟수 metric counter.
+     * EXPIRE 실패는 정상 종료 후 grace period 전환 누락을 의미한다. (2시간 TTL이 최종 안전망)
+     */
+    public static final String METRIC_GAME_SESSION_CLEANUP_EXPIRE_FAILED =
+            "metric:game:session:cleanup:expire-failed";
 
     /** 게임 세션 Redis 키 정리 no-op(정리 대상 키 없음) 횟수 metric counter */
     public static final String METRIC_GAME_SESSION_CLEANUP_NOOP =
             "metric:game:session:cleanup:noop";
+
+    /**
+     * 다음 라운드 진행 정지 복구 재처리 큐.
+     *
+     * 다음 라운드 시작은 인메모리 TaskScheduler에 의존하므로 인스턴스 재시작/afterCommit 중단 시
+     * 영구 정지될 수 있다. scheduleNextRound 시 durable 복구 요청을 적재해 두고, 복구 워커가
+     * 실제 라운드 진행 여부를 확인해 미진행분만 재트리거한다.
+     *
+     * - Type  : List
+     * - Value : "lobbyCode|expectedRoundNo|attempt|nextRetryAtEpochMillis"
+     */
+    public static final String GAME_ROUND_RECOVERY_QUEUE =
+            "game:round:recovery";
+
+    /** 다음 라운드 진행 복구 큐 적재 횟수 metric counter */
+    public static final String METRIC_GAME_ROUND_RECOVERY_ENQUEUED =
+            "metric:game:round:recovery:enqueued";
+
+    /** 다음 라운드 진행 복구 성공(재트리거 또는 이미 진행 확인) 횟수 metric counter */
+    public static final String METRIC_GAME_ROUND_RECOVERY_SUCCESS =
+            "metric:game:round:recovery:success";
+
+    /** 다음 라운드 진행 복구 실패 횟수 metric counter */
+    public static final String METRIC_GAME_ROUND_RECOVERY_FAILED =
+            "metric:game:round:recovery:failed";
 
     /** 게임 시작 전 stale ready 데이터 정리 횟수 */
     public static final String METRIC_LOBBY_READY_STALE_CLEANUP =

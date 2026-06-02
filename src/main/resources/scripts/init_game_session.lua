@@ -30,7 +30,8 @@ redis.call('DEL', sessionKey, roundsKey, playersKey)
 redis.call('HSET', sessionKey,
     'current_round_no', '1',
     'total_question_count', totalRounds,
-    'status', 'READY',
+    'status', 'PLAYING',
+    'round_phase', 'READY',
     'time_limit_seconds', timeLimitSeconds,
     'round_started_at', roundStartedAt
 )

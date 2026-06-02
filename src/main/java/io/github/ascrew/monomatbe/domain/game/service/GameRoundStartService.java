@@ -25,19 +25,19 @@ public class GameRoundStartService {
     private final SimpMessagingTemplate messagingTemplate;
     private final RedisScript<String> readyToPlayScript;
     private final TaskScheduler taskScheduler;
-    private final ApplicationContext applicationContext;
+    private final GameRoundProgressService gameRoundProgressService;
 
     public GameRoundStartService(
             StringRedisTemplate redisTemplate,
             SimpMessagingTemplate messagingTemplate,
             @Qualifier("readyToPlayScript") RedisScript<String> readyToPlayScript,
             TaskScheduler taskScheduler,
-            ApplicationContext applicationContext) {
+            @org.springframework.context.annotation.Lazy GameRoundProgressService gameRoundProgressService) {
         this.redisTemplate = redisTemplate;
         this.messagingTemplate = messagingTemplate;
         this.readyToPlayScript = readyToPlayScript;
         this.taskScheduler = taskScheduler;
-        this.applicationContext = applicationContext;
+        this.gameRoundProgressService = gameRoundProgressService;
     }
 
     public void scheduleForcePlaybackStart(String lobbyCode, int roundNo, int timeLimitSeconds) {
@@ -62,7 +62,7 @@ public class GameRoundStartService {
         log.info("라운드 재생 준비 처리 - code: {}, user: {}, roundNo: {}, result: {}", lobbyCode, userIdentifier, roundNo, result);
 
         if ("ALL_READY".equals(result)) {
-            String timeLimitStr = (String) redisTemplate.opsForHash().get(sessionKey, "time_limit_seconds");
+            String timeLimitStr = (String) redisTemplate.opsForHash().get(sessionKey, RedisKeys.FIELD_TIME_LIMIT_SECONDS);
             int timeLimitSeconds = timeLimitStr != null ? Integer.parseInt(timeLimitStr) : 30;
             broadcastPlaybackStarted(lobbyCode, roundNo, timeLimitSeconds);
         }
@@ -95,7 +95,8 @@ public class GameRoundStartService {
         Boolean isSaved = redisTemplate.opsForHash().putIfAbsent(sessionKey, playbackStartedKey, String.valueOf(serverStartedAt));
 
         if (Boolean.TRUE.equals(isSaved)) {
-            redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_STATUS, "PLAYING");
+            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_ROUND_PHASE, "PLAYING");
 
             RoundPlaybackStartedDto dto = RoundPlaybackStartedDto.builder()
                     .type(GameEventTypes.ROUND_PLAYBACK_STARTED)
@@ -108,8 +109,7 @@ public class GameRoundStartService {
 
             // 라운드 종료 스케줄링 호출
             try {
-                GameRoundProgressService progressService = applicationContext.getBean(GameRoundProgressService.class);
-                progressService.scheduleRoundEnd(lobbyCode, roundNo, durationSeconds);
+                gameRoundProgressService.scheduleRoundEnd(lobbyCode, roundNo, durationSeconds);
             } catch (Exception e) {
                 log.error("라운드 종료 자동 스케줄링 예약 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
             }

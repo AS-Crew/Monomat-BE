@@ -724,6 +724,39 @@ public final class RedisKeys {
 
     private static final String GAME_SESSION_PREFIX = "game:session:";
 
+    // --- 게임 세션 진행 상태 마커 (game:session:{code} Hash 내부 필드명) ---
+    // 비정상 종료 복구 진단/판별을 위해 진행 단계를 durable하게 기록한다.
+
+    /** 다음 라운드 시작 예정 시각(epoch millis). 정지 라운드 복구 판별/진단에 사용한다. */
+    public static final String FIELD_NEXT_ROUND_START_AT = "next_round_start_at";
+
+    /** 직전 라운드 종료 브로드캐스트 완료 라운드 번호. */
+    public static final String FIELD_ROUND_END_BROADCASTED = "round_end_broadcasted";
+
+    /** Redis 점수 반영(score sync) 완료 라운드 번호. */
+    public static final String FIELD_SCORE_SYNCED = "score_synced";
+
+    /** 게임 세션 현재 라운드 번호 필드. */
+    public static final String FIELD_CURRENT_ROUND_NO = "current_round_no";
+
+    /**
+     * 게임 세션 키의 base 부분을 반환합니다. ({lobbyCode} hash-tag 적용)
+     *
+     * [Redis Cluster 대비 hash-tag]
+     * cleanup_game_session.lua 등은 하나의 게임 세션에 속한 다수의 키를 단일 Lua로 다룬다.
+     * Redis Cluster는 키 문자열 전체를 해싱하므로 hash-tag가 없으면 같은 게임 세션의 키들이
+     * 서로 다른 슬롯에 분산되어 CROSSSLOT 오류가 발생한다. lobbyCode를 중괄호로 감싸 해시 슬롯
+     * 결정 대상을 lobbyCode로 한정함으로써, game:session 패밀리의 모든 키가 동일 슬롯에 모이게 한다.
+     *
+     * [한계]
+     * ready_to_play.lua는 game:session 키와 lobby:{code}:participants 키를 함께 사용한다.
+     * 완전한 클러스터 안전을 위해선 lobby 패밀리에도 동일한 {code} hash-tag가 필요하며,
+     * 이는 blast radius가 커 별도 후속 작업으로 분리한다. (현 단계는 game:session 패밀리 한정)
+     */
+    private static String gameSessionBase(String lobbyCode) {
+        return GAME_SESSION_PREFIX + "{" + lobbyCode + "}";
+    }
+
     /**
      * 게임 세션 메타데이터 키를 반환합니다.
      *
@@ -731,7 +764,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}"
      */
     public static String gameSessionKey(String lobbyCode) {
-        return GAME_SESSION_PREFIX + lobbyCode;
+        return gameSessionBase(lobbyCode);
     }
 
     /**
@@ -741,7 +774,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:rounds"
      */
     public static String gameSessionRoundsKey(String lobbyCode) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":rounds";
+        return gameSessionBase(lobbyCode) + ":rounds";
     }
 
     /**
@@ -751,7 +784,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:players"
      */
     public static String gameSessionPlayersKey(String lobbyCode) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":players";
+        return gameSessionBase(lobbyCode) + ":players";
     }
 
     /**
@@ -762,7 +795,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:ready"
      */
     public static String gameSessionRoundReadyKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":ready";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":ready";
     }
 
     /**
@@ -773,7 +806,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:playback_lock"
      */
     public static String gameSessionPlaybackLockKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":playback_lock";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":playback_lock";
     }
 
     /**
@@ -784,7 +817,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:data"
      */
     public static String gameSessionRoundDataKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":data";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":data";
     }
 
     /**
@@ -795,7 +828,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:correct_players"
      */
     public static String gameSessionRoundCorrectPlayersKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":correct_players";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":correct_players";
     }
 
     /**
@@ -816,7 +849,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:correct_times"
      */
     public static String gameSessionRoundCorrectTimesKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":correct_times";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":correct_times";
     }
 
     /**
@@ -827,6 +860,20 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:ended_lock"
      */
     public static String gameSessionRoundEndedLockKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":ended_lock";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":ended_lock";
+    }
+
+    /**
+     * 다음 라운드 시작 중복 방지 SETNX 락 키를 반환합니다.
+     *
+     * 인메모리 TaskScheduler 예약과 복구 워커가 동시에 startNextRound를 호출해도
+     * (GameSession.nextRound()가 비멱등이라 라운드를 건너뛰지 않도록) 한 번만 진행시키기 위한 락이다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 시작할 다음 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:next_round_lock"
+     */
+    public static String gameSessionRoundNextLockKey(String lobbyCode, int roundNo) {
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_round_lock";
     }
 }

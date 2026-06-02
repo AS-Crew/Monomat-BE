@@ -21,11 +21,11 @@
 --   운영 중 SCAN/KEYS 패턴 매칭은 비용·블로킹 위험이 있어 사용하지 않는다.
 --   대신 sessionKey 문자열로부터 모든 하위 키 이름을 결정적으로 조립한다.
 --
--- [전제: 단일(standalone) Redis]
---   라운드별 키는 KEYS로 선언하지 않고 sessionKey에서 조립해 직접 접근한다.
---   모든 키가 동일 prefix를 공유하지만 hash-tag가 없으므로 Redis Cluster에서는
---   슬롯이 분산될 수 있다. 본 프로젝트는 단일 Redis를 사용한다는 전제이며,
---   클러스터 도입 시 {code} hash-tag 적용이 필요하다.
+-- [Redis Cluster / hash-tag]
+--   라운드별 키는 KEYS로 선언하지 않고 sessionKey(KEYS[1])에서 조립해 직접 접근한다.
+--   sessionKey는 game:session:{code} 형태로 {code} hash-tag가 적용되어 있어(RedisKeys.gameSessionKey),
+--   여기서 조립되는 모든 하위 키도 동일 hash-tag를 상속한다 → 클러스터에서도 같은 슬롯에 모인다.
+--   (참고: lobby 패밀리 키 hash-tag는 별도 후속 작업이며 ready_to_play.lua의 cross-family 한계는 남아 있다)
 -- ============================================================================
 
 local sessionKey = KEYS[1]

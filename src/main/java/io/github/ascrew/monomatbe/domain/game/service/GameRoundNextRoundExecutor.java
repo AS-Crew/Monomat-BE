@@ -120,9 +120,17 @@ public class GameRoundNextRoundExecutor {
                 @Override
                 public void afterCommit() {
                     log.info("다음 라운드 시작 트랜잭션 커밋 완료 - ROUND_READY 브로드캐스트. code: {}, roundNo: {}", lobbyCode, nextRoundNo);
-                    gameRealtimeNotifier.notifyRoundStart(lobbyCode, nextRoundDto);
+                    try {
+                        gameRealtimeNotifier.notifyRoundStart(lobbyCode, nextRoundDto);
+                    } catch (Exception e) {
+                        log.error("ROUND_READY 브로드캐스트 실패 - code: {}, roundNo: {}", lobbyCode, nextRoundNo, e);
+                    }
 
-                    gameRoundStartService.scheduleForcePlaybackStart(lobbyCode, nextRoundNo, gameSession.getLobby().getTimeLimitSeconds());
+                    try {
+                        gameRoundStartService.scheduleForcePlaybackStart(lobbyCode, nextRoundNo, gameSession.getLobby().getTimeLimitSeconds());
+                    } catch (Exception e) {
+                        log.error("강제 재생 시작 스케줄 등록 실패 - code: {}, roundNo: {}", lobbyCode, nextRoundNo, e);
+                    }
                 }
 
                 @Override

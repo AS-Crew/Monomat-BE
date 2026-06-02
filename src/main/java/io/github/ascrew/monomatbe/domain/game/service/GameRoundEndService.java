@@ -240,13 +240,21 @@ public class GameRoundEndService {
                 public void afterCommit() {
                     log.info("라운드 종료 트랜잭션 커밋 완료 - Redis 점수 반영 및 브로드캐스트 전송. code: {}, roundNo: {}, isLast: {}", lobbyCode, roundNo, isLastRound);
                     
-                    scoreAddedMap.forEach((identifier, scoreAdded) -> {
-                        if (scoreAdded > 0) {
-                            redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
-                        }
-                    });
+                    try {
+                        scoreAddedMap.forEach((identifier, scoreAdded) -> {
+                            if (scoreAdded > 0) {
+                                redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
+                            }
+                        });
+                    } catch (Exception e) {
+                        log.error("Redis 점수 증액 반영 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
+                    }
 
-                    gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
+                    try {
+                        gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
+                    } catch (Exception e) {
+                        log.error("ROUND_END 브로드캐스트 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
+                    }
 
                     if (isLastRound) {
                         try {
@@ -255,7 +263,11 @@ public class GameRoundEndService {
                             log.error("게임 종료 후 로비 갱신 알림 실패 - code: {}", lobbyCode, e);
                         }
                     } else {
-                        gameRoundProgressService.scheduleNextRound(lobbyCode, roundNo + 1);
+                        try {
+                            gameRoundProgressService.scheduleNextRound(lobbyCode, roundNo + 1);
+                        } catch (Exception e) {
+                            log.error("다음 라운드 시작 스케줄 등록 실패 - code: {}, nextRoundNo: {}", lobbyCode, roundNo + 1, e);
+                        }
                     }
                 }
 

@@ -119,6 +119,7 @@ class UserCommandServiceTest {
                 .username("banned")
                 .userType(UserType.REGISTERED)
                 .status(UserStatus.BANNED)
+                .role(UserRole.USER)
                 .build();
 
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
@@ -142,6 +143,7 @@ class UserCommandServiceTest {
                 .username("deleted")
                 .userType(UserType.REGISTERED)
                 .status(UserStatus.DELETED)
+                .role(UserRole.USER)
                 .build();
 
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
@@ -233,6 +235,7 @@ class UserCommandServiceTest {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(userCredentialRepository.findByUser_Id(USER_ID)).thenReturn(Optional.of(credential));
         when(passwordEncoder.matches("oldPassword123", "encoded-old-password")).thenReturn(true);
+        when(passwordEncoder.matches("newPassword123", "encoded-old-password")).thenReturn(false);
         when(passwordEncoder.encode("newPassword123")).thenReturn("encoded-new-password");
 
         userCommandService.changeMyPassword(
@@ -274,7 +277,7 @@ class UserCommandServiceTest {
     }
 
     @Test
-    @DisplayName("현재 비밀번호가 일치하지 않으면 비밀번호를 변경할 수 없다")
+    @DisplayName("현재 비밀번호가 일치하지 않으면 실패 횟수를 증가시키고 비밀번호를 변경할 수 없다")
     void changeMyPassword_currentPasswordMismatch_unauthorized() {
         User user = registeredUser("member");
         UserCredential credential = userCredential(user, "encoded-old-password");
@@ -296,7 +299,66 @@ class UserCommandServiceTest {
         );
 
         assertEquals(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH, exception.getErrorCode());
+        assertEquals(4, credential.getFailedLoginCount());
         assertEquals("encoded-old-password", credential.getPasswordHash());
+        verify(passwordEncoder, never()).encode(any());
+        verify(userSessionLifecycleService, never()).revokeAllActiveSessions(any(), any());
+    }
+
+    @Test
+    @DisplayName("현재 비밀번호 불일치가 누적 5회가 되면 계정을 잠근다")
+    void changeMyPassword_currentPasswordMismatchFiveTimes_locksAccount() {
+        User user = registeredUser("member");
+        UserCredential credential = userCredential(user, "encoded-old-password");
+        credential.increaseFailedLoginCount();
+
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userCredentialRepository.findByUser_Id(USER_ID)).thenReturn(Optional.of(credential));
+        when(passwordEncoder.matches("wrongPassword123", "encoded-old-password")).thenReturn(false);
+
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> userCommandService.changeMyPassword(
+                        registeredPrincipal(),
+                        new ChangePasswordRequest(
+                                "wrongPassword123",
+                                "newPassword123",
+                                "newPassword123"
+                        )
+                )
+        );
+
+        assertEquals(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH, exception.getErrorCode());
+        assertEquals(5, credential.getFailedLoginCount());
+        assertNotNull(credential.getLockedUntil());
+        verify(passwordEncoder, never()).encode(any());
+        verify(userSessionLifecycleService, never()).revokeAllActiveSessions(any(), any());
+    }
+
+    @Test
+    @DisplayName("잠긴 계정은 비밀번호를 변경할 수 없다")
+    void changeMyPassword_lockedAccount_locked() {
+        User user = registeredUser("member");
+        UserCredential credential = userCredential(user, "encoded-old-password");
+        credential.lockUntil(LocalDateTime.now().plusMinutes(15));
+
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userCredentialRepository.findByUser_Id(USER_ID)).thenReturn(Optional.of(credential));
+
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> userCommandService.changeMyPassword(
+                        registeredPrincipal(),
+                        new ChangePasswordRequest(
+                                "oldPassword123",
+                                "newPassword123",
+                                "newPassword123"
+                        )
+                )
+        );
+
+        assertEquals(AuthErrorCode.AUTH_ACCOUNT_LOCKED, exception.getErrorCode());
+        verify(passwordEncoder, never()).matches(any(), any());
         verify(passwordEncoder, never()).encode(any());
         verify(userSessionLifecycleService, never()).revokeAllActiveSessions(any(), any());
     }
@@ -325,6 +387,34 @@ class UserCommandServiceTest {
 
         assertEquals(AuthErrorCode.AUTH_NEW_PASSWORD_CONFIRM_MISMATCH, exception.getErrorCode());
         assertEquals("encoded-old-password", credential.getPasswordHash());
+        verify(passwordEncoder, never()).encode(any());
+        verify(userSessionLifecycleService, never()).revokeAllActiveSessions(any(), any());
+    }
+
+    @Test
+    @DisplayName("새 비밀번호가 현재 비밀번호와 같으면 비밀번호를 변경할 수 없다")
+    void changeMyPassword_newPasswordSameAsCurrent_badRequest() {
+        User user = registeredUser("member");
+        UserCredential credential = userCredential(user, "encoded-current-password");
+
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userCredentialRepository.findByUser_Id(USER_ID)).thenReturn(Optional.of(credential));
+        when(passwordEncoder.matches("samePassword123", "encoded-current-password")).thenReturn(true);
+
+        AuthException exception = assertThrows(
+                AuthException.class,
+                () -> userCommandService.changeMyPassword(
+                        registeredPrincipal(),
+                        new ChangePasswordRequest(
+                                "samePassword123",
+                                "samePassword123",
+                                "samePassword123"
+                        )
+                )
+        );
+
+        assertEquals(AuthErrorCode.AUTH_NEW_PASSWORD_SAME_AS_CURRENT, exception.getErrorCode());
+        assertEquals("encoded-current-password", credential.getPasswordHash());
         verify(passwordEncoder, never()).encode(any());
         verify(userSessionLifecycleService, never()).revokeAllActiveSessions(any(), any());
     }
@@ -470,7 +560,7 @@ class UserCommandServiceTest {
                 .loginId("loginId1")
                 .passwordHash(passwordHash)
                 .failedLoginCount(3)
-                .lockedUntil(LocalDateTime.now().plusMinutes(10))
+                .lockedUntil(null)
                 .build();
     }
 }

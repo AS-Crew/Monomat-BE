@@ -92,6 +92,12 @@ public enum AuthErrorCode {
             AuthErrorFields.NEW_PASSWORD_CONFIRM
     ),
 
+    AUTH_NEW_PASSWORD_SAME_AS_CURRENT(
+            HttpStatus.BAD_REQUEST,
+            "새 비밀번호는 현재 비밀번호와 달라야 합니다.",
+            AuthErrorFields.NEW_PASSWORD
+    ),
+
     // =========================================================
     // Nickname
     // =========================================================
@@ -249,6 +255,7 @@ public enum AuthErrorCode {
         private static final String LOGIN_ID = "loginId";
         private static final String PASSWORD = "password";
         private static final String CURRENT_PASSWORD = "currentPassword";
+        private static final String NEW_PASSWORD = "newPassword";
         private static final String NEW_PASSWORD_CONFIRM = "newPasswordConfirm";
         private static final String NICKNAME = "nickname";
         private static final String REFRESH_TOKEN = "refreshToken";

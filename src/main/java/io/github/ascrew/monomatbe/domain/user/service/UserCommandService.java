@@ -63,6 +63,8 @@ public class UserCommandService {
             "사용자 인증 정보를 찾을 수 없습니다. 다시 로그인해주세요.";
 
     private static final int NICKNAME_MAX_LENGTH = 50;
+    private static final int MAX_PASSWORD_CHANGE_FAILURE_COUNT = 5;
+    private static final int PASSWORD_CHANGE_LOCK_MINUTES = 15;
 
     private final UserRepository userRepository;
     private final UserCredentialRepository userCredentialRepository;
@@ -114,8 +116,11 @@ public class UserCommandService {
      * [보안 정책]
      * - 현재 Access Token의 userId를 기준으로 사용자와 인증정보를 조회한다.
      * - 게스트 사용자는 비밀번호를 변경할 수 없다.
+     * - 잠긴 계정은 비밀번호를 변경할 수 없다.
      * - 현재 비밀번호가 일치해야만 새 비밀번호로 변경할 수 있다.
+     * - 현재 비밀번호 불일치 시 로그인 실패 정책과 동일하게 실패 횟수와 잠금을 적용한다.
      * - 새 비밀번호는 회원가입과 동일한 PasswordPolicyValidator 정책을 통과해야 한다.
+     * - 새 비밀번호는 현재 비밀번호와 동일할 수 없다.
      * - 비밀번호 변경 성공 후 모든 활성 세션을 만료한다.
      *
      * @param principal 인증 주체
@@ -141,12 +146,16 @@ public class UserCommandService {
                         ERROR_USER_CREDENTIAL_NOT_FOUND
                 ));
 
-        validateCurrentPassword(request.currentPassword(), credential);
+        LocalDateTime changedAt = LocalDateTime.now();
+
+        validateCredentialNotLocked(credential, changedAt);
+        validateCurrentPassword(request.currentPassword(), credential, changedAt);
         validateNewPasswordConfirm(request.newPassword(), request.newPasswordConfirm());
 
         String newPassword = passwordPolicyValidator.validateNewPassword(request.newPassword());
+        validateNewPasswordDifferentFromCurrent(newPassword, credential);
+
         String newPasswordHash = passwordEncoder.encode(newPassword);
-        LocalDateTime changedAt = LocalDateTime.now();
 
         credential.changePassword(newPasswordHash, changedAt);
         userSessionLifecycleService.revokeAllActiveSessions(user.getId(), changedAt);
@@ -219,13 +228,33 @@ public class UserCommandService {
         }
     }
 
-    private void validateCurrentPassword(String currentPassword, UserCredential credential) {
+    private void validateCredentialNotLocked(UserCredential credential, LocalDateTime now) {
+        if (credential.isLockedAt(now)) {
+            throw new AuthException(AuthErrorCode.AUTH_ACCOUNT_LOCKED);
+        }
+    }
+
+    private void validateCurrentPassword(
+            String currentPassword,
+            UserCredential credential,
+            LocalDateTime now
+    ) {
         if (currentPassword == null || currentPassword.isBlank()) {
+            recordPasswordChangeFailure(credential, now);
             throw new AuthException(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH);
         }
 
         if (!passwordEncoder.matches(currentPassword, credential.getPasswordHash())) {
+            recordPasswordChangeFailure(credential, now);
             throw new AuthException(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH);
+        }
+    }
+
+    private void recordPasswordChangeFailure(UserCredential credential, LocalDateTime now) {
+        credential.increaseFailedLoginCount();
+
+        if (credential.getFailedLoginCount() >= MAX_PASSWORD_CHANGE_FAILURE_COUNT) {
+            credential.lockUntil(now.plusMinutes(PASSWORD_CHANGE_LOCK_MINUTES));
         }
     }
 
@@ -236,6 +265,15 @@ public class UserCommandService {
 
         if (!newPassword.equals(newPasswordConfirm)) {
             throw new AuthException(AuthErrorCode.AUTH_NEW_PASSWORD_CONFIRM_MISMATCH);
+        }
+    }
+
+    private void validateNewPasswordDifferentFromCurrent(
+            String newPassword,
+            UserCredential credential
+    ) {
+        if (passwordEncoder.matches(newPassword, credential.getPasswordHash())) {
+            throw new AuthException(AuthErrorCode.AUTH_NEW_PASSWORD_SAME_AS_CURRENT);
         }
     }
 

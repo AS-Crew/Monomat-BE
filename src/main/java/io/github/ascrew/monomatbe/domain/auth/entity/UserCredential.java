@@ -20,7 +20,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 회원 인증정보 엔티티.
+ * 회원 인증정보 엔티티
  *
  * users와 분리하여 관리하는 이유:
  * - 비밀번호 해시/로그인 실패 카운트/잠금 시각은 보안 민감 데이터
@@ -106,8 +106,8 @@ public class UserCredential {
      * [정책]
      * - raw password는 엔티티로 전달하지 않는다.
      * - 해시는 서비스 계층에서 PasswordEncoder로 생성한 뒤 전달한다.
-     * - 현재 비밀번호 검증을 통과한 사용자는 계정 소유자임이 확인된 상태이므로
-     *   기존 로그인 실패 횟수와 잠금 상태를 초기화한다.
+     * - 현재 비밀번호 검증을 통과한 경우에만 호출된다.
+     * - 재인증에 성공한 사용자의 비밀번호 변경이므로 기존 로그인 실패 횟수와 잠금 상태를 초기화한다.
      *
      * @param passwordHash 새 비밀번호 해시
      * @param changedAt 비밀번호 변경 시각

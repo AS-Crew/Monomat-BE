@@ -13,6 +13,8 @@
  */
 package io.github.ascrew.monomatbe.global.constant;
 
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
+
 public final class RedisKeys {
 
     // 인스턴스화 방지
@@ -45,6 +47,9 @@ public final class RedisKeys {
 
     /** 채팅 발신자 프로필 캐시 키 접두사 */
     private static final String CHAT_SENDER_PROFILE_PREFIX = "chat:sender-profile:";
+
+    /** userIdentifier 기준 닉네임 캐시 키 접두사 */
+    private static final String USER_NICKNAME_PREFIX = "user:nickname:";
 
     /** 로비 채팅 메시지 신고 중복 방지 lock 키 접두사 */
     private static final String LOBBY_CHAT_MESSAGE_REPORT_LOCK_PREFIX = "lock:report:lobby-chat-message:";
@@ -383,6 +388,28 @@ public final class RedisKeys {
      */
     public static String chatSenderProfileKey(String userIdentifier) {
         return CHAT_SENDER_PROFILE_PREFIX + userIdentifier;
+    }
+
+    /**
+     * userIdentifier 기준 닉네임 캐시 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : user:nickname:{userIdentifier}
+     * - Type  : String
+     * - Value : 사용자 표시 닉네임 (plain string)
+     *
+     * [사용 목적]
+     * 로비 목록(GET /api/lobbies)은 호출 빈도가 높아 매 요청마다 회원/게스트 닉네임을
+     * DB IN 쿼리로 조회하면 latency spike와 DB 커넥션 병목으로 증폭될 수 있다.
+     * userIdentifier 기준 닉네임 스냅샷을 짧은 TTL로 캐싱해 cache miss만 DB로 조회한다.
+     *
+     * @param userIdentifier 사용자 식별자
+     * @return 닉네임 캐시 키
+     */
+    public static String userNicknameKey(String userIdentifier) {
+        // 세션/게스트 토큰 성격의 식별자 원문을 Redis 키에 노출하지 않도록 SHA-256 해시를 사용한다.
+        // (운영자/모니터링/SCAN 과정의 식별자 노출 방지, 키 길이 고정)
+        return USER_NICKNAME_PREFIX + TokenHashUtils.sha256(userIdentifier);
     }
 
     /**

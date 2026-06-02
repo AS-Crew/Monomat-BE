@@ -20,6 +20,7 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyListItemResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPlayerResponse;
@@ -133,7 +134,7 @@ public class LobbyQueryService {
      * @return 페이징된 공개 로비 목록 응답
      */
     @Transactional(readOnly = true)
-    public LobbyPageResponse<LobbyRedisDto> getPublicLobbyPage(LobbySearchCondition condition) {
+    public LobbyPageResponse<LobbyListItemResponse> getPublicLobbyPage(LobbySearchCondition condition) {
         if (canUseSortIndex(condition)) {
             return getPublicLobbyPageBySortIndex(condition);
         }
@@ -196,7 +197,7 @@ public class LobbyQueryService {
      * page offset 이전에 존재하는 stale code까지 완전히 보정하지는 않는다.
      * 다만 요청 중 만난 stale code는 Repository에서 제거하므로 반복 조회할수록 정합성이 회복된다.
      */
-    private LobbyPageResponse<LobbyRedisDto> getPublicLobbyPageBySortIndex(
+    private LobbyPageResponse<LobbyListItemResponse> getPublicLobbyPageBySortIndex(
             LobbySearchCondition condition
     ) {
         LobbyPageRequest pageRequest = condition.pageRequest();
@@ -279,7 +280,7 @@ public class LobbyQueryService {
                 : collectedItems;
 
         return LobbyPageResponse.of(
-                pageItems,
+                toListItemResponses(pageItems),
                 pageRequest,
                 hasNext
         );
@@ -310,7 +311,7 @@ public class LobbyQueryService {
      * 요청 page가 전체 목록 범위를 넘어가면 빈 items를 반환한다.
      * page 값 자체는 유효한 0 이상 값이므로 400으로 보지 않는다.
      */
-    private LobbyPageResponse<LobbyRedisDto> toPageResponse(
+    private LobbyPageResponse<LobbyListItemResponse> toPageResponse(
             List<LobbyRedisDto> sortedLobbies,
             LobbyPageRequest pageRequest
     ) {
@@ -338,10 +339,57 @@ public class LobbyQueryService {
         boolean hasNext = endExclusive < sortedLobbies.size();
 
         return LobbyPageResponse.of(
-                pageItems,
+                toListItemResponses(pageItems),
                 pageRequest,
                 hasNext
         );
+    }
+
+    /**
+     * 페이지 단위 로비 목록에 방장 닉네임을 채워 응답 DTO로 변환한다.
+     *
+     * [N+1 방지]
+     * 페이지 내 모든 hostId를 한 번에 모아 닉네임 Map을 단 1회 조회한다.
+     * 닉네임 조회는 게스트/회원 각각 IN 쿼리 1회로 batch 처리된다.
+     *
+     * [fallback]
+     * 세션 만료 등으로 닉네임을 찾지 못하면 로비 상세 조회와 동일하게
+     * LobbyPlayerNicknameResolver.fallbackNickname()으로 안전한 표시값을 내려준다.
+     */
+    private List<LobbyListItemResponse> toListItemResponses(List<LobbyRedisDto> pageItems) {
+        if (pageItems.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> hostIds = pageItems.stream()
+                .map(LobbyRedisDto::getHostId)
+                .filter(hostId -> hostId != null && !hostId.isBlank())
+                .distinct()
+                .toList();
+
+        Map<String, String> hostNicknameMap = hostIds.isEmpty()
+                ? Map.of()
+                : lobbyPlayerNicknameResolver.resolveNicknameMap(hostIds);
+
+        return pageItems.stream()
+                .map(lobby -> LobbyListItemResponse.of(
+                        lobby,
+                        resolveHostNickname(lobby.getHostId(), hostNicknameMap)
+                ))
+                .toList();
+    }
+
+    /**
+     * 방장 hostId에 대응하는 닉네임을 반환한다.
+     *
+     * 조회된 닉네임이 없거나 비어 있으면 fallback 표시값을 사용한다.
+     */
+    private String resolveHostNickname(String hostId, Map<String, String> hostNicknameMap) {
+        String nickname = hostNicknameMap.get(hostId);
+        if (nickname == null || nickname.isBlank()) {
+            return lobbyPlayerNicknameResolver.fallbackNickname(hostId);
+        }
+        return nickname;
     }
 
     /**

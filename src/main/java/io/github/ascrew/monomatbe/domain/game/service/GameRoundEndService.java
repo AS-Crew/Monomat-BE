@@ -10,9 +10,7 @@ import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionStatus;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionJpaRepository;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionPlayerJpaRepository;
-import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
-import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyRealtimeNotifier;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
@@ -41,7 +39,6 @@ public class GameRoundEndService {
     private final StringRedisTemplate redisTemplate;
     private final GameSessionJpaRepository gameSessionJpaRepository;
     private final GameSessionPlayerJpaRepository gameSessionPlayerJpaRepository;
-    private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
     private final UserSessionRepository userSessionRepository;
     private final GuestSessionRepository guestSessionRepository;
@@ -115,8 +112,8 @@ public class GameRoundEndService {
             scoreAddedMap.put(identifier, scoreAdded);
 
             if (scoreAdded > 0) {
+                // 영속 상태 엔티티의 점수 변경은 Dirty Checking으로 커밋 시 자동 반영된다. (명시적 save 불필요)
                 dbPlayer.addScore(scoreAdded);
-                gameSessionPlayerJpaRepository.save(dbPlayer);
             }
         }
 
@@ -188,15 +185,10 @@ public class GameRoundEndService {
         boolean isLastRound = roundNo >= gameSession.getTotalQuestionCount();
 
         if (isLastRound) {
+            // DB 상태 변경은 Dirty Checking으로 커밋 시 자동 반영된다. (명시적 save 불필요)
             gameSession.finish();
-            gameSessionJpaRepository.save(gameSession);
-
-            GameLobby lobby = gameSession.getLobby();
-            lobby.changeStatus(LobbyStatus.FINISHED);
-            gameLobbyJpaRepository.save(lobby);
-
-            redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), "status", "FINISHED");
-            redisTemplate.opsForHash().put(RedisKeys.lobbyKey(lobbyCode), "status", "FINISHED");
+            gameSession.getLobby().changeStatus(LobbyStatus.FINISHED);
+            // Redis status=FINISHED 쓰기는 커밋 성공 후(afterCommit)로 미뤄 DB-Redis 불일치를 막는다.
         }
 
         // 8. 트랜잭션 성공 후 STOMP 브로드캐스트 및 스케줄링 등록
@@ -204,32 +196,26 @@ public class GameRoundEndService {
             @Override
             public void afterCommit() {
                 log.info("라운드 종료 트랜잭션 커밋 완료 - Redis 점수 반영 및 브로드캐스트 전송. code: {}, roundNo: {}, isLast: {}", lobbyCode, roundNo, isLastRound);
-                
-                scoreAddedMap.forEach((identifier, scoreAdded) -> {
-                    if (scoreAdded > 0) {
-                        redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
-                    }
-                });
 
-                gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
+                /*
+                 * afterCommit의 각 후처리(점수 반영/브로드캐스트/상태전환/다음라운드)는 서로 독립이다.
+                 * 한 단계 실패가 이후 단계를 막지 않도록 단계별로 격리한다.
+                 */
+                syncRedisScoresQuietly(playersKey, scoreAddedMap);
+                notifyRoundEndQuietly(lobbyCode, metadataDto);
 
-                GameRoundProgressService progressService = applicationContext.getBean(GameRoundProgressService.class);
                 if (isLastRound) {
-                    try {
-                        lobbyRealtimeNotifier.notifyLobbyInfoRefresh(lobbyCode, "SYSTEM");
-                    } catch (Exception e) {
-                        log.error("게임 종료 후 로비 갱신 알림 실패 - code: {}", lobbyCode, e);
-                    }
-
                     /*
-                     * 게임 정상 종료 - 게임 세션 Redis 키를 짧은 TTL(grace period)로 전환한다.
-                     * 점수 반영(HINCRBY) 이후에 호출해야 grace period 동안 최종 점수 조회가 가능하다.
-                     * 최종 점수/랭킹은 DB에 영구 저장되므로 grace period 후 만료되어도 안전하다.
+                     * 게임 정상 종료 - 점수 반영(HINCRBY) 이후 Redis status를 FINISHED로 전환하고
+                     * 짧은 TTL(grace period)로 키를 만료시킨다. 최종 점수/랭킹은 DB에 영구 저장된다.
                      */
+                    finishStatusInRedisQuietly(lobbyCode);
+                    notifyLobbyRefreshQuietly(lobbyCode);
                     gameSessionCleanupService.expireWithGracePeriod(lobbyCode);
-                } else {
-                    progressService.scheduleNextRound(lobbyCode, roundNo + 1);
+                    return;
                 }
+
+                scheduleNextRoundSafely(lobbyCode, roundNo + 1);
             }
 
             @Override
@@ -240,6 +226,57 @@ public class GameRoundEndService {
                 }
             }
         });
+    }
+
+    /** Redis 누적 점수(HINCRBY)를 반영한다. 실패해도 이후 후처리 단계 진행에 영향을 주지 않는다. */
+    private void syncRedisScoresQuietly(String playersKey, Map<String, Integer> scoreAddedMap) {
+        try {
+            scoreAddedMap.forEach((identifier, scoreAdded) -> {
+                if (scoreAdded > 0) {
+                    redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
+                }
+            });
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] Redis 점수 반영 실패 - playersKey: {}", playersKey, e);
+        }
+    }
+
+    /** 라운드 종료 결과(랭킹/곡 정보)를 브로드캐스트한다. */
+    private void notifyRoundEndQuietly(String lobbyCode, RoundMetadataDto metadataDto) {
+        try {
+            gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
+        } catch (Exception e) {
+            log.error("라운드 종료 브로드캐스트 실패 - code: {}", lobbyCode, e);
+        }
+    }
+
+    /** 게임 정상 종료 시 Redis 세션/로비 status를 FINISHED로 전환한다. (커밋 성공 후 수행) */
+    private void finishStatusInRedisQuietly(String lobbyCode) {
+        try {
+            redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), "status", "FINISHED");
+            redisTemplate.opsForHash().put(RedisKeys.lobbyKey(lobbyCode), "status", "FINISHED");
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] 게임 종료 Redis status 전환 실패 - code: {}", lobbyCode, e);
+        }
+    }
+
+    /** 게임 종료 후 로비 갱신 알림을 보낸다. */
+    private void notifyLobbyRefreshQuietly(String lobbyCode) {
+        try {
+            lobbyRealtimeNotifier.notifyLobbyInfoRefresh(lobbyCode, "SYSTEM");
+        } catch (Exception e) {
+            log.error("게임 종료 후 로비 갱신 알림 실패 - code: {}", lobbyCode, e);
+        }
+    }
+
+    /** 다음 라운드 시작을 예약한다. */
+    private void scheduleNextRoundSafely(String lobbyCode, int nextRoundNo) {
+        try {
+            GameRoundProgressService progressService = applicationContext.getBean(GameRoundProgressService.class);
+            progressService.scheduleNextRound(lobbyCode, nextRoundNo);
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] 다음 라운드 예약 실패 - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, e);
+        }
     }
 
     private static class PlayerTemp {

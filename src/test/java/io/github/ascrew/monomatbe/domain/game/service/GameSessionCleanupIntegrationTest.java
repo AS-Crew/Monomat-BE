@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 게임 세션 Redis 키 정리(cleanup) 통합 테스트
  *
  * [검증 정책]
- * - deleteNow: base 3종 + 라운드별 6종 키를 모두 삭제한다. (로비 폭파 / 시작 롤백)
+ * - deleteNow: base 3종 + 라운드별 7종 키를 모두 삭제한다. (로비 폭파 / 시작 롤백)
  * - expireWithGracePeriod: 존재하는 모든 키를 0<ttl<=300 으로 전환한다. (정상 종료)
  * - 게임 세션이 없을 때 정리는 예외 없이 안전 no-op이다.
  * - 로비 폭파 이벤트(LobbyClosedEvent) 수신 시 게임 세션 키가 정리된다. (stale game session 방지)
@@ -73,7 +73,7 @@ class GameSessionCleanupIntegrationTest {
     }
 
     @Test
-    @DisplayName("deleteNow는 base 3종 + 라운드별 6종 게임 세션 키를 모두 삭제한다")
+    @DisplayName("deleteNow는 base 3종 + 라운드별 7종 게임 세션 키를 모두 삭제한다")
     void deleteNow_removesAllGameSessionKeys() {
         // given
         givenFullGameSession(LOBBY_CODE, TOTAL_ROUNDS);
@@ -94,7 +94,7 @@ class GameSessionCleanupIntegrationTest {
     @Test
     @DisplayName("cleanup Lua는 RedisKeys가 생성하는 모든 게임 세션 키를 빠짐없이 정리한다 (키 계약 고정)")
     void cleanupScript_deletesExactlyAllRedisKeysGameSessionKeys() {
-        // given - RedisKeys 팩토리로 만드는 base 3종 + 라운드별 6종을 모두 생성
+        // given - RedisKeys 팩토리로 만드는 base 3종 + 라운드별 7종을 모두 생성
         givenFullGameSession(LOBBY_CODE, TOTAL_ROUNDS);
         List<String> expectedKeys = allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS);
         String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
@@ -198,7 +198,7 @@ class GameSessionCleanupIntegrationTest {
 
     /**
      * 실제 게임 진행 중 생성되는 모든 게임 세션 키를 채운다.
-     * base 3종(session/rounds/players) + 라운드별 6종을 모두 만든다.
+     * base 3종(session/rounds/players) + 라운드별 7종을 모두 만든다.
      */
     private void givenFullGameSession(String code, int totalRounds) {
         String sessionKey = RedisKeys.gameSessionKey(code);
@@ -220,6 +220,7 @@ class GameSessionCleanupIntegrationTest {
             redisTemplate.opsForSet().add(RedisKeys.gameSessionRoundCorrectPlayersKey(code, n), "player-1");
             redisTemplate.opsForHash().put(RedisKeys.gameSessionRoundCorrectTimesKey(code, n), "player-1", "1000");
             redisTemplate.opsForValue().set(RedisKeys.gameSessionRoundEndedLockKey(code, n), "1");
+            redisTemplate.opsForValue().set(RedisKeys.gameSessionNextRoundLockKey(code, n), "1");
         }
     }
 
@@ -235,6 +236,7 @@ class GameSessionCleanupIntegrationTest {
             keys.add(RedisKeys.gameSessionRoundCorrectPlayersKey(code, n));
             keys.add(RedisKeys.gameSessionRoundCorrectTimesKey(code, n));
             keys.add(RedisKeys.gameSessionRoundEndedLockKey(code, n));
+            keys.add(RedisKeys.gameSessionNextRoundLockKey(code, n));
         }
         return keys;
     }

@@ -143,13 +143,21 @@ public class GameRoundProgressService {
             log.warn("다음 라운드 복구 큐 적재 실패 - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, e);
         }
 
-        taskScheduler.schedule(() -> {
-            try {
-                gameRoundNextRoundExecutor.startNextRound(lobbyCode, nextRoundNo);
-            } catch (Exception e) {
-                log.error("다음 라운드 시작 예약 처리 중 예외 발생 - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, e);
-            }
-        }, Instant.now().plusMillis(delayMillis));
+        // in-memory 예약 등록 실패는 durable 복구 큐 적재 실패와 별도 metric으로 집계한다.
+        // (둘 중 하나라도 살아 있으면 다음 라운드가 진행되도록, 예약 실패가 복구 경로를 막지 않게 한다)
+        try {
+            taskScheduler.schedule(() -> {
+                try {
+                    gameRoundNextRoundExecutor.startNextRound(lobbyCode, nextRoundNo);
+                } catch (Exception e) {
+                    log.error("다음 라운드 시작 예약 처리 중 예외 발생 - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, e);
+                }
+            }, Instant.now().plusMillis(delayMillis));
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] 다음 라운드 in-memory 예약 등록 실패 - durable 복구 큐로 복구 예정. code: {}, nextRoundNo: {}",
+                    lobbyCode, nextRoundNo, e);
+            gameRoundRecoveryRepository.incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_INMEMORY_SCHEDULE_FAILED);
+        }
     }
 
     /** 다음 라운드 시작 예정 시각 마커를 세션 해시에 best-effort로 기록한다. */

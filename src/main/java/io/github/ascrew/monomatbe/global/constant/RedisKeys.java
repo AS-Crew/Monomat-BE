@@ -460,6 +460,10 @@ public final class RedisKeys {
     public static final String METRIC_GAME_ROUND_RECOVERY_FAILED =
             "metric:game:round:recovery:failed";
 
+    /** 다음 라운드 in-memory TaskScheduler 예약 등록 실패 횟수 metric counter (durable 복구 큐와 분리 집계) */
+    public static final String METRIC_GAME_ROUND_INMEMORY_SCHEDULE_FAILED =
+            "metric:game:round:inmemory-schedule:failed";
+
     /** 게임 시작 전 stale ready 데이터 정리 횟수 */
     public static final String METRIC_LOBBY_READY_STALE_CLEANUP =
             "metric:lobby:ready:stale-cleanup";

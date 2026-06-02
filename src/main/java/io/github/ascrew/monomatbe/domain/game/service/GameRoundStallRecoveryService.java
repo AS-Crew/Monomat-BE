@@ -10,6 +10,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
+
 /**
  * 다음 라운드 진행 정지 복구 서비스. (상시 동작 큐 워커)
  *
@@ -122,13 +124,16 @@ public class GameRoundStallRecoveryService {
     private RoundProgressState inspectProgress(String lobbyCode, int expectedRoundNo) {
         try {
             String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
-            String currentRoundNoStr = (String) redisTemplate.opsForHash().get(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO);
+            // current_round_no와 status를 단일 RTT(HMGET)로 함께 조회한다.
+            List<Object> fields = redisTemplate.opsForHash().multiGet(
+                    sessionKey, List.of(RedisKeys.FIELD_CURRENT_ROUND_NO, RedisKeys.FIELD_STATUS));
+            String currentRoundNoStr = (String) fields.get(0);
 
             if (currentRoundNoStr == null) {
                 return RoundProgressState.SESSION_GONE;
             }
 
-            String status = (String) redisTemplate.opsForHash().get(sessionKey, RedisKeys.FIELD_STATUS);
+            String status = (String) fields.get(1);
             if (STATUS_FINISHED.equals(status)) {
                 return RoundProgressState.ALREADY_PROGRESSED;
             }

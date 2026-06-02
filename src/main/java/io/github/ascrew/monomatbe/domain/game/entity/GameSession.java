@@ -4,6 +4,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 @Getter
@@ -64,5 +65,19 @@ public class GameSession {
 
     public void nextRound() {
         this.currentRoundNo++;
+    }
+
+    /**
+     * 미종료 세션이 임계 시간 이상 정체되어 stale(복구 대상)로 간주되는지 판별한다.
+     *
+     * {@code startedAt + threshold < now}이면 정상 진행 중으로 보기 어려운 정체 세션이다.
+     * 새 게임 시작 시 이 조건을 만족하는 기존 active 세션만 강제 종료·복구하고,
+     * 그렇지 않으면 진행 중 게임 보호를 위해 새 시작을 차단한다.
+     *
+     * @param now       현재 시각 (startedAt과 동일한 기준 zone — UTC)
+     * @param threshold 정체 판별 임계 기간
+     */
+    public boolean isStale(LocalDateTime now, Duration threshold) {
+        return startedAt.plus(threshold).isBefore(now);
     }
 }

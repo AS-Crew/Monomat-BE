@@ -22,7 +22,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -57,9 +56,11 @@ class GameSessionCreateServiceTest {
     @Mock
     private RedisScript<String> initGameSessionScript;
     @Mock
-    private HashOperations<String, Object, Object> hashOperations;
-    @Mock
     private JsonMapper jsonMapper;
+    @Mock
+    private GameSessionCleanupService gameSessionCleanupService;
+    @Mock
+    private io.github.ascrew.monomatbe.domain.game.config.GameSessionProperties gameSessionProperties;
 
     @InjectMocks
     private GameSessionCreateService gameSessionCreateService;
@@ -129,7 +130,6 @@ class GameSessionCreateServiceTest {
                 anyString(),
                 anyString()
         )).thenReturn("OK");
-        when(redisTemplate.opsForHash()).thenReturn(hashOperations);
 
         // when
         RoundStartDto result = gameSessionCreateService.createGameSession(lobby, quizMap);
@@ -195,5 +195,77 @@ class GameSessionCreateServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameSessionCreateService.createGameSession(lobby, quizMap))
                 .isInstanceOf(GameSessionAlreadyExistsException.class)
                 .hasMessage("게임 세션이 이미 존재합니다.");
+    }
+
+    @Test
+    @DisplayName("정체되지 않은 active 세션이 있으면 GameSessionAlreadyExistsException으로 차단한다")
+    void createGameSession_blocksWhenActiveSessionNotStale() {
+        // given
+        GameLobby lobby = GameLobby.builder()
+                .inviteCode("ABC1234").mapId(1L).questionCount(1).timeLimitSeconds(30)
+                .status(LobbyStatus.PLAYING).build();
+        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
+        MapItem mapItem = MapItem.builder().map(quizMap).orderNum(1).videoId("vId").build();
+
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L)).thenReturn(List.of(mapItem));
+
+        // 1분 전에 시작된 세션 + 임계값 30분 → 정체 아님 → 차단
+        GameSession active = GameSession.builder()
+                .startedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1)).build();
+        when(gameSessionProperties.getStaleThreshold()).thenReturn(java.time.Duration.ofMinutes(30));
+        when(gameSessionJpaRepository.findActiveSessionByLobbyCode("ABC1234"))
+                .thenReturn(java.util.Optional.of(active));
+
+        // when & then
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameSessionCreateService.createGameSession(lobby, quizMap))
+                .isInstanceOf(GameSessionAlreadyExistsException.class)
+                .hasMessage("이미 진행 중인 게임 세션이 있습니다.");
+
+        assertThat(active.getStatus()).isNotEqualTo(GameSessionStatus.FINISHED);
+    }
+
+    @Test
+    @DisplayName("정체(stale)된 active 세션은 강제 종료·정리 후 새 게임 생성을 진행한다")
+    void createGameSession_recoversStaleActiveSession() {
+        // given
+        GameLobby lobby = GameLobby.builder()
+                .inviteCode("ABC1234").mapId(1L).questionCount(1).timeLimitSeconds(30)
+                .status(LobbyStatus.PLAYING).build();
+        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
+        MapItem mapItem = MapItem.builder()
+                .map(quizMap).orderNum(1).videoId("vId").youtubeUrl("https://youtube.com/vId")
+                .startTime(10).endTime(20).title("t").artist("a").answers("[\"정답\"]").build();
+        User user = User.builder().id(1L).username("uId").userType(UserType.REGISTERED).build();
+
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L)).thenReturn(List.of(mapItem));
+
+        // 2시간 전에 시작된 세션 + 임계값 30분 → 정체 → 복구
+        GameSession stale = GameSession.builder()
+                .startedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2)).build();
+        when(gameSessionProperties.getStaleThreshold()).thenReturn(java.time.Duration.ofMinutes(30));
+        when(gameSessionJpaRepository.findActiveSessionByLobbyCode("ABC1234"))
+                .thenReturn(java.util.Optional.of(stale));
+
+        when(lobbyRepository.getParticipantIdentifiers("ABC1234")).thenReturn(List.of("uId"));
+        when(gameParticipantResolver.resolveUsers(List.of("uId"))).thenReturn(List.of(user));
+        try {
+            when(jsonMapper.readValue(eq("[\"정답\"]"), any(tools.jackson.core.type.TypeReference.class)))
+                    .thenReturn(List.of("정답"));
+            when(jsonMapper.writeValueAsString(any())).thenReturn("[\"정답\"]");
+        } catch (Exception e) {
+            // ignore for mock
+        }
+        when(redisTemplate.execute(eq(initGameSessionScript), any(List.class),
+                anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn("OK");
+
+        // when
+        RoundStartDto result = gameSessionCreateService.createGameSession(lobby, quizMap);
+
+        // then - 정체 세션은 FINISHED 처리되고 Redis 잔존 키 정리(deleteNow)가 호출되며, 새 게임 생성이 진행된다.
+        assertThat(stale.getStatus()).isEqualTo(GameSessionStatus.FINISHED);
+        verify(gameSessionCleanupService).deleteNow("ABC1234");
+        verify(gameSessionJpaRepository).save(any(GameSession.class));
+        assertThat(result.roundNo()).isEqualTo(1);
     }
 }

@@ -133,6 +133,21 @@ class GameRoundStallRecoveryServiceTest {
     }
 
     @Test
+    @DisplayName("처리 중 예외가 발생하면 실패 집계 후 원본 payload를 안전 재적재한다 (payload 유실 방지)")
+    void processingThrows_safeRequeuesOriginalPayload() {
+        // not-due 경로의 requeue가 Redis 장애로 실패하는 상황을 모사한다.
+        String notDue = payload(3, 0, System.currentTimeMillis() + 60_000L);
+        when(repository.pollRoundRecovery()).thenReturn(notDue);
+        doThrow(new RuntimeException("redis down")).when(repository).requeueRoundRecovery(notDue);
+
+        service.recoverStalledRounds();
+
+        // 최상위 보상: 실패 집계 + 원본 payload 안전 재적재
+        verify(repository).incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_RECOVERY_FAILED);
+        verify(repository).safeRequeueRoundRecovery(notDue);
+    }
+
+    @Test
     @DisplayName("큐가 비어 있으면 아무 작업도 하지 않는다")
     void emptyQueue_isNoOp() {
         when(repository.pollRoundRecovery()).thenReturn(null);

@@ -69,6 +69,19 @@ public class GameRoundStallRecoveryService {
             return;
         }
 
+        // payload는 이미 leftPop으로 큐에서 제거되었다. 처리 중 어떤 예외가 나도 유실되지 않도록
+        // 최상위에서 보상한다: 실패 metric을 남기고 원본 payload를 안전하게 다시 큐에 넣는다.
+        try {
+            processStalledRound(payload);
+        } catch (Exception e) {
+            log.error("{} 다음 라운드 복구 처리 중 예기치 못한 예외 - 원본 payload 안전 재적재. payload: {}",
+                    LOG_ALERT_REQUIRED, payload, e);
+            gameRoundRecoveryRepository.incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_RECOVERY_FAILED);
+            gameRoundRecoveryRepository.safeRequeueRoundRecovery(payload);
+        }
+    }
+
+    private void processStalledRound(String payload) {
         RecoveryPayload parsed = parsePayload(payload);
         if (parsed == null) {
             log.error("{} 다음 라운드 복구 payload 파싱 실패 - payload: {}", LOG_ALERT_REQUIRED, payload);

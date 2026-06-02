@@ -377,6 +377,11 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   @Override
+  public void safeRequeueStartReconciliation(String payload) {
+    lobbyStartReconciliationRepository.safeRequeueStartReconciliation(payload);
+  }
+
+  @Override
   public void incrementStartReconciliationMetric(String metricKey) {
     lobbyStartReconciliationRepository.incrementStartReconciliationMetric(metricKey);
   }

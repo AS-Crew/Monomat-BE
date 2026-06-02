@@ -156,6 +156,13 @@ public interface LobbyRepository {
   void requeueStartReconciliation(String payload);
 
   /**
+   * 워커의 최상위 보상 경로용 안전 재적재. 재적재 실패까지 흡수해 payload 유실만 막는다.
+   *
+   * @param payload 재처리 payload
+   */
+  void safeRequeueStartReconciliation(String payload);
+
+  /**
    * 게임 시작 상태 재처리 metric counter를 증가시킨다.
    *
    * @param metricKey Redis metric key

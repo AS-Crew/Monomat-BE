@@ -171,6 +171,205 @@ JWT Access Token이 필요합니다.
 
 ---
 
+## 7단계: API 문서화
+
+이번 단계에서는 `docs/API.md`에 FE가 사용할 비밀번호 변경 API 계약을 추가합니다.
+
+추가할 내용은 다음입니다.
+
+```text
+PATCH /api/users/me/password
+```
+
+성공 시 `204 No Content`이고, 비밀번호 변경 성공 후 기존 세션이 모두 만료되므로 FE는 로그인 화면으로 이동해야 합니다.
+
+---
+
+# 7-1. `docs/API.md`에 추가할 내용
+
+`docs/API.md`에서 `User` 또는 `내 사용자 정보 조회`, `닉네임 변경` API가 있는 위치를 찾으세요.
+
+```bash
+grep -n "닉네임\|users/me\|User" docs/API.md
+```
+
+그 근처에 아래 내용을 추가하면 됩니다.
+
+````markdown
+### 내 비밀번호 변경
+
+```http
+PATCH /api/users/me/password
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+````
+
+로그인한 정식 회원의 비밀번호를 변경합니다.
+
+비밀번호 변경 성공 후 서버는 해당 사용자의 모든 활성 세션을 만료합니다.
+따라서 클라이언트는 성공 응답을 받으면 저장 중인 accessToken, refreshToken, 사용자 정보를 제거하고 로그인 화면으로 이동해야 합니다.
+
+#### Request Body
+
+```json
+{
+  "currentPassword": "oldPassword123",
+  "newPassword": "newPassword123",
+  "newPasswordConfirm": "newPassword123"
+}
+```
+
+| 필드                   | 타입     | 필수 | 설명        |
+| -------------------- | ------ | -: | --------- |
+| `currentPassword`    | string |  O | 현재 비밀번호   |
+| `newPassword`        | string |  O | 새 비밀번호    |
+| `newPasswordConfirm` | string |  O | 새 비밀번호 확인 |
+
+#### 비밀번호 정책
+
+회원가입과 동일한 비밀번호 정책을 적용합니다.
+
+| 정책    | 내용      |
+| ----- | ------- |
+| 최소 길이 | 8자      |
+| 최대 길이 | 100자    |
+| 공백    | 허용하지 않음 |
+
+#### Success Response
+
+```http
+HTTP/1.1 204 No Content
+```
+
+응답 본문은 없습니다.
+
+#### Error Response
+
+공통 에러 응답 형식은 기존 인증 API와 동일합니다.
+
+```json
+{
+  "code": "AUTH_CURRENT_PASSWORD_MISMATCH",
+  "message": "현재 비밀번호가 올바르지 않습니다.",
+  "field": "currentPassword"
+}
+```
+
+| HTTP Status | code                                 | field                | 상황                         |
+| ----------: | ------------------------------------ | -------------------- | -------------------------- |
+|         400 | `AUTH_INVALID_REQUEST_BODY`          | `null`               | 요청 본문 형식이 올바르지 않음          |
+|         400 | `AUTH_PASSWORD_REQUIRED`             | `password`           | 새 비밀번호가 비어 있음              |
+|         400 | `AUTH_PASSWORD_INVALID_LENGTH`       | `password`           | 새 비밀번호가 8자 미만 또는 100자 초과   |
+|         400 | `AUTH_PASSWORD_CONTAINS_WHITESPACE`  | `password`           | 새 비밀번호에 공백 포함              |
+|         400 | `AUTH_NEW_PASSWORD_CONFIRM_MISMATCH` | `newPasswordConfirm` | 새 비밀번호와 새 비밀번호 확인이 일치하지 않음 |
+|         401 | `AUTH_UNAUTHENTICATED`               | `null`               | 인증 정보가 없거나 유효하지 않음         |
+|         401 | `AUTH_CURRENT_PASSWORD_MISMATCH`     | `currentPassword`    | 현재 비밀번호가 일치하지 않음           |
+|         403 | `AUTH_REGISTERED_USER_ONLY`          | `null`               | 게스트 사용자가 요청함               |
+
+#### FE 처리 정책
+
+비밀번호 변경 성공 시 기존 세션은 모두 만료됩니다.
+
+FE는 `204 No Content` 수신 후 다음 처리를 수행해야 합니다.
+
+1. 저장된 `accessToken` 제거
+2. 저장된 `refreshToken` 제거
+3. 사용자 상태 초기화
+4. 로그인 화면으로 이동
+5. “비밀번호가 변경되었습니다. 다시 로그인해주세요.” 메시지 표시
+
+주의할 점은 성공 직후 기존 accessToken으로 `/api/users/me`를 재요청하지 않는 것입니다.
+서버에서 활성 세션 키를 제거하기 때문에 이후 인증 요청은 실패할 수 있습니다.
+
+---
+
+### 내 비밀번호 변경
+
+```http
+PATCH /api/users/me/password
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+`````
+
+로그인한 정식 회원의 비밀번호를 변경합니다.
+
+비밀번호 변경 성공 후 서버는 해당 사용자의 모든 활성 세션을 만료합니다.
+따라서 클라이언트는 성공 응답을 받으면 저장 중인 accessToken, refreshToken, 사용자 정보를 제거하고 로그인 화면으로 이동해야 합니다.
+
+#### Request Body
+
+```json
+{
+  "currentPassword": "oldPassword123",
+  "newPassword": "newPassword123",
+  "newPasswordConfirm": "newPassword123"
+}
+```
+
+| 필드                   | 타입     | 필수 | 설명        |
+| -------------------- | ------ | -: | --------- |
+| `currentPassword`    | string |  O | 현재 비밀번호   |
+| `newPassword`        | string |  O | 새 비밀번호    |
+| `newPasswordConfirm` | string |  O | 새 비밀번호 확인 |
+
+#### 비밀번호 정책
+
+회원가입과 동일한 비밀번호 정책을 적용합니다.
+
+| 정책    | 내용      |
+| ----- | ------- |
+| 최소 길이 | 8자      |
+| 최대 길이 | 100자    |
+| 공백    | 허용하지 않음 |
+
+#### Success Response
+
+```http
+HTTP/1.1 204 No Content
+```
+
+응답 본문은 없습니다.
+
+#### Error Response
+
+공통 에러 응답 형식은 기존 인증 API와 동일합니다.
+
+```json
+{
+  "code": "AUTH_CURRENT_PASSWORD_MISMATCH",
+  "message": "현재 비밀번호가 올바르지 않습니다.",
+  "field": "currentPassword"
+}
+```
+
+| HTTP Status | code                                 | field                | 상황                         |
+| ----------: | ------------------------------------ | -------------------- | -------------------------- |
+|         400 | `AUTH_INVALID_REQUEST_BODY`          | `null`               | 요청 본문 형식이 올바르지 않음          |
+|         400 | `AUTH_PASSWORD_REQUIRED`             | `password`           | 새 비밀번호가 비어 있음              |
+|         400 | `AUTH_PASSWORD_INVALID_LENGTH`       | `password`           | 새 비밀번호가 8자 미만 또는 100자 초과   |
+|         400 | `AUTH_PASSWORD_CONTAINS_WHITESPACE`  | `password`           | 새 비밀번호에 공백 포함              |
+|         400 | `AUTH_NEW_PASSWORD_CONFIRM_MISMATCH` | `newPasswordConfirm` | 새 비밀번호와 새 비밀번호 확인이 일치하지 않음 |
+|         401 | `AUTH_UNAUTHENTICATED`               | `null`               | 인증 정보가 없거나 유효하지 않음         |
+|         401 | `AUTH_CURRENT_PASSWORD_MISMATCH`     | `currentPassword`    | 현재 비밀번호가 일치하지 않음           |
+|         403 | `AUTH_REGISTERED_USER_ONLY`          | `null`               | 게스트 사용자가 요청함               |
+
+#### FE 처리 정책
+
+비밀번호 변경 성공 시 기존 세션은 모두 만료됩니다.
+
+FE는 `204 No Content` 수신 후 다음 처리를 수행해야 합니다.
+
+1. 저장된 `accessToken` 제거
+2. 저장된 `refreshToken` 제거
+3. 사용자 상태 초기화
+4. 로그인 화면으로 이동
+5. “비밀번호가 변경되었습니다. 다시 로그인해주세요.” 메시지 표시
+
+주의할 점은 성공 직후 기존 accessToken으로 `/api/users/me`를 재요청하지 않는 것입니다.
+서버에서 활성 세션 키를 제거하기 때문에 이후 인증 요청은 실패할 수 있습니다.
+
+---
+
 ### 관리자 - 닉네임 금칙어 관리
 
 닉네임 금칙어 목록을 관리자 API로 조회, 추가, 삭제합니다.

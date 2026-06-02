@@ -35,7 +35,8 @@ class RegisterAuthServiceTest {
                 userRepository,
                 userCredentialRepository,
                 passwordEncoder,
-                nicknamePolicyValidator
+                nicknamePolicyValidator,
+                new PasswordPolicyValidator()
         );
     }
 

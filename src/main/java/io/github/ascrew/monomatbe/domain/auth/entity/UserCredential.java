@@ -20,7 +20,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 회원 인증정보 엔티티.
+ * 회원 인증정보 엔티티
  *
  * users와 분리하여 관리하는 이유:
  * - 비밀번호 해시/로그인 실패 카운트/잠금 시각은 보안 민감 데이터
@@ -68,7 +68,7 @@ public class UserCredential {
         LocalDateTime now = LocalDateTime.now();
         this.createdAt = now;
         this.updatedAt = now;
-        // 로그인 실패 카운트 초기값 보정
+
         if (this.failedLoginCount == null) {
             this.failedLoginCount = 0;
         }
@@ -76,7 +76,6 @@ public class UserCredential {
 
     @PreUpdate
     public void preUpdate() {
-        // 인증정보 변경 시각 자동 갱신
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -88,6 +87,7 @@ public class UserCredential {
         if (this.failedLoginCount == null) {
             this.failedLoginCount = 0;
         }
+
         this.failedLoginCount += 1;
     }
 
@@ -98,5 +98,24 @@ public class UserCredential {
 
     public void lockUntil(LocalDateTime lockedUntil) {
         this.lockedUntil = lockedUntil;
+    }
+
+    /**
+     * 비밀번호를 새 해시로 변경하고 변경 시각을 갱신한다.
+     *
+     * [정책]
+     * - raw password는 엔티티로 전달하지 않는다.
+     * - 해시는 서비스 계층에서 PasswordEncoder로 생성한 뒤 전달한다.
+     * - 현재 비밀번호 검증을 통과한 경우에만 호출된다.
+     * - 재인증에 성공한 사용자의 비밀번호 변경이므로 기존 로그인 실패 횟수와 잠금 상태를 초기화한다.
+     *
+     * @param passwordHash 새 비밀번호 해시
+     * @param changedAt 비밀번호 변경 시각
+     */
+    public void changePassword(String passwordHash, LocalDateTime changedAt) {
+        this.passwordHash = passwordHash;
+        this.passwordChangedAt = changedAt;
+        this.updatedAt = changedAt;
+        resetFailedLoginState();
     }
 }

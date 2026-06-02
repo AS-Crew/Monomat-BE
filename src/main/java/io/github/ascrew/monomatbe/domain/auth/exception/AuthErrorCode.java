@@ -80,6 +80,24 @@ public enum AuthErrorCode {
             AuthErrorFields.PASSWORD
     ),
 
+    AUTH_CURRENT_PASSWORD_MISMATCH(
+            HttpStatus.UNAUTHORIZED,
+            "현재 비밀번호가 올바르지 않습니다.",
+            AuthErrorFields.CURRENT_PASSWORD
+    ),
+
+    AUTH_NEW_PASSWORD_CONFIRM_MISMATCH(
+            HttpStatus.BAD_REQUEST,
+            "새 비밀번호가 일치하지 않습니다.",
+            AuthErrorFields.NEW_PASSWORD_CONFIRM
+    ),
+
+    AUTH_NEW_PASSWORD_SAME_AS_CURRENT(
+            HttpStatus.BAD_REQUEST,
+            "새 비밀번호는 현재 비밀번호와 달라야 합니다.",
+            AuthErrorFields.NEW_PASSWORD
+    ),
+
     // =========================================================
     // Nickname
     // =========================================================
@@ -182,6 +200,12 @@ public enum AuthErrorCode {
             null
     ),
 
+    AUTH_REGISTERED_USER_ONLY(
+            HttpStatus.FORBIDDEN,
+            "정식 회원만 사용할 수 있는 기능입니다.",
+            null
+    ),
+
     AUTH_TEMPORARY_UNAVAILABLE(
             HttpStatus.SERVICE_UNAVAILABLE,
             "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
@@ -230,6 +254,9 @@ public enum AuthErrorCode {
 
         private static final String LOGIN_ID = "loginId";
         private static final String PASSWORD = "password";
+        private static final String CURRENT_PASSWORD = "currentPassword";
+        private static final String NEW_PASSWORD = "newPassword";
+        private static final String NEW_PASSWORD_CONFIRM = "newPasswordConfirm";
         private static final String NICKNAME = "nickname";
         private static final String REFRESH_TOKEN = "refreshToken";
 

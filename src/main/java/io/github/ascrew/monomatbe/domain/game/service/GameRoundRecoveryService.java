@@ -23,6 +23,7 @@ public class GameRoundRecoveryService {
     private final GameRoundEndService gameRoundEndService;
     private final GameRoundProgressService gameRoundProgressService;
     private final GameRoundStartService gameRoundStartService;
+    private final GameRoundNextRoundExecutor gameRoundNextRoundExecutor;
 
     @Lazy
     public GameRoundRecoveryService(
@@ -30,12 +31,14 @@ public class GameRoundRecoveryService {
             StringRedisTemplate redisTemplate,
             @Lazy GameRoundEndService gameRoundEndService,
             @Lazy GameRoundProgressService gameRoundProgressService,
-            @Lazy GameRoundStartService gameRoundStartService) {
+            @Lazy GameRoundStartService gameRoundStartService,
+            @Lazy GameRoundNextRoundExecutor gameRoundNextRoundExecutor) {
         this.gameSessionJpaRepository = gameSessionJpaRepository;
         this.redisTemplate = redisTemplate;
         this.gameRoundEndService = gameRoundEndService;
         this.gameRoundProgressService = gameRoundProgressService;
         this.gameRoundStartService = gameRoundStartService;
+        this.gameRoundNextRoundExecutor = gameRoundNextRoundExecutor;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -117,7 +120,7 @@ public class GameRoundRecoveryService {
 
                 if (elapsed >= limitTimeMillis) {
                     log.info("결과화면 대기 시간 초과 -> 즉시 다음 라운드 시작. code: {}, nextRound: {}", lobbyCode, roundNo + 1);
-                    gameRoundProgressService.startNextRound(lobbyCode, roundNo + 1);
+                    gameRoundNextRoundExecutor.startNextRound(lobbyCode, roundNo + 1);
                 } else {
                     long remainingDelay = limitTimeMillis - elapsed;
                     log.info("남은 시간으로 다음 라운드 시작 타이머 복구 등록 - code: {}, nextRound: {}, remaining: {}ms", lobbyCode, roundNo + 1, remainingDelay);
@@ -125,7 +128,7 @@ public class GameRoundRecoveryService {
                 }
             } else {
                 log.warn("ENDED 단계이나 라운드 종료 시각이 없음 -> 즉시 다음 라운드 시작. code: {}, nextRound: {}", lobbyCode, roundNo + 1);
-                gameRoundProgressService.startNextRound(lobbyCode, roundNo + 1);
+                gameRoundNextRoundExecutor.startNextRound(lobbyCode, roundNo + 1);
             }
         }
     }

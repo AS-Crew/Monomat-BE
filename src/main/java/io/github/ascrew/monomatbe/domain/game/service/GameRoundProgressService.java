@@ -33,7 +33,7 @@ public class GameRoundProgressService {
     private final GameRealtimeNotifier gameRealtimeNotifier;
     private final GameRoundEndService gameRoundEndService;
     private final GameRoundStartService gameRoundStartService;
-    private final GameRoundProgressService self;
+    private final GameRoundNextRoundExecutor gameRoundNextRoundExecutor;
 
     private final ConcurrentHashMap<String, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
 
@@ -46,7 +46,7 @@ public class GameRoundProgressService {
             GameRealtimeNotifier gameRealtimeNotifier,
             GameRoundEndService gameRoundEndService,
             GameRoundStartService gameRoundStartService,
-            @Lazy GameRoundProgressService self) {
+            @Lazy GameRoundNextRoundExecutor gameRoundNextRoundExecutor) {
         this.taskScheduler = taskScheduler;
         this.redisTemplate = redisTemplate;
         this.gameSessionJpaRepository = gameSessionJpaRepository;
@@ -54,7 +54,7 @@ public class GameRoundProgressService {
         this.gameRealtimeNotifier = gameRealtimeNotifier;
         this.gameRoundEndService = gameRoundEndService;
         this.gameRoundStartService = gameRoundStartService;
-        this.self = self;
+        this.gameRoundNextRoundExecutor = gameRoundNextRoundExecutor;
     }
 
     /**
@@ -74,7 +74,10 @@ public class GameRoundProgressService {
             }
         }, Instant.now().plusMillis(delayMillis));
 
-        scheduledTasks.put(key, future);
+        ScheduledFuture<?> oldFuture = scheduledTasks.put(key, future);
+        if (oldFuture != null) {
+            oldFuture.cancel(false);
+        }
     }
 
     /**
@@ -101,7 +104,10 @@ public class GameRoundProgressService {
             }
         }, Instant.now().plusMillis(remainingDelayMillis));
 
-        scheduledTasks.put(key, future);
+        ScheduledFuture<?> oldFuture = scheduledTasks.put(key, future);
+        if (oldFuture != null) {
+            oldFuture.cancel(false);
+        }
     }
 
     /**
@@ -119,94 +125,10 @@ public class GameRoundProgressService {
         
         taskScheduler.schedule(() -> {
             try {
-                self.startNextRound(lobbyCode, nextRoundNo);
+                gameRoundNextRoundExecutor.startNextRound(lobbyCode, nextRoundNo);
             } catch (Exception e) {
                 log.error("다음 라운드 시작 예약 처리 중 예외 발생 - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, e);
             }
         }, Instant.now().plusMillis(delayMillis));
-    }
-
-    /**
-     * 다음 라운드 데이터를 로드하고 준비 신호(ROUND_READY)를 브로드캐스트합니다.
-     */
-    @Transactional
-    public void startNextRound(String lobbyCode, int nextRoundNo) {
-        String nextRoundLockKey = RedisKeys.gameSessionNextRoundLockKey(lobbyCode, nextRoundNo);
-        Boolean lockAcquired = redisTemplate.opsForValue().setIfAbsent(nextRoundLockKey, "1", Duration.ofMinutes(5));
-
-        if (Boolean.FALSE.equals(lockAcquired)) {
-            log.info("다음 라운드 시작 무시됨 (이미 시작 처리됨) - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo);
-            return;
-        }
-
-        log.info("다음 라운드 시작 처리 - code: {}, roundNo: {}", lobbyCode, nextRoundNo);
-
-        boolean registered = false;
-        try {
-            // 1. 게임 세션 조회
-            GameSession gameSession = gameSessionJpaRepository.findActiveSessionByLobbyCode(lobbyCode)
-                    .orElseThrow(() -> new NoSuchElementException("게임 세션을 찾을 수 없습니다. code: " + lobbyCode));
-
-            // 2. DB 및 Redis 라운드 갱신
-            gameSession.moveToRound(nextRoundNo);
-            gameSessionJpaRepository.save(gameSession);
-
-            String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
-            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO, String.valueOf(nextRoundNo));
-            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_STATUS, "PLAYING");
-            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_ROUND_PHASE, "READY");
-
-            // 3. 다음 라운드 MapItem 조회
-            String roundsKey = RedisKeys.gameSessionRoundsKey(lobbyCode);
-            String mapItemIdStr = redisTemplate.opsForList().index(roundsKey, nextRoundNo - 1);
-            if (mapItemIdStr == null) {
-                throw new NoSuchElementException("다음 라운드의 문제 ID를 Redis에서 찾을 수 없습니다. roundNo: " + nextRoundNo);
-            }
-
-            Long mapItemId = Long.parseLong(mapItemIdStr);
-            MapItem mapItem = mapItemJpaRepository.findById(mapItemId)
-                    .orElseThrow(() -> new NoSuchElementException("MapItem을 찾을 수 없습니다. id: " + mapItemId));
-
-            // 4. 다음 라운드 DTO 구성
-            long serverStartedAt = System.currentTimeMillis();
-            int effectiveEndTime = mapItem.getStartTime() + gameSession.getLobby().getTimeLimitSeconds();
-
-            RoundStartDto nextRoundDto = RoundStartDto.builder()
-                    .type("ROUND_READY")
-                    .videoId(mapItem.getVideoId())
-                    .youtubeUrl(mapItem.getYoutubeUrl())
-                    .startTime(mapItem.getStartTime())
-                    .endTime(effectiveEndTime)
-                    .timeLimitSeconds(gameSession.getLobby().getTimeLimitSeconds())
-                    .roundNo(nextRoundNo)
-                    .serverStartedAt(serverStartedAt)
-                    .build();
-
-            // 5. 트랜잭션 성공 후 이벤트 발행 및 재생 타이머 시동
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    log.info("다음 라운드 시작 트랜잭션 커밋 완료 - ROUND_READY 브로드캐스트. code: {}, roundNo: {}", lobbyCode, nextRoundNo);
-                    gameRealtimeNotifier.notifyRoundStart(lobbyCode, nextRoundDto);
-
-                    gameRoundStartService.scheduleForcePlaybackStart(lobbyCode, nextRoundNo, gameSession.getLobby().getTimeLimitSeconds());
-                }
-
-                @Override
-                public void afterCompletion(int status) {
-                    if (status == STATUS_ROLLED_BACK) {
-                        log.warn("다음 라운드 시작 트랜잭션 롤백 감지 - 락 해제. code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo);
-                        redisTemplate.delete(nextRoundLockKey);
-                    }
-                }
-            });
-            registered = true;
-        } catch (Throwable t) {
-            if (!registered) {
-                log.warn("다음 라운드 시작 처리 중 예외 발생 - 락 해제. code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, t);
-                redisTemplate.delete(nextRoundLockKey);
-            }
-            throw t;
-        }
     }
 }

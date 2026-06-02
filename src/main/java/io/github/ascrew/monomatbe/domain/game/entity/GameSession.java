@@ -63,9 +63,12 @@ public class GameSession {
         this.endedAt = java.time.LocalDateTime.now();
     }
 
-    public void moveToRound(int targetRoundNo) {
-        if (targetRoundNo <= this.currentRoundNo) {
-            throw new IllegalStateException("이미 진행된 라운드입니다. current: " + this.currentRoundNo + ", target: " + targetRoundNo);
+    public void moveToNextRound(int targetRoundNo) {
+        if (targetRoundNo != this.currentRoundNo + 1) {
+            throw new IllegalStateException("다음 라운드로만 이동할 수 있습니다. current: " + this.currentRoundNo + ", target: " + targetRoundNo);
+        }
+        if (targetRoundNo > this.totalQuestionCount) {
+            throw new IllegalStateException("최대 라운드 수를 초과할 수 없습니다. total: " + this.totalQuestionCount + ", target: " + targetRoundNo);
         }
         this.currentRoundNo = targetRoundNo;
     }

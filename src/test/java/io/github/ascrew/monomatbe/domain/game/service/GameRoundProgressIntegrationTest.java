@@ -61,6 +61,9 @@ class GameRoundProgressIntegrationTest {
     private GameRoundProgressService gameRoundProgressService;
 
     @Autowired
+    private GameRoundNextRoundExecutor gameRoundNextRoundExecutor;
+
+    @Autowired
     private GameAnswerService gameAnswerService;
 
     @Autowired
@@ -274,7 +277,7 @@ class GameRoundProgressIntegrationTest {
         // 2라운드 시작 시도
         
         // when
-        gameRoundProgressService.startNextRound(LOBBY_CODE, 2);
+        gameRoundNextRoundExecutor.startNextRound(LOBBY_CODE, 2);
 
         // then
         assertThat(gameSession.getCurrentRoundNo()).isEqualTo(2);

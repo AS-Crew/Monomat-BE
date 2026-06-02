@@ -9,6 +9,8 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
 import io.github.ascrew.monomatbe.domain.map.support.AnswerNormalizer;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -229,7 +231,7 @@ public class GameAnswerService {
                 .content(content)
                 .timestamp(LocalDateTime.now().toString())
                 .build();
-        messagingTemplate.convertAndSend("/topic/game/" + code + "/chat", chatMessage);
+        messagingTemplate.convertAndSend(StompDestinations.subscribeGameChat(code), chatMessage);
     }
 
     private void broadcastSystemMessage(String code, String content) {
@@ -240,17 +242,17 @@ public class GameAnswerService {
                 .content(content)
                 .timestamp(LocalDateTime.now().toString())
                 .build();
-        messagingTemplate.convertAndSend("/topic/game/" + code + "/chat", systemMessage);
+        messagingTemplate.convertAndSend(StompDestinations.subscribeGameChat(code), systemMessage);
     }
 
     private void sendDirectCorrectResponse(String userIdentifier, int roundNo, boolean isFuzzy) {
         RoundCorrectResponse response = RoundCorrectResponse.builder()
-                .type("ROUND_CORRECT")
+                .type(GameEventTypes.ROUND_CORRECT)
                 .roundNo(roundNo)
                 .isFuzzy(isFuzzy)
                 .message(isFuzzy ? "오타 허용 정답입니다!" : "완벽한 정답입니다!")
                 .build();
-        messagingTemplate.convertAndSendToUser(userIdentifier, "/queue/game/answers", response);
+        messagingTemplate.convertAndSendToUser(userIdentifier, StompDestinations.SUBSCRIBE_GAME_ANSWERS, response);
     }
 
     private String getNickname(String userIdentifier) {

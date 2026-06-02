@@ -14,6 +14,7 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -183,7 +184,7 @@ public class GameSessionCreateService {
         MapItem firstItem = selectedItems.get(0);
         int effectiveEndTime = firstItem.getStartTime() + lobby.getTimeLimitSeconds();
         return RoundStartDto.builder()
-                .type("ROUND_READY")
+                .type(GameEventTypes.ROUND_READY)
                 .videoId(firstItem.getVideoId())
                 .youtubeUrl(firstItem.getYoutubeUrl())
                 .startTime(firstItem.getStartTime())

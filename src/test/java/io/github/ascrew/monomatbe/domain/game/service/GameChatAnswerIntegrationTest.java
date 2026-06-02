@@ -7,6 +7,7 @@ import io.github.ascrew.monomatbe.domain.game.dto.RoundCorrectResponse;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -113,7 +114,7 @@ class GameChatAnswerIntegrationTest {
 
         // then
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
@@ -138,14 +139,14 @@ class GameChatAnswerIntegrationTest {
         // then
         // 1. 시스템 정답 공지 브로드캐스트 발생 검증
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.SYSTEM);
         assertThat(broadcasted.getContent()).contains(NICKNAME + "님이 정답을 맞췄습니다!");
 
         // 2. 정답자 본인에게 개인 축하 메시지 수신 검증
-        verify(messagingTemplate).convertAndSendToUser(eq(USER_ID), eq("/queue/game/answers"), any(RoundCorrectResponse.class));
+        verify(messagingTemplate).convertAndSendToUser(eq(USER_ID), eq(StompDestinations.SUBSCRIBE_GAME_ANSWERS), any(RoundCorrectResponse.class));
 
         // 3. Redis Set에 정답자로 등록 검증
         Boolean isCorrect = redisTemplate.opsForSet().isMember(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1), USER_ID);
@@ -166,7 +167,7 @@ class GameChatAnswerIntegrationTest {
 
         // then
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
@@ -187,7 +188,7 @@ class GameChatAnswerIntegrationTest {
 
         // then
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
@@ -208,7 +209,7 @@ class GameChatAnswerIntegrationTest {
 
         // then
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
@@ -228,7 +229,7 @@ class GameChatAnswerIntegrationTest {
 
         // then
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);
@@ -251,7 +252,7 @@ class GameChatAnswerIntegrationTest {
 
         // then
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto broadcasted = chatCaptor.getValue();
         assertThat(broadcasted.getType()).isEqualTo(ChatMessageDto.MessageType.CHAT);

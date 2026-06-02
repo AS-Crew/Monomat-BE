@@ -2,6 +2,8 @@ package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.game.dto.RoundPlaybackStartedDto;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,10 +69,10 @@ class GameRoundStartServiceTest {
 
         // then
         ArgumentCaptor<RoundPlaybackStartedDto> captor = ArgumentCaptor.forClass(RoundPlaybackStartedDto.class);
-        verify(messagingTemplate).convertAndSend(eq("/topic/game/" + lobbyCode + "/round"), captor.capture());
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameRound(lobbyCode)), captor.capture());
 
         RoundPlaybackStartedDto dto = captor.getValue();
-        assertThat(dto.type()).isEqualTo("ROUND_PLAYBACK_STARTED");
+        assertThat(dto.type()).isEqualTo(GameEventTypes.ROUND_PLAYBACK_STARTED);
         assertThat(dto.roundNo()).isEqualTo(roundNo);
         assertThat(dto.durationSeconds()).isEqualTo(30);
     }

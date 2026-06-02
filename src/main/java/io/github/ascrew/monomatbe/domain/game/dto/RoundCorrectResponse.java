@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.game.dto;
 
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import lombok.Builder;
 
 /**
@@ -11,4 +12,10 @@ public record RoundCorrectResponse(
         Integer roundNo,
         boolean isFuzzy,
         String message
-) {}
+) {
+    public RoundCorrectResponse {
+        if (type == null) {
+            type = GameEventTypes.ROUND_CORRECT;
+        }
+    }
+}

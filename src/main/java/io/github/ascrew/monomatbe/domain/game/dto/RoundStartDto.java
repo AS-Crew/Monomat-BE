@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.game.dto;
 
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import lombok.Builder;
 
 /**
@@ -19,7 +20,7 @@ public record RoundStartDto(
 ) {
     public RoundStartDto {
         if (type == null) {
-            type = "ROUND_READY";
+            type = GameEventTypes.ROUND_READY;
         }
     }
 }

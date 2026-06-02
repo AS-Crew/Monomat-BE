@@ -12,8 +12,8 @@
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyDetailResponse;
+import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyListItemResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyPageResponse;
-import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyRedisDto;
 import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyQueryService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -129,7 +129,7 @@ public class LobbyQueryController {
                     """
     )
     @GetMapping
-    public ResponseEntity<LobbyPageResponse<LobbyRedisDto>> getPublicLobbies(
+    public ResponseEntity<LobbyPageResponse<LobbyListItemResponse>> getPublicLobbies(
             @Parameter(description = "로비 제목 검색어")
             @RequestParam(required = false) String keyword,
 
@@ -162,7 +162,7 @@ public class LobbyQueryController {
                 size
         );
 
-        LobbyPageResponse<LobbyRedisDto> response = lobbyQueryService.getPublicLobbyPage(condition);
+        LobbyPageResponse<LobbyListItemResponse> response = lobbyQueryService.getPublicLobbyPage(condition);
 
         log.info(
                 LOG_GET_PUBLIC_LOBBIES_RESPONSE,

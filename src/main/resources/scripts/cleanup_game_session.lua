@@ -70,12 +70,10 @@ if mode == 'DELETE' then
         processed = processed + redis.call('DEL', key)
     end
 else
-    -- EXPIRE: 존재하는 키에만 TTL 전환
+    -- EXPIRE: 사전 EXISTS 체크 없이 EXPIRE 반환값으로 집계한다.
+    -- (EXPIRE는 키가 없으면 0, TTL을 설정했으면 1을 반환하므로 EXISTS는 불필요한 중복 호출)
     for _, key in ipairs(keys) do
-        if redis.call('EXISTS', key) == 1 then
-            redis.call('EXPIRE', key, ttlSeconds)
-            processed = processed + 1
-        end
+        processed = processed + redis.call('EXPIRE', key, ttlSeconds)
     end
 end
 

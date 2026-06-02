@@ -6,6 +6,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
+import io.github.ascrew.monomatbe.domain.auth.exception.AuthPasswordChangeFailureException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.auth.service.PasswordPolicyValidator;
@@ -119,6 +120,7 @@ public class UserCommandService {
      * - 잠긴 계정은 비밀번호를 변경할 수 없다.
      * - 현재 비밀번호가 일치해야만 새 비밀번호로 변경할 수 있다.
      * - 현재 비밀번호 불일치 시 로그인 실패 정책과 동일하게 실패 횟수와 잠금을 적용한다.
+     * - 현재 비밀번호 불일치 예외는 noRollbackFor로 지정하여 실패 횟수/잠금 변경이 커밋되도록 보장한다.
      * - 새 비밀번호는 회원가입과 동일한 PasswordPolicyValidator 정책을 통과해야 한다.
      * - 새 비밀번호는 현재 비밀번호와 동일할 수 없다.
      * - 비밀번호 변경 성공 후 모든 활성 세션을 만료한다.
@@ -126,7 +128,7 @@ public class UserCommandService {
      * @param principal 인증 주체
      * @param request 비밀번호 변경 요청
      */
-    @Transactional
+    @Transactional(noRollbackFor = AuthPasswordChangeFailureException.class)
     public void changeMyPassword(
             CustomPrincipal principal,
             ChangePasswordRequest request
@@ -241,12 +243,12 @@ public class UserCommandService {
     ) {
         if (currentPassword == null || currentPassword.isBlank()) {
             recordPasswordChangeFailure(credential, now);
-            throw new AuthException(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH);
+            throw new AuthPasswordChangeFailureException(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH);
         }
 
         if (!passwordEncoder.matches(currentPassword, credential.getPasswordHash())) {
             recordPasswordChangeFailure(credential, now);
-            throw new AuthException(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH);
+            throw new AuthPasswordChangeFailureException(AuthErrorCode.AUTH_CURRENT_PASSWORD_MISMATCH);
         }
     }
 

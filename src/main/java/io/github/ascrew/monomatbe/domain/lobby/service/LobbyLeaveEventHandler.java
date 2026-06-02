@@ -60,13 +60,26 @@ public class LobbyLeaveEventHandler {
         switch (result) {
             case LeaveLobbyResult.Destroyed destroyed -> {
                 log.info("[handlePlayerLeave] 로비 폭파 - 로비: {}", destroyed.lobbyCode());
-                lobbyRealtimeNotifier.notifyLobbyListRefresh();
 
                 /*
                  * 게임 도중 전원 퇴장으로 로비가 폭파되면 게임 세션 Redis 키가 orphan으로 남는다.
                  * 도메인 간 직접 결합을 피하기 위해 LobbyClosedEvent로 game 도메인에 정리를 위임한다.
+                 *
+                 * [순서·격리] 내부 정합성(세션 정리) 이벤트를 실시간 STOMP 브로드캐스트보다 먼저 발행하고,
+                 * 브로드캐스트는 try-catch로 격리한다. STOMP 전송 실패가 정리 이벤트 발행을 막아
+                 * Redis에 orphan 세션 키가 영구 잔존하는 것을 방지한다.
                  */
                 eventPublisher.publishEvent(new LobbyClosedEvent(destroyed.lobbyCode()));
+
+                try {
+                    lobbyRealtimeNotifier.notifyLobbyListRefresh();
+                } catch (Exception e) {
+                    log.warn(
+                            "[handlePlayerLeave] 로비 폭파 목록 갱신 알림 실패 - 로비: {}",
+                            destroyed.lobbyCode(),
+                            e
+                    );
+                }
             }
 
             case LeaveLobbyResult.Delegated delegated -> {

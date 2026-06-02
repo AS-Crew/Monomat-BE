@@ -104,6 +104,7 @@ public class GameSessionCreateService {
                 .currentRoundNo(1)
                 .totalQuestionCount(lobby.getQuestionCount())
                 .startedAt(startedAt)
+                .status(io.github.ascrew.monomatbe.domain.game.entity.GameSessionStatus.PLAYING)
                 .build();
         gameSessionJpaRepository.save(gameSession);
 

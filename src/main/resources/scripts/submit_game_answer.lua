@@ -22,6 +22,12 @@ if currentRoundNo ~= requestRoundNo then
     return 'WRONG_ROUND'
 end
 
+-- 2.5 이미 종료된 라운드인지 검증 (round_ended_at 존재 여부 확인)
+local endedField = 'round_ended_at:' .. requestRoundNo
+if redis.call('HEXISTS', sessionKey, endedField) == 1 then
+    return 'ROUND_ALREADY_ENDED'
+end
+
 -- 3. 시간 초과 검증 (지연 완충 시간 1.5초 고려)
 -- Java RedisKeys.gameSessionRoundPlaybackStartedAtField() 계약과 일치하는 필드명 사용
 local playbackStartedKey = 'playback_started_at:' .. requestRoundNo

@@ -11,7 +11,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -19,24 +18,24 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * GameRoundRecoveryService 복구 워커 로직 검증.
+ * GameRoundStallRecoveryService 복구 워커 로직 검증.
  *
  * 실제 Redis/스케줄러 없이 큐 payload 분기(미도래/이미 진행/세션 소멸/정지 재트리거/실패 백오프)를 단위 검증한다.
  */
-class GameRoundRecoveryServiceTest {
+class GameRoundStallRecoveryServiceTest {
 
     private static final String CODE = "ABC123";
     private static final String SESSION_KEY = RedisKeys.gameSessionKey(CODE);
 
     private final GameRoundRecoveryRepository repository = mock(GameRoundRecoveryRepository.class);
-    private final GameRoundProgressService progressService = mock(GameRoundProgressService.class);
+    private final GameRoundNextRoundExecutor nextRoundExecutor = mock(GameRoundNextRoundExecutor.class);
     private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
 
     @SuppressWarnings("unchecked")
     private final HashOperations<String, Object, Object> hashOperations = mock(HashOperations.class);
 
-    private final GameRoundRecoveryService service = new GameRoundRecoveryService(
-            repository, progressService, redisTemplate);
+    private final GameRoundStallRecoveryService service = new GameRoundStallRecoveryService(
+            repository, nextRoundExecutor, redisTemplate);
 
     @BeforeEach
     void setUp() {
@@ -56,7 +55,7 @@ class GameRoundRecoveryServiceTest {
         service.recoverStalledRounds();
 
         verify(repository).requeueRoundRecovery(notDue);
-        verify(progressService, never()).startNextRound(anyString(), anyInt());
+        verify(nextRoundExecutor, never()).startNextRound(anyString(), anyInt());
         verify(hashOperations, never()).get(any(), any());
     }
 
@@ -65,12 +64,12 @@ class GameRoundRecoveryServiceTest {
     void alreadyProgressed_marksSuccessAndDrops() {
         when(repository.pollRoundRecovery()).thenReturn(payload(3, 0, pastTime()));
         when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_CURRENT_ROUND_NO)).thenReturn("3");
-        when(hashOperations.get(SESSION_KEY, "status")).thenReturn("READY");
+        when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_STATUS)).thenReturn("READY");
 
         service.recoverStalledRounds();
 
         verify(repository).incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_RECOVERY_SUCCESS);
-        verify(progressService, never()).startNextRound(anyString(), anyInt());
+        verify(nextRoundExecutor, never()).startNextRound(anyString(), anyInt());
         verify(repository, never()).requeueRoundRecovery(anyString());
     }
 
@@ -83,7 +82,7 @@ class GameRoundRecoveryServiceTest {
         service.recoverStalledRounds();
 
         verify(repository).incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_RECOVERY_SUCCESS);
-        verify(progressService, never()).startNextRound(anyString(), anyInt());
+        verify(nextRoundExecutor, never()).startNextRound(anyString(), anyInt());
     }
 
     @Test
@@ -91,11 +90,11 @@ class GameRoundRecoveryServiceTest {
     void stalled_retriggersStartNextRound() {
         when(repository.pollRoundRecovery()).thenReturn(payload(3, 0, pastTime()));
         when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_CURRENT_ROUND_NO)).thenReturn("2");
-        when(hashOperations.get(SESSION_KEY, "status")).thenReturn("PLAYING");
+        when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_STATUS)).thenReturn("PLAYING");
 
         service.recoverStalledRounds();
 
-        verify(progressService).startNextRound(CODE, 3);
+        verify(nextRoundExecutor).startNextRound(CODE, 3);
         verify(repository).incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_RECOVERY_SUCCESS);
         verify(repository, never()).requeueRoundRecovery(anyString());
     }
@@ -105,8 +104,8 @@ class GameRoundRecoveryServiceTest {
     void retriggerFailure_marksFailedAndRequeues() {
         when(repository.pollRoundRecovery()).thenReturn(payload(3, 0, pastTime()));
         when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_CURRENT_ROUND_NO)).thenReturn("2");
-        when(hashOperations.get(SESSION_KEY, "status")).thenReturn("PLAYING");
-        doThrow(new RuntimeException("db down")).when(progressService).startNextRound(CODE, 3);
+        when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_STATUS)).thenReturn("PLAYING");
+        doThrow(new RuntimeException("db down")).when(nextRoundExecutor).startNextRound(CODE, 3);
 
         service.recoverStalledRounds();
 
@@ -119,8 +118,8 @@ class GameRoundRecoveryServiceTest {
     void exceedsMaxRetry_doesNotRequeue() {
         when(repository.pollRoundRecovery()).thenReturn(payload(3, 5, pastTime()));
         when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_CURRENT_ROUND_NO)).thenReturn("2");
-        when(hashOperations.get(SESSION_KEY, "status")).thenReturn("PLAYING");
-        doThrow(new RuntimeException("db down")).when(progressService).startNextRound(CODE, 3);
+        when(hashOperations.get(SESSION_KEY, RedisKeys.FIELD_STATUS)).thenReturn("PLAYING");
+        doThrow(new RuntimeException("db down")).when(nextRoundExecutor).startNextRound(CODE, 3);
 
         service.recoverStalledRounds();
 
@@ -135,7 +134,7 @@ class GameRoundRecoveryServiceTest {
 
         service.recoverStalledRounds();
 
-        verify(progressService, never()).startNextRound(anyString(), anyInt());
+        verify(nextRoundExecutor, never()).startNextRound(anyString(), anyInt());
         verify(repository, never()).incrementRoundRecoveryMetric(anyString());
         verify(repository, never()).requeueRoundRecovery(anyString());
     }
@@ -149,7 +148,7 @@ class GameRoundRecoveryServiceTest {
 
         verify(repository).incrementRoundRecoveryMetric(RedisKeys.METRIC_GAME_ROUND_RECOVERY_FAILED);
         verify(repository, never()).requeueRoundRecovery(anyString());
-        verify(progressService, never()).startNextRound(anyString(), anyInt());
+        verify(nextRoundExecutor, never()).startNextRound(anyString(), anyInt());
     }
 
     private long pastTime() {

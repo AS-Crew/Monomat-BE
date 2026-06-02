@@ -1627,10 +1627,10 @@ SEND /app/lobby/{code}/kick
 - **응답 (Response)**:
   ```json
   {
-    "status": "PLAYING", // READY, PLAYING, FINISHED
-    "currentRoundNo": 1,
+    "status": "PLAYING", // WAITING, PLAYING, FINISHED
+    "roundNo": 1,
     "timeLimitSeconds": 30,
-    "playbackStartedAt": 1716500000000 // 아직 재생 전인 경우 null
+    "serverStartedAt": 1716500000000 // 아직 재생 전인 경우 null
   }
   ```
 
@@ -1699,7 +1699,9 @@ SEND /app/lobby/{code}/kick
           "rank": 2,
           "scoreAdded": 100
         }
-      ]
+      ],
+      "waitTimeSeconds": 10,
+      "isLastRound": false
     }
     ```
 

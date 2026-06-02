@@ -876,6 +876,7 @@ GameRealtimeNotifier / LobbyRealtimeNotifier
 | `current_round_no` | 현재 진행 중인 라운드 번호 (1-based) |
 | `time_limit_seconds` | 라운드별 재생 시간 제한 |
 | `playback_started_at` | 현재 라운드의 비디오 재생 개시 시각 (Clock sync용, 아직 재생 전이면 null) |
+| `round_ended_at:{roundNo}` | 특정 라운드가 종료된 시각 (Epoch milliseconds, 결과 화면 대기 10초 및 중복 정답 차단 검사에 사용) |
 
 ### `game:session:{lobbyCode}:round:{roundNo}:data` Hash 구조
 

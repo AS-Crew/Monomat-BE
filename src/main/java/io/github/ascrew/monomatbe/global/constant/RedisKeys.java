@@ -739,6 +739,9 @@ public final class RedisKeys {
     /** 게임 세션 현재 라운드 번호 필드. */
     public static final String FIELD_CURRENT_ROUND_NO = "current_round_no";
 
+    /** 게임 세션 Hash의 라운드 진행 단계 필드. (READY, PLAYING, ENDED, FINISHED) */
+    public static final String FIELD_ROUND_PHASE = "round_phase";
+
     /**
      * 게임 세션 키의 base 부분을 반환합니다. ({lobbyCode} hash-tag 적용)
      *
@@ -842,6 +845,16 @@ public final class RedisKeys {
     }
 
     /**
+     * 특정 라운드의 종료 시각 필드명을 반환합니다.
+     *
+     * @param roundNo 라운드 번호
+     * @return "round_ended_at:{roundNo}"
+     */
+    public static String gameSessionRoundEndedAtField(int roundNo) {
+        return "round_ended_at:" + roundNo;
+    }
+
+    /**
      * 특정 라운드에서 정답을 맞춘 유저들의 제출 시각을 저장하는 Hash 키를 반환합니다.
      *
      * @param lobbyCode 로비 초대 코드
@@ -875,5 +888,16 @@ public final class RedisKeys {
      */
     public static String gameSessionRoundNextLockKey(String lobbyCode, int roundNo) {
         return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_round_lock";
+    }
+
+    /**
+     * 다음 라운드 시작 처리 중 중복 방지 락 키를 반환합니다. (GameRoundNextRoundExecutor 전용, 짧은 TTL)
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 시작할 다음 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:next_lock"
+     */
+    public static String gameSessionNextRoundLockKey(String lobbyCode, int roundNo) {
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_lock";
     }
 }

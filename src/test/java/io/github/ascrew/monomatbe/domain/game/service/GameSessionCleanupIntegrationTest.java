@@ -91,6 +91,25 @@ class GameSessionCleanupIntegrationTest {
     }
 
     @Test
+    @DisplayName("cleanup Lua는 RedisKeys가 생성하는 모든 게임 세션 키를 빠짐없이 정리한다 (키 계약 고정)")
+    void cleanupScript_deletesExactlyAllRedisKeysGameSessionKeys() {
+        // given - RedisKeys 팩토리로 만드는 base 3종 + 라운드별 6종을 모두 생성
+        givenFullGameSession(LOBBY_CODE, TOTAL_ROUNDS);
+        List<String> expectedKeys = allGameSessionKeys(LOBBY_CODE, TOTAL_ROUNDS);
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+
+        // when - 스크립트를 직접 실행해 처리 키 수(processed) 반환값을 확인한다
+        String processed = redisTemplate.execute(
+                cleanupGameSessionScript, List.of(sessionKey), "DELETE", "0");
+
+        // then - RedisKeys가 만든 모든 키가 삭제되고, Lua가 정리한 키 수가 정확히 일치한다.
+        // (RedisKeys suffix 변경/신규 라운드 키 추가 시 allGameSessionKeys와 Lua roundSuffixes 불일치를 잡는다.
+        //  새 라운드 키 메서드를 RedisKeys에 추가하면 allGameSessionKeys에도 반드시 추가해야 한다.)
+        assertThat(expectedKeys).noneMatch(redisTemplate::hasKey);
+        assertThat(processed).isEqualTo(String.valueOf(expectedKeys.size()));
+    }
+
+    @Test
     @DisplayName("expireWithGracePeriod는 존재하는 모든 키를 0<ttl<=300으로 전환한다")
     void expireWithGracePeriod_setsShortTtlOnAllKeys() {
         // given - 생성 시점처럼 2시간 TTL을 부여해 둔다

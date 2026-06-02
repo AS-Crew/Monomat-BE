@@ -12,7 +12,6 @@ package io.github.ascrew.monomatbe.domain.lobby.dto;
  * 공개 로비 목록의 각 로비 아이템 응답 DTO
  *
  * @param code                 로비 초대 코드 (6자리 고유 코드)
- * @param hostId               현재 방장의 사용자 식별자 (userIdentifier)
  * @param hostNickname         방장 닉네임. 정식 회원/게스트 모두 내려오며, 조회 실패 시 fallback 값
  * @param title                로비 제목
  * @param mapId                선택된 맵 세트 ID (미선택 시 null)
@@ -28,7 +27,6 @@ package io.github.ascrew.monomatbe.domain.lobby.dto;
  */
 public record LobbyListItemResponse(
         String code,
-        String hostId,
         String hostNickname,
         String title,
         Long mapId,
@@ -53,7 +51,6 @@ public record LobbyListItemResponse(
     public static LobbyListItemResponse of(LobbyRedisDto dto, String hostNickname) {
         return new LobbyListItemResponse(
                 dto.getCode(),
-                dto.getHostId(),
                 hostNickname,
                 dto.getTitle(),
                 dto.getMapId(),

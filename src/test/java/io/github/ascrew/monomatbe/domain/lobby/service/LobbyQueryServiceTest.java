@@ -359,12 +359,11 @@ class LobbyQueryServiceTest {
         assertThat(result.items())
                 .extracting(
                         LobbyListItemResponse::code,
-                        LobbyListItemResponse::hostId,
                         LobbyListItemResponse::hostNickname
                 )
                 .containsExactly(
-                        tuple("ROOM-1", memberHostId, "정식회원닉"),
-                        tuple("ROOM-2", guestHostId, "게스트닉")
+                        tuple("ROOM-1", "정식회원닉"),
+                        tuple("ROOM-2", "게스트닉")
                 );
 
         // N+1 방지: 페이지 내 방장 닉네임은 단 1회 조회로 처리한다.

@@ -57,7 +57,6 @@ class LobbyQueryControllerMockMvcTest {
         // given
         LobbyListItemResponse item = new LobbyListItemResponse(
                 "ABC123",
-                "host-uuid",
                 "모노유저",
                 "K-POP 퀴즈방",
                 10L,
@@ -84,7 +83,8 @@ class LobbyQueryControllerMockMvcTest {
                 .andExpect(jsonPath("$.items[0].hostNickname").value("모노유저"))
                 // 기존 필드 회귀 가드 (필드명/값 동일)
                 .andExpect(jsonPath("$.items[0].code").value("ABC123"))
-                .andExpect(jsonPath("$.items[0].hostId").value("host-uuid"))
+                // hostId(userIdentifier)는 공개 목록 응답에서 노출되지 않아야 한다
+                .andExpect(jsonPath("$.items[0].hostId").doesNotExist())
                 .andExpect(jsonPath("$.items[0].title").value("K-POP 퀴즈방"))
                 .andExpect(jsonPath("$.items[0].mapId").value(10))
                 .andExpect(jsonPath("$.items[0].mapTitle").value("아이돌 명곡"))

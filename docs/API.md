@@ -576,133 +576,79 @@ a d m i n123
 
 ```http
 POST /api/lobbies
-```
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+````
 
-로비를 생성하고 6자리 초대 코드를 발급합니다.
-JWT Access Token이 필요합니다. 게스트와 정식 회원 모두 생성 가능합니다.
+로그인한 사용자가 게임 로비를 생성합니다.
 
-`mapId`는 선택 사항입니다.
-로비는 맵 없이 먼저 생성할 수 있으며, 게임 시작 시점에는 선택된 맵이 있어야 합니다.
-`mapId`가 전달된 경우 백엔드에서 맵 존재 여부, 삭제 여부, 접근 권한을 검증합니다.
+`maxPlayers`, `questionCount`, `timeLimitSeconds`는 생략할 수 있으며, 생략 시 서버 기본값이 적용됩니다.
 
-**Request Header**
-
-| 헤더              | 필수 | 설명                     |
-| --------------- | -- | ---------------------- |
-| `Authorization` | ✅  | `Bearer {accessToken}` |
-
-**Request Body — 맵 선택 로비**
+#### Request Body
 
 ```json
 {
-  "title": "K-POP 퀴즈방",
-  "maxPlayers": 8,
+  "title": "모노맛 테스트 로비",
+  "maxPlayers": 4,
   "isPrivate": false,
   "mapId": 1,
-  "roundCount": 5,
+  "questionCount": 10,
   "timeLimitSeconds": 30
 }
 ```
 
-**Request Body — 맵 미선택 로비**
+| 필드                 | 타입      | 필수 |  기본값 | 제한                | 설명                         |
+| ------------------ | ------- | -: | ---: | ----------------- | -------------------------- |
+| `title`            | string  |  O |    - | 최대 255자, blank 불가 | 로비 제목                      |
+| `maxPlayers`       | number  |  X |    4 | 2~8               | 최대 참여 인원                   |
+| `isPrivate`        | boolean |  O |    - | -                 | 비공개 로비 여부                  |
+| `mapId`            | number  |  X | null | 양수                | 연결할 맵 ID. 생략 시 맵 미선택 로비 생성 |
+| `questionCount`    | number  |  X |   10 | 1~50              | 진행할 문제 수/라운드 수             |
+| `timeLimitSeconds` | number  |  X |   30 | 10~120            | 라운드당 제한 시간(초)              |
 
-```json
-{
-  "title": "K-POP 퀴즈방",
-  "maxPlayers": 8,
-  "isPrivate": false,
-  "mapId": null,
-  "roundCount": 5,
-  "timeLimitSeconds": 30
-}
+#### 로비 생성 기본값/제한 정책
+
+| 항목         | 최소값 | 기본값 |  최대값 |
+| ---------- | --: | --: | ---: |
+| 최대 인원      |  2명 |  4명 |   8명 |
+| 문제 수/라운드 수 |  1개 | 10개 |  50개 |
+| 라운드당 제한 시간 | 10초 | 30초 | 120초 |
+
+#### 맵 선택 시 문제 수 정책
+
+`mapId`를 전달한 경우, 요청한 `questionCount`는 해당 맵의 등록 곡 수보다 클 수 없습니다.
+
+예를 들어 선택한 맵의 등록 곡 수가 7개인데 `questionCount`를 10으로 요청하면 `400 Bad Request`가 반환됩니다.
+
+#### Success Response
+
+```http
+HTTP/1.1 201 Created
 ```
-
-`mapId` 필드는 생략할 수도 있습니다.
-
-```json
-{
-  "title": "K-POP 퀴즈방",
-  "maxPlayers": 8,
-  "isPrivate": false,
-  "roundCount": 5,
-  "timeLimitSeconds": 30
-}
-```
-
-| 필드                 | 타입      | 필수 | 설명                                  |
-| ------------------ | ------- | -- | ----------------------------------- |
-| `title`            | String  | ✅  | 로비 제목 (최대 255자)                     |
-| `maxPlayers`       | Integer | ✅  | 최대 참여 인원 (2~8)                      |
-| `isPrivate`        | Boolean | ✅  | 비공개 여부                              |
-| `mapId`            | Long    | ❌  | 로비에 연결할 맵 ID. 미선택 시 `null` 또는 생략 가능 |
-| `roundCount`       | Integer | ❌  | 라운드 수 (1~20, 기본값 5)                 |
-| `timeLimitSeconds` | Integer | ❌  | 제한 시간 초 (10~120, 기본값 30)            |
-
-**Response `201 Created` — 맵 선택 로비**
 
 ```json
 {
   "lobbyId": 1,
   "inviteCode": "ABC123",
-  "title": "K-POP 퀴즈방",
-  "maxPlayers": 8,
+  "title": "모노맛 테스트 로비",
+  "maxPlayers": 4,
   "isPrivate": false,
   "status": "WAITING",
   "mapId": 1,
-  "mapTitle": "K-POP 2세대",
+  "mapTitle": "K-POP 퀴즈",
   "mapCategory": "K-POP"
 }
 ```
 
-**Response `201 Created` — 맵 미선택 로비**
+#### Error Response
 
-```json
-{
-  "lobbyId": 1,
-  "inviteCode": "ABC123",
-  "title": "K-POP 퀴즈방",
-  "maxPlayers": 8,
-  "isPrivate": false,
-  "status": "WAITING",
-  "mapId": null,
-  "mapTitle": null,
-  "mapCategory": null
-}
-```
-
-| 필드            | 타입      | 설명                                                 |
-| ------------- | ------- | -------------------------------------------------- |
-| `lobbyId`     | Long    | DB GAME_LOBBY.id                                   |
-| `inviteCode`  | String  | 6자리 초대 코드                                          |
-| `title`       | String  | 로비 제목                                              |
-| `maxPlayers`  | Integer | 최대 참여 인원                                           |
-| `isPrivate`   | Boolean | 비공개 여부                                             |
-| `status`      | String  | 로비 상태 (`WAITING`)                                  |
-| `mapId`       | Long    | 선택된 맵 ID (미선택 시 `null`)                            |
-| `mapTitle`    | String  | 선택된 맵 제목 (미선택 시 `null`)                            |
-| `mapCategory` | String  | 선택된 맵 카테고리 (`K-POP`, `J-POP`, `POP`, 미선택 시 `null`) |
-
-**맵 검증 정책**
-
-| 상황          | 결과              |
-| ----------- | --------------- |
-| `mapId` 없음  | 맵 미선택 로비로 생성 허용 |
-| 공개 맵        | 로비 연결 허용        |
-| 본인 소유 비공개 맵 | 로비 연결 허용        |
-| 타인 소유 비공개 맵 | 로비 연결 거부        |
-| 삭제된 맵       | 로비 연결 거부        |
-| 존재하지 않는 맵   | 로비 연결 거부        |
-
-**Error**
-
-| 상태 코드                     | 설명                              |
-| ------------------------- | ------------------------------- |
-| `400 Bad Request`         | 요청 검증 실패 (`mapId`가 양수가 아닌 경우 등) |
-| `401 Unauthorized`        | JWT 토큰 없음 또는 만료                 |
-| `403 Forbidden`           | 타인 소유 비공개 맵을 로비에 연결하려는 경우       |
-| `404 Not Found`           | 존재하지 않는 사용자 또는 존재하지 않는 맵        |
-| `409 Conflict`            | 삭제된 맵을 로비에 연결하려는 경우             |
-| `503 Service Unavailable` | 초대 코드 생성 실패 (재시도 초과)            |
+| HTTP Status | 상황                                 |
+| ----------: | ---------------------------------- |
+|         400 | 요청 본문 검증 실패                        |
+|         400 | 선택한 맵의 등록 곡 수보다 `questionCount`가 큼 |
+|         401 | 인증 정보 없음 또는 유효하지 않은 Access Token   |
+|         404 | 사용자 또는 선택한 맵을 찾을 수 없음              |
+|         500 | Redis 저장 후 DB 스냅샷 저장 실패 등 로비 생성 실패 |
 
 ---
 

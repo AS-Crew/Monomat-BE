@@ -77,10 +77,10 @@ public class LobbyCreateService {
      * 1. principal null 및 userId null 검증
      * 2. JWT에서 추출한 userId로 User 엔티티 조회
      * 3. 선택된 mapId가 있으면 LobbyMapPolicy로 맵 존재/삭제/권한 검증
-     * 4. questionCount 동적 검증:
-     *    - 기본값은 CreateLobbyRequest compact constructor에서 적용
-     *    - mapId 있음: request.questionCount > numOfSong이면 400 BAD_REQUEST
-     *    - mapId 없음: request.questionCount 그대로 사용
+     * 4. questionCount 결정:
+     *    - mapId 없음: request.questionCount가 null이면 DEFAULT_QUESTION_COUNT 적용
+     *    - mapId 있음 + questionCount 생략: min(DEFAULT_QUESTION_COUNT, numOfSong) 적용
+     *    - mapId 있음 + questionCount 명시: numOfSong 초과 시 400 BAD_REQUEST
      * 5. Lua 스크립트로 초대 코드 선점 및 Redis 로비 데이터 원자 저장
      * 6. DB에 GAME_LOBBY 스냅샷 저장
      * 7. DB 저장 실패 시 Redis 보상 삭제
@@ -190,23 +190,31 @@ public class LobbyCreateService {
      * 유효한 questionCount를 결정한다.
      *
      * [결정 규칙]
-     * - CreateLobbyRequest compact constructor에서 null 기본값을 이미 적용한다.
-     * - mapId 없음: request.questionCount 그대로 사용
+     * - mapId 없음:
+     *   - request.questionCount == null → DEFAULT_QUESTION_COUNT
+     *   - request.questionCount != null → request.questionCount
      * - mapId 있음:
+     *   - request.questionCount == null → min(DEFAULT_QUESTION_COUNT, numOfSong)
      *   - request.questionCount > numOfSong → 400 BAD_REQUEST
-     *   - request.questionCount <= numOfSong → request.questionCount 그대로 사용
+     *   - request.questionCount <= numOfSong → request.questionCount
      *
      * LobbyMapPolicy가 이미 맵 존재·삭제·권한을 검증했으므로 findById는 항상 성공한다.
      */
     private int resolveQuestionCount(CreateLobbyRequest request, LobbyMapMetadata mapMetadata) {
-        int requestedQuestionCount = request.questionCount();
+        Integer requestedQuestionCount = request.questionCount();
 
         if (mapMetadata == null || mapMetadata.mapId() == null) {
-            return requestedQuestionCount;
+            return requestedQuestionCount == null
+                    ? LobbyDefaults.DEFAULT_QUESTION_COUNT
+                    : requestedQuestionCount;
         }
 
         QuizMap map = quizMapJpaRepository.findById(mapMetadata.mapId()).orElseThrow();
         int numOfSong = map.getNumOfSong();
+
+        if (requestedQuestionCount == null) {
+            return Math.min(LobbyDefaults.DEFAULT_QUESTION_COUNT, numOfSong);
+        }
 
         if (requestedQuestionCount > numOfSong) {
             throw new ResponseStatusException(

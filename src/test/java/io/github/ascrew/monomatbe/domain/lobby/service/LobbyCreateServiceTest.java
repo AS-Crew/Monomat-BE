@@ -98,31 +98,41 @@ class LobbyCreateServiceTest {
     }
 
     @Test
-    @DisplayName("맵 선택 상태에서 questionCount를 생략했지만 맵 곡 수가 10개보다 적으면 400으로 실패한다")
-    void failsWhenDefaultQuestionCountExceedsSelectedMapSongCount() {
+    @DisplayName("맵 선택 상태에서 questionCount를 생략하고 맵 곡 수가 10개보다 적으면 맵 곡 수로 보정해 생성한다")
+    void createsLobbyWithMapSongCountWhenDefaultQuestionCountExceedsSelectedMapSongCount() {
+        int mapSongCount = LobbyDefaults.DEFAULT_QUESTION_COUNT - 1;
+
         CreateLobbyRequest request = createRequest(MAP_ID, null);
         CustomPrincipal principal = createPrincipal();
         User host = createHost();
         LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP");
-        QuizMap map = createMap(LobbyDefaults.DEFAULT_QUESTION_COUNT - 1);
+        QuizMap map = createMap(mapSongCount);
 
         when(userRepository.findById(HOST_USER_ID)).thenReturn(Optional.of(host));
         when(lobbyMapPolicy.resolveLobbyMapMetadata(MAP_ID, HOST_USER_ID)).thenReturn(mapMetadata);
         when(quizMapJpaRepository.findById(MAP_ID)).thenReturn(Optional.of(map));
+        when(lobbyRepository.saveToRedis(
+                eq(request),
+                eq(HOST_IDENTIFIER),
+                eq(mapMetadata),
+                eq(mapSongCount),
+                eq(LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS)
+        )).thenReturn(INVITE_CODE);
+        when(gameLobbyJpaRepository.save(any(GameLobby.class))).thenAnswer(invocation -> {
+            GameLobby gameLobby = invocation.getArgument(0);
+            gameLobby.prePersist();
+            return gameLobby;
+        });
 
-        assertThatThrownBy(() -> lobbyCreateService.createLobby(request, principal))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("설정한 문제 수(" + LobbyDefaults.DEFAULT_QUESTION_COUNT + ")")
-                .hasMessageContaining("맵의 등록 곡 수(" + (LobbyDefaults.DEFAULT_QUESTION_COUNT - 1) + ")보다 많습니다.");
+        lobbyCreateService.createLobby(request, principal);
 
-        verify(lobbyRepository, never()).saveToRedis(
-                any(),
-                any(),
-                any(),
-                anyInt(),
-                anyInt()
-        );
-        verify(gameLobbyJpaRepository, never()).save(any(GameLobby.class));
+        ArgumentCaptor<GameLobby> gameLobbyCaptor = ArgumentCaptor.forClass(GameLobby.class);
+        verify(gameLobbyJpaRepository).save(gameLobbyCaptor.capture());
+
+        GameLobby savedLobby = gameLobbyCaptor.getValue();
+        assertThat(savedLobby.getQuestionCount()).isEqualTo(mapSongCount);
+        assertThat(savedLobby.getMaxPlayers()).isEqualTo(LobbyDefaults.DEFAULT_MAX_PLAYERS);
+        assertThat(savedLobby.getTimeLimitSeconds()).isEqualTo(LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS);
     }
 
     @Test

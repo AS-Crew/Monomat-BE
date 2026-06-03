@@ -43,15 +43,15 @@ class CreateLobbyRequestTest {
     }
 
     @Test
-    @DisplayName("questionCount를 생략하면 기본값 10개가 적용된다")
-    void appliesDefaultQuestionCountWhenNull() {
+    @DisplayName("questionCount를 생략하면 DTO에서는 null을 유지한다")
+    void keepsQuestionCountNullWhenOmitted() {
         CreateLobbyRequest request = createRequest(
                 LobbyDefaults.DEFAULT_MAX_PLAYERS,
                 null,
                 LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS
         );
 
-        assertThat(request.questionCount()).isEqualTo(LobbyDefaults.DEFAULT_QUESTION_COUNT);
+        assertThat(request.questionCount()).isNull();
     }
 
     @Test
@@ -67,12 +67,12 @@ class CreateLobbyRequestTest {
     }
 
     @Test
-    @DisplayName("maxPlayers, questionCount, timeLimitSeconds를 모두 생략하면 기본값이 모두 적용된다")
-    void appliesAllDefaultsWhenNullableFieldsAreNull() {
+    @DisplayName("maxPlayers와 timeLimitSeconds를 생략하면 기본값이 적용되고 questionCount는 null을 유지한다")
+    void appliesDefaultsExceptQuestionCountWhenNullableFieldsAreNull() {
         CreateLobbyRequest request = createRequest(null, null, null);
 
         assertThat(request.maxPlayers()).isEqualTo(LobbyDefaults.DEFAULT_MAX_PLAYERS);
-        assertThat(request.questionCount()).isEqualTo(LobbyDefaults.DEFAULT_QUESTION_COUNT);
+        assertThat(request.questionCount()).isNull();
         assertThat(request.timeLimitSeconds()).isEqualTo(LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS);
     }
 

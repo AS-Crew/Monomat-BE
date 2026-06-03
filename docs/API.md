@@ -270,11 +270,8 @@ Content-Type: application/json
 
 #### 맵 선택 시 문제 수 정책
 
-`mapId`를 전달한 경우, 요청한 `questionCount`는 해당 맵의 등록 곡 수보다 클 수 없습니다.
-
-`questionCount`를 생략한 경우에도 서버 기본값 10개가 먼저 적용됩니다. 따라서 선택한 맵의 등록 곡 수가 10개 미만이면 로비 생성은 `400 Bad Request`로 실패합니다.
-
-예를 들어 선택한 맵의 등록 곡 수가 7개인데 `questionCount`를 생략하거나 10으로 요청하면 `400 Bad Request`가 반환됩니다.
+questionCount 생략 + mapId 있음 → min(10, map.numOfSong)
+questionCount 명시 + mapId 있음 + questionCount > map.numOfSong → 400
 
 #### Success Response
 

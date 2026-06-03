@@ -15,14 +15,17 @@ import jakarta.validation.constraints.Size;
  * 로비는 맵 없이 먼저 생성될 수 있으며, 게임 시작 시점에 맵 선택 여부를 검증한다.
  *
  * [기본값 처리]
- * 클라이언트가 maxPlayers, questionCount, timeLimitSeconds를 생략하면
+ * 클라이언트가 maxPlayers, timeLimitSeconds를 생략하면
  * compact constructor에서 LobbyDefaults 기준 기본값을 적용한다.
+ *
+ * questionCount는 선택 맵의 등록 곡 수와 함께 결정해야 하므로
+ * DTO에서 기본값을 강제 적용하지 않고 LobbyCreateService에서 처리한다.
  *
  * [검증 규칙]
  * - title            : 필수, 최대 255자
  * - maxPlayers       : 2~8명, 생략 시 4명
  * - mapId            : 선택 사항, 전달 시 양수
- * - questionCount    : 1~50개, 생략 시 10개
+ * - questionCount    : 1~50개, 생략 시 서비스에서 결정
  * - timeLimitSeconds : 10~120초, 생략 시 30초
  */
 public record CreateLobbyRequest(
@@ -55,8 +58,8 @@ public record CreateLobbyRequest(
         /**
          * 문제 갯수 또는 라운드 수
          *
-         * null이면 LobbyDefaults.DEFAULT_QUESTION_COUNT를 적용한다.
-         * 선택된 맵의 등록 곡 수보다 큰 경우 LobbyCreateService에서 400으로 거부한다.
+         * null이면 LobbyCreateService에서 맵 선택 여부와 등록 곡 수를 기준으로 결정한다.
+         * 명시한 값이 선택된 맵의 등록 곡 수보다 큰 경우 LobbyCreateService에서 400으로 거부한다.
          */
         @Min(
                 value = LobbyDefaults.MIN_QUESTION_COUNT,
@@ -81,10 +84,6 @@ public record CreateLobbyRequest(
     public CreateLobbyRequest {
         if (maxPlayers == null) {
             maxPlayers = LobbyDefaults.DEFAULT_MAX_PLAYERS;
-        }
-
-        if (questionCount == null) {
-            questionCount = LobbyDefaults.DEFAULT_QUESTION_COUNT;
         }
 
         if (timeLimitSeconds == null) {

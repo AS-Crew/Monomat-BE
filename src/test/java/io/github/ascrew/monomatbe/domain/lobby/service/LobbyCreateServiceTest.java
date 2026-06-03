@@ -21,7 +21,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import static org.mockito.ArgumentMatchers.anyInt;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -30,6 +29,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -80,7 +80,11 @@ class LobbyCreateServiceTest {
                 eq(LobbyDefaults.DEFAULT_QUESTION_COUNT),
                 eq(LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS)
         )).thenReturn(INVITE_CODE);
-        when(gameLobbyJpaRepository.save(any(GameLobby.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(gameLobbyJpaRepository.save(any(GameLobby.class))).thenAnswer(invocation -> {
+            GameLobby gameLobby = invocation.getArgument(0);
+            gameLobby.prePersist();
+            return gameLobby;
+        });
 
         lobbyCreateService.createLobby(request, principal);
 

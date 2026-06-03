@@ -5,7 +5,7 @@
  * - 인증 주체 검증
  * - 방장 User 조회
  * - 선택된 맵 접근 가능 여부 검증 위임
- * - questionCount 자동 설정 (맵 선택 시 numOfSong 기준)
+ * - questionCount 동적 검증 (선택 맵의 등록 곡 수 상한 검증)
  * - Redis 로비 상태 생성
  * - DB GAME_LOBBY 스냅샷 저장
  * - DB 저장 실패 시 Redis 보상 삭제
@@ -77,9 +77,10 @@ public class LobbyCreateService {
      * 1. principal null 및 userId null 검증
      * 2. JWT에서 추출한 userId로 User 엔티티 조회
      * 3. 선택된 mapId가 있으면 LobbyMapPolicy로 맵 존재/삭제/권한 검증
-     * 4. questionCount 자동 설정:
-     *    - mapId 있음: min(request.questionCount ?: numOfSong, numOfSong)
-     *    - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * 4. questionCount 결정:
+     *    - mapId 없음: request.questionCount가 null이면 DEFAULT_QUESTION_COUNT 적용
+     *    - mapId 있음 + questionCount 생략: min(DEFAULT_QUESTION_COUNT, numOfSong) 적용
+     *    - mapId 있음 + questionCount 명시: numOfSong 초과 시 400 BAD_REQUEST
      * 5. Lua 스크립트로 초대 코드 선점 및 Redis 로비 데이터 원자 저장
      * 6. DB에 GAME_LOBBY 스냅샷 저장
      * 7. DB 저장 실패 시 Redis 보상 삭제
@@ -189,35 +190,39 @@ public class LobbyCreateService {
      * 유효한 questionCount를 결정한다.
      *
      * [결정 규칙]
-     * - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * - mapId 없음:
+     *   - request.questionCount == null → DEFAULT_QUESTION_COUNT
+     *   - request.questionCount != null → request.questionCount
      * - mapId 있음:
-     *   - request.questionCount == null → numOfSong (맵 전체 문제 수로 자동 설정)
+     *   - request.questionCount == null → min(DEFAULT_QUESTION_COUNT, numOfSong)
      *   - request.questionCount > numOfSong → 400 BAD_REQUEST
-     *   - request.questionCount <= numOfSong → request.questionCount 그대로 사용
+     *   - request.questionCount <= numOfSong → request.questionCount
      *
      * LobbyMapPolicy가 이미 맵 존재·삭제·권한을 검증했으므로 findById는 항상 성공한다.
      */
     private int resolveQuestionCount(CreateLobbyRequest request, LobbyMapMetadata mapMetadata) {
+        Integer requestedQuestionCount = request.questionCount();
+
         if (mapMetadata == null || mapMetadata.mapId() == null) {
-            return (request.questionCount() == null)
+            return requestedQuestionCount == null
                     ? LobbyDefaults.DEFAULT_QUESTION_COUNT
-                    : request.questionCount();
+                    : requestedQuestionCount;
         }
 
         QuizMap map = quizMapJpaRepository.findById(mapMetadata.mapId()).orElseThrow();
         int numOfSong = map.getNumOfSong();
 
-        if (request.questionCount() == null) {
-            return numOfSong;
+        if (requestedQuestionCount == null) {
+            return Math.min(LobbyDefaults.DEFAULT_QUESTION_COUNT, numOfSong);
         }
 
-        if (request.questionCount() > numOfSong) {
+        if (requestedQuestionCount > numOfSong) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "설정한 문제 수(" + request.questionCount() + ")가 맵의 등록 곡 수(" + numOfSong + ")보다 많습니다."
+                    "설정한 문제 수(" + requestedQuestionCount + ")가 맵의 등록 곡 수(" + numOfSong + ")보다 많습니다."
             );
         }
 
-        return request.questionCount();
+        return requestedQuestionCount;
     }
 }

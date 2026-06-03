@@ -5,7 +5,7 @@
  * - 인증 주체 검증
  * - 방장 User 조회
  * - 선택된 맵 접근 가능 여부 검증 위임
- * - questionCount 자동 설정 (맵 선택 시 numOfSong 기준)
+ * - questionCount 동적 검증 (선택 맵의 등록 곡 수 상한 검증)
  * - Redis 로비 상태 생성
  * - DB GAME_LOBBY 스냅샷 저장
  * - DB 저장 실패 시 Redis 보상 삭제
@@ -77,9 +77,10 @@ public class LobbyCreateService {
      * 1. principal null 및 userId null 검증
      * 2. JWT에서 추출한 userId로 User 엔티티 조회
      * 3. 선택된 mapId가 있으면 LobbyMapPolicy로 맵 존재/삭제/권한 검증
-     * 4. questionCount 자동 설정:
-     *    - mapId 있음: min(request.questionCount ?: numOfSong, numOfSong)
-     *    - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * 4. questionCount 동적 검증:
+     *    - 기본값은 CreateLobbyRequest compact constructor에서 적용
+     *    - mapId 있음: request.questionCount > numOfSong이면 400 BAD_REQUEST
+     *    - mapId 없음: request.questionCount 그대로 사용
      * 5. Lua 스크립트로 초대 코드 선점 및 Redis 로비 데이터 원자 저장
      * 6. DB에 GAME_LOBBY 스냅샷 저장
      * 7. DB 저장 실패 시 Redis 보상 삭제

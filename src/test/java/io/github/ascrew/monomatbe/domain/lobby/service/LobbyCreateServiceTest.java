@@ -21,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import static org.mockito.ArgumentMatchers.anyInt;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -110,7 +111,13 @@ class LobbyCreateServiceTest {
                 .hasMessageContaining("설정한 문제 수(" + LobbyDefaults.DEFAULT_QUESTION_COUNT + ")")
                 .hasMessageContaining("맵의 등록 곡 수(" + (LobbyDefaults.DEFAULT_QUESTION_COUNT - 1) + ")보다 많습니다.");
 
-        verify(lobbyRepository, never()).saveToRedis(any(), any(), any(), any(Integer.class), any(Integer.class));
+        verify(lobbyRepository, never()).saveToRedis(
+                any(),
+                any(),
+                any(),
+                anyInt(),
+                anyInt()
+        );
         verify(gameLobbyJpaRepository, never()).save(any(GameLobby.class));
     }
 
@@ -135,7 +142,13 @@ class LobbyCreateServiceTest {
                 .hasMessageContaining("설정한 문제 수(" + requestedQuestionCount + ")")
                 .hasMessageContaining("맵의 등록 곡 수(" + mapSongCount + ")보다 많습니다.");
 
-        verify(lobbyRepository, never()).saveToRedis(any(), any(), any(), any(Integer.class), any(Integer.class));
+        verify(lobbyRepository, never()).saveToRedis(
+                any(),
+                any(),
+                any(),
+                anyInt(),
+                anyInt()
+        );
         verify(gameLobbyJpaRepository, never()).save(any(GameLobby.class));
     }
 

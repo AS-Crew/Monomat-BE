@@ -171,31 +171,6 @@ JWT Access Token이 필요합니다.
 
 ---
 
-## 7단계: API 문서화
-
-이번 단계에서는 `docs/API.md`에 FE가 사용할 비밀번호 변경 API 계약을 추가합니다.
-
-추가할 내용은 다음입니다.
-
-```text
-PATCH /api/users/me/password
-```
-
-성공 시 `204 No Content`이고, 비밀번호 변경 성공 후 기존 세션이 모두 만료되므로 FE는 로그인 화면으로 이동해야 합니다.
-
----
-
-# 7-1. `docs/API.md`에 추가할 내용
-
-`docs/API.md`에서 `User` 또는 `내 사용자 정보 조회`, `닉네임 변경` API가 있는 위치를 찾으세요.
-
-```bash
-grep -n "닉네임\|users/me\|User" docs/API.md
-```
-
-그 근처에 아래 내용을 추가하면 됩니다.
-
-````markdown
 ### 내 비밀번호 변경
 
 ```http

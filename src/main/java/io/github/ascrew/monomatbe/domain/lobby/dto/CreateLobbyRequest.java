@@ -28,16 +28,16 @@ import jakarta.validation.constraints.Size;
 public record CreateLobbyRequest(
 
         @NotBlank(message = "로비 제목은 비어 있을 수 없습니다.")
-        @Size(max = 255, message = "로비 제목은 255자를 초과할 수 없습니다.")
+        @Size(max = 255, message = "로비 제목은 {max}자를 초과할 수 없습니다.")
         String title,
 
         @Min(
                 value = LobbyDefaults.MIN_PLAYERS,
-                message = "최대 인원은 2명 이상이어야 합니다."
+                message = "최대 인원은 {value}명 이상이어야 합니다."
         )
         @Max(
                 value = LobbyDefaults.MAX_PLAYERS,
-                message = "최대 인원은 8명 이하이어야 합니다."
+                message = "최대 인원은 {value}명 이하이어야 합니다."
         )
         Integer maxPlayers,
 
@@ -60,21 +60,21 @@ public record CreateLobbyRequest(
          */
         @Min(
                 value = LobbyDefaults.MIN_QUESTION_COUNT,
-                message = "문제 갯수는 1 이상이어야 합니다."
+                message = "문제 갯수는 {value} 이상이어야 합니다."
         )
         @Max(
                 value = LobbyDefaults.MAX_QUESTION_COUNT,
-                message = "문제 갯수는 50 이하이어야 합니다."
+                message = "문제 갯수는 {value} 이하이어야 합니다."
         )
         Integer questionCount,
 
         @Min(
                 value = LobbyDefaults.MIN_TIME_LIMIT_SECONDS,
-                message = "제한 시간은 10초 이상이어야 합니다."
+                message = "제한 시간은 {value}초 이상이어야 합니다."
         )
         @Max(
                 value = LobbyDefaults.MAX_TIME_LIMIT_SECONDS,
-                message = "제한 시간은 120초 이하이어야 합니다."
+                message = "제한 시간은 {value}초 이하이어야 합니다."
         )
         Integer timeLimitSeconds
 ) {

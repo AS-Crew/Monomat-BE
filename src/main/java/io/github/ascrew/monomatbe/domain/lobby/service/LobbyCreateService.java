@@ -189,35 +189,31 @@ public class LobbyCreateService {
      * 유효한 questionCount를 결정한다.
      *
      * [결정 규칙]
-     * - mapId 없음: request.questionCount ?: DEFAULT_QUESTION_COUNT
+     * - CreateLobbyRequest compact constructor에서 null 기본값을 이미 적용한다.
+     * - mapId 없음: request.questionCount 그대로 사용
      * - mapId 있음:
-     *   - request.questionCount == null → numOfSong (맵 전체 문제 수로 자동 설정)
      *   - request.questionCount > numOfSong → 400 BAD_REQUEST
      *   - request.questionCount <= numOfSong → request.questionCount 그대로 사용
      *
      * LobbyMapPolicy가 이미 맵 존재·삭제·권한을 검증했으므로 findById는 항상 성공한다.
      */
     private int resolveQuestionCount(CreateLobbyRequest request, LobbyMapMetadata mapMetadata) {
+        int requestedQuestionCount = request.questionCount();
+
         if (mapMetadata == null || mapMetadata.mapId() == null) {
-            return (request.questionCount() == null)
-                    ? LobbyDefaults.DEFAULT_QUESTION_COUNT
-                    : request.questionCount();
+            return requestedQuestionCount;
         }
 
         QuizMap map = quizMapJpaRepository.findById(mapMetadata.mapId()).orElseThrow();
         int numOfSong = map.getNumOfSong();
 
-        if (request.questionCount() == null) {
-            return numOfSong;
-        }
-
-        if (request.questionCount() > numOfSong) {
+        if (requestedQuestionCount > numOfSong) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "설정한 문제 수(" + request.questionCount() + ")가 맵의 등록 곡 수(" + numOfSong + ")보다 많습니다."
+                    "설정한 문제 수(" + requestedQuestionCount + ")가 맵의 등록 곡 수(" + numOfSong + ")보다 많습니다."
             );
         }
 
-        return request.questionCount();
+        return requestedQuestionCount;
     }
 }

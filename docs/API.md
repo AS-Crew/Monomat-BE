@@ -293,6 +293,20 @@ HTTP/1.1 201 Created
 }
 ```
 
+#### 맵 카테고리(`mapCategory`) 값
+
+맵 생성/수정 요청 및 로비 목록 `mapCategory` 필터에서 사용하는 카테고리 값은 아래 5종이다.
+
+| 응답/표시 값 | 허용 입력 값(대소문자·하이픈·언더스코어·공백 무시) |
+| --- | --- |
+| `K-POP` | `K-POP`, `KPOP`, `kpop` |
+| `J-POP` | `J-POP`, `JPOP`, `jpop` |
+| `POP` | `POP`, `pop` |
+| `OST` | `OST`, `ost` |
+| `애니` | `애니`, `ANIME`, `anime` |
+
+목록에 없는 값을 요청하면 400 Bad Request로 응답한다.
+
 #### Error Response
 
 | HTTP Status | 상황 |

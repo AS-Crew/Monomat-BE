@@ -9,18 +9,21 @@ import java.util.Locale;
  * 퀴즈 맵 카테고리.
  *
  * [역할]
- * - DB에는 EnumType.STRING 정책에 따라 KPOP, JPOP, POP 형태로 저장된다.
- * - HTTP JSON 응답에는 FE 필터 값과 맞춘 표시 값(K-POP, J-POP, POP)을 내려준다.
+ * - DB에는 EnumType.STRING 정책에 따라 KPOP, JPOP, POP, OST, ANIME 형태로 저장된다.
+ * - HTTP JSON 응답에는 FE 필터 값과 맞춘 표시 값(K-POP, J-POP, POP, OST, 애니)을 내려준다.
  *
  * [입력 정책]
  * 요청 값은 하이픈, 언더스코어, 공백, 대소문자 차이를 허용한다.
  * 예: "jpop", "JPOP", "J-POP", "J_POP", "J POP" 모두 JPOP으로 정규화한다.
+ * 애니 카테고리는 FE 표시 값("애니")과 영문 값("anime", "ANIME")을 모두 허용한다.
  */
 public enum MapCategory {
 
     KPOP("K-POP"),
     JPOP("J-POP"),
-    POP("POP");
+    POP("POP"),
+    OST("OST"),
+    ANIME("애니");
 
     private final String displayValue;
 
@@ -56,6 +59,8 @@ public enum MapCategory {
             case "kpop" -> KPOP;
             case "jpop" -> JPOP;
             case "pop" -> POP;
+            case "ost" -> OST;
+            case "anime", "애니" -> ANIME;
             default -> throw new IllegalArgumentException("지원하지 않는 category입니다: " + rawValue);
         };
     }

@@ -261,8 +261,9 @@ class GameRoundProgressIntegrationTest {
 
         // then
         assertThat(gameSession.getStatus()).isEqualTo(GameSessionStatus.FINISHED);
+        // DB 상태 변경은 Dirty Checking으로 커밋 시 반영되므로 명시적 save 호출은 없다.
+        // (상태 전환 자체는 changeStatus 호출로 검증한다)
         verify(lobby).changeStatus(LobbyStatus.FINISHED);
-        verify(gameLobbyJpaRepository).save(lobby);
 
         assertThat(redisTemplate.opsForHash().get(RedisKeys.gameSessionKey(LOBBY_CODE), "status")).isEqualTo("FINISHED");
         assertThat(redisTemplate.opsForHash().get(RedisKeys.lobbyKey(LOBBY_CODE), "status")).isEqualTo("FINISHED");

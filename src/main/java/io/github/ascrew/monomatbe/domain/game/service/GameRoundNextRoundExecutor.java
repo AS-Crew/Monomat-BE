@@ -69,7 +69,7 @@ public class GameRoundNextRoundExecutor {
 
         log.info("다음 라운드 시작 처리 실행 - code: {}, roundNo: {}", lobbyCode, nextRoundNo);
 
-        boolean registered = false;
+        boolean lockReleaseHandled = false;
         try {
             // 3. 게임 세션 조회
             GameSession gameSession = gameSessionJpaRepository.findActiveSessionByLobbyCode(lobbyCode)
@@ -78,16 +78,15 @@ public class GameRoundNextRoundExecutor {
             // DB에서 2차 완료 여부 검증
             if (gameSession.getCurrentRoundNo() >= nextRoundNo) {
                 log.info("다음 라운드가 이미 시작되었습니다. (DB 검증 통과) - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo);
+                // 동기화 미등록 경로 → afterCompletion이 없으므로 여기서 락 해제
+                redisTemplate.delete(nextRoundLockKey);
+                lockReleaseHandled = true; // finally의 WARN/중복 삭제 건너뜀
                 return;
             }
 
-            // 4. DB 및 Redis 라운드 갱신
+            // 4. DB 라운드 갱신 (Redis 라운드 상태 갱신은 afterCommit으로 미룬다)
             gameSession.moveToNextRound(nextRoundNo);
             gameSessionJpaRepository.save(gameSession);
-
-            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO, String.valueOf(nextRoundNo));
-            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_STATUS, "PLAYING");
-            redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_ROUND_PHASE, "READY");
 
             // 5. 다음 라운드 MapItem 조회
             String roundsKey = RedisKeys.gameSessionRoundsKey(lobbyCode);
@@ -120,6 +119,13 @@ public class GameRoundNextRoundExecutor {
                 @Override
                 public void afterCommit() {
                     log.info("다음 라운드 시작 트랜잭션 커밋 완료 - ROUND_READY 브로드캐스트. code: {}, roundNo: {}", lobbyCode, nextRoundNo);
+
+                    // DB 커밋이 확정된 뒤에만 Redis 라운드 상태를 advance한다.
+                    // (커밋 전에 갱신하면 롤백 시 Redis만 다음 라운드로 남아 복구 워커가 ALREADY_PROGRESSED로 오판 → 게임 정지)
+                    redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_CURRENT_ROUND_NO, String.valueOf(nextRoundNo));
+                    redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_STATUS, "PLAYING");
+                    redisTemplate.opsForHash().put(sessionKey, RedisKeys.FIELD_ROUND_PHASE, "READY");
+
                     try {
                         gameRealtimeNotifier.notifyRoundStart(lobbyCode, nextRoundDto);
                     } catch (Exception e) {
@@ -140,9 +146,9 @@ public class GameRoundNextRoundExecutor {
                     redisTemplate.delete(nextRoundLockKey);
                 }
             });
-            registered = true;
+            lockReleaseHandled = true; // 커밋/롤백 시 afterCompletion이 락을 해제하므로 finally는 건너뜀
         } finally {
-            if (!registered) {
+            if (!lockReleaseHandled) {
                 // 트랜잭션 동기화 등록조차 실패하고 예외 발생 시 예외 안전성 확보를 위한 즉시 해제
                 log.warn("트랜잭션 동기화 등록 실패 - 처리 락 해제. code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo);
                 redisTemplate.delete(nextRoundLockKey);

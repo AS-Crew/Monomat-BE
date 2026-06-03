@@ -1105,3 +1105,48 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - **랭킹 및 가점 연출**: `rankings` 리스트 내부의 각 객체는 `PlayerRankingDto` 타입으로, 플레이어의 현재 총점(`score`), 순위(`rank`), 그리고 해당 라운드에서 획득한 가점(`scoreAdded` - 1등 140점, 그 외 정답자 100점, 오답자 0점)을 가지고 있습니다. FE는 `scoreAdded`를 활용하여 "+140" 등 가점 애니메이션을 UI상에 연출하고 랭킹 리스트를 갱신합니다.
 - **자동 전환**: 라운드가 종료된 후 10초간 결과 화면을 노출한 뒤, 서버에 의해 자동으로 다음 라운드가 준비 상태(`ROUND_READY`)로 넘어가게 되므로 FE는 이에 맞춰 인게임 화면으로 복귀하여 비디오 재생 준비 신호를 다시 송신해야 합니다. 마지막 라운드인 경우에는 로비 및 게임 상태가 `FINISHED`로 변경되며 결과화면으로 자동 전환됩니다.
 
+## 게임 세션 Redis 키 정리 정책
+
+게임 세션 관련 Redis 키는 생성 시 **2시간(7200초) TTL**을 최종 안전망으로 가지며, 종료/폭파/롤백 시점에 명시적으로 정리한다.
+
+### 정리 대상 키 (`game:session:{code}*`)
+
+| 키 | 타입 | 설명 |
+| --- | --- | --- |
+| `game:session:{code}` | Hash | 세션 메타데이터 (current_round_no, total_question_count, status 등) |
+| `game:session:{code}:rounds` | List | 라운드별 MapItem ID |
+| `game:session:{code}:players` | Hash | 플레이어별 점수 |
+| `game:session:{code}:round:{n}:ready` | Set | 라운드 재생 준비 완료 유저 |
+| `game:session:{code}:round:{n}:playback_lock` | String | 재생 시작 중복 방지 락 |
+| `game:session:{code}:round:{n}:data` | Hash | 라운드 문제 데이터 캐시 |
+| `game:session:{code}:round:{n}:correct_players` | Set | 정답자 |
+| `game:session:{code}:round:{n}:correct_times` | Hash | 정답 제출 시각 |
+| `game:session:{code}:round:{n}:ended_lock` | String | 라운드 종료 중복 방지 락 |
+
+### 생명주기와 정리 트리거
+
+| 시점 | 정책 | 구현 |
+| --- | --- | --- |
+| 게임 생성 | 모든 키에 2시간 TTL 부여 | `init_game_session.lua`, `GameSessionCreateService` |
+| **게임 정상 종료** (마지막 라운드) | 모든 키를 **300초 짧은 TTL로 전환** (종료 직후 재조회 grace period) | `GameRoundEndService` afterCommit → `GameSessionCleanupService.expireWithGracePeriod()` |
+| **로비 폭파** (게임 중 전원 퇴장) | 모든 키 **즉시 삭제** | `LobbyLeaveEventHandler`(Destroyed) → `LobbyClosedEvent` → `GameSessionCleanupEventHandler` → `deleteNow()` |
+| **게임 시작 DB 롤백** | 모든 키 **즉시 삭제** (보상) | `GameSessionCreateService` afterCompletion(ROLLED_BACK) → `deleteNow()` |
+
+> 정상 종료 시 짧은 TTL을 쓰는 이유: 최종 점수/랭킹은 DB(`GameSessionPlayer`)에 영구 저장되므로 grace period 후 만료되어도 안전하며, 종료 직후 클라이언트 재조회 여유를 둔다.
+
+### 정리 메커니즘
+
+- `cleanup_game_session.lua` 단일 스크립트가 base 3종 + 라운드별 6종 키를 **원자적**으로 `DELETE` 또는 `EXPIRE`한다.
+- 라운드 수는 `total_question_count` 해시 필드(없으면 `:rounds` LLEN)로 판별하고, 모든 하위 키 이름을 `sessionKey`로부터 **결정적으로 조립**한다. → 운영 비용·블로킹 위험이 있는 `SCAN`/`KEYS` 패턴 매칭을 사용하지 않는다.
+- **전제: 단일(standalone) Redis.** 라운드별 키는 KEYS로 선언하지 않고 직접 접근하므로, Redis Cluster 도입 시 `{code}` hash-tag 적용이 필요하다.
+
+### 정리 실패 대응 (경량 reconciliation)
+
+모든 키가 2시간 TTL 안전망을 가지므로 정리 실패는 치명적이지 않다. `GameSessionCleanupService`는 정리 실패 시 예외를 전파하지 않고 다음만 수행한다.
+
+- `[MONITORING_REQUIRED]` 로그 기록
+- 실패 metric counter 증가 (`metric:game:session:cleanup:failed`)
+- 2시간 TTL 자동 만료에 의존 (별도 재처리 스케줄러를 두지 않음)
+
+성공 시 `metric:game:session:cleanup:success`를 증가시켜 정리 처리량을 관측한다.
+

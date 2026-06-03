@@ -1,19 +1,27 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
-import io.github.ascrew.monomatbe.domain.game.entity.GameSessionStatus;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+/**
+ * 서버 재시작 시 활성 게임 세션 복구 서비스.
+ *
+ * 인메모리 TaskScheduler 예약은 인스턴스 재시작 시 유실되므로, 부팅 직후(ApplicationReadyEvent)
+ * DB의 active 세션을 스캔해 Redis에 기록된 round_phase(READY/PLAYING/ENDED)에 따라 라운드 종료/
+ * 강제 재생 시작/다음 라운드 시작 타이머를 재구성한다.
+ *
+ * 상시 동작하며 정지된 다음 라운드를 큐 기반으로 재트리거하는 복구는
+ * {@link GameRoundStallRecoveryService}가 담당한다. (보완적 관계)
+ */
 @Slf4j
 @Service
 public class GameRoundRecoveryService {
@@ -44,7 +52,7 @@ public class GameRoundRecoveryService {
     @EventListener(ApplicationReadyEvent.class)
     public void recoverActiveSessions() {
         log.info("GameRoundRecoveryService: 서버 시작에 따른 활성 게임 세션 복구 프로세스 시작");
-        
+
         List<GameSession> activeSessions = gameSessionJpaRepository.findAllActiveSessionsWithLobby();
         log.info("복구 대상 active DB 세션 개수: {}", activeSessions.size());
 

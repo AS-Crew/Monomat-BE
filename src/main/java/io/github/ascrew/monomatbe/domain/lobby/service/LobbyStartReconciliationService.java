@@ -73,6 +73,25 @@ public class LobbyStartReconciliationService {
             return;
         }
 
+        // payload는 이미 leftPop으로 큐에서 제거되었다. 처리 중 어떤 예외가 나도 유실되지 않도록
+        // 최상위에서 보상한다: 실패 metric을 남기고 원본 payload를 안전하게 다시 큐에 넣는다.
+        try {
+            processReconciliation(payload);
+        } catch (Exception e) {
+            log.error(
+                    "{} 게임 시작 상태 재처리 중 예기치 못한 예외 - 원본 payload 안전 재적재. payload: {}",
+                    LOG_ALERT_REQUIRED,
+                    payload,
+                    e
+            );
+            lobbyRepository.incrementStartReconciliationMetric(
+                    RedisKeys.METRIC_LOBBY_START_RECONCILIATION_FAILED
+            );
+            lobbyRepository.safeRequeueStartReconciliation(payload);
+        }
+    }
+
+    private void processReconciliation(String payload) {
         ReconciliationPayload parsedPayload = parsePayload(payload);
 
         if (parsedPayload == null) {

@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.game.dto;
 
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import lombok.Builder;
 import java.util.List;
 
@@ -17,6 +18,9 @@ public record RoundMetadataDto(
         int waitTimeSeconds,
         boolean isLastRound
 ) {
+    public RoundMetadataDto {
+        if (type == null || !GameEventTypes.ROUND_END.equals(type)) {
+            type = GameEventTypes.ROUND_END;
+        }
+    }
 }
-
-

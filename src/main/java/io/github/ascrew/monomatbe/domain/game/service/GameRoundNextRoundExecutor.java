@@ -6,6 +6,7 @@ import io.github.ascrew.monomatbe.domain.game.repository.GameSessionJpaRepositor
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -104,7 +105,7 @@ public class GameRoundNextRoundExecutor {
             int effectiveEndTime = mapItem.getStartTime() + gameSession.getLobby().getTimeLimitSeconds();
 
             RoundStartDto nextRoundDto = RoundStartDto.builder()
-                      .type("ROUND_READY")
+                      .type(GameEventTypes.ROUND_READY)
                       .videoId(mapItem.getVideoId())
                       .youtubeUrl(mapItem.getYoutubeUrl())
                       .startTime(mapItem.getStartTime())

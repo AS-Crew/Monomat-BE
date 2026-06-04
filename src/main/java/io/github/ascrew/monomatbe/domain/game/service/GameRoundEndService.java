@@ -16,6 +16,7 @@ import io.github.ascrew.monomatbe.domain.lobby.service.LobbyRealtimeNotifier;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -225,7 +226,7 @@ public class GameRoundEndService {
             redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), endedAtField, String.valueOf(System.currentTimeMillis()));
 
             RoundMetadataDto metadataDto = RoundMetadataDto.builder()
-                    .type("ROUND_END")
+                    .type(GameEventTypes.ROUND_END)
                     .title(title)
                     .artist(artist)
                     .answer(representativeAnswer)

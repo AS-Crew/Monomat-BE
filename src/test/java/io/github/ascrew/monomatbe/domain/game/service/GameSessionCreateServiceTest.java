@@ -15,6 +15,7 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -150,7 +151,7 @@ class GameSessionCreateServiceTest {
         assertThat(savedPlayers.get(0).getUser()).isEqualTo(user);
 
         // 3. Payload 필드 검증 (정답 및 민감정보 미포함, 신규 필드 포함)
-        assertThat(result.type()).isEqualTo("ROUND_READY");
+        assertThat(result.type()).isEqualTo(GameEventTypes.ROUND_READY);
         assertThat(result.videoId()).isEqualTo("vId");
         assertThat(result.youtubeUrl()).isEqualTo("https://youtube.com/vId");
         assertThat(result.startTime()).isEqualTo(10);

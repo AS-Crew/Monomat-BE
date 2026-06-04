@@ -93,6 +93,27 @@ public final class StompDestinations {
         return SUBSCRIBE_PREFIX + "/game/" + code + "/round-end";
     }
 
+    /** @return "/topic/game/{code}/chat" */
+    public static String subscribeGameChat(String code) {
+        return SUBSCRIBE_PREFIX + "/game/" + code + "/chat";
+    }
+
+    /** @return "/app/game/{code}/chat" */
+    public static String publishGameChat(String code) {
+        return PUBLISH_PREFIX + "/game/" + code + "/chat";
+    }
+
+    /** @return "/app/game/{code}/ready-to-play" */
+    public static String publishGameReadyToPlay(String code) {
+        return PUBLISH_PREFIX + "/game/" + code + "/ready-to-play";
+    }
+
+    /** 인게임 정답 개별 통지 서버 전송용 User Queue 경로 (convertAndSendToUser 인자용) */
+    public static final String SERVER_USER_GAME_ANSWERS = "/queue/game/answers";
+
+    /** 인게임 정답 개별 통지 클라이언트 구독 경로 */
+    public static final String SUBSCRIBE_USER_GAME_ANSWERS = "/user/queue/game/answers";
+
     /** @return "/app/chat/lobby/{code}" */
     public static String publishLobbyChat(String code) {
         return PUBLISH_PREFIX + "/chat/lobby/" + code;

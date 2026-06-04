@@ -22,6 +22,8 @@ import io.github.ascrew.monomatbe.domain.lobby.service.LobbyRealtimeNotifier;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import org.junit.jupiter.api.AfterEach;
@@ -292,7 +294,7 @@ class GameRoundProgressIntegrationTest {
         verify(gameRealtimeNotifier, times(1)).notifyRoundStart(eq(LOBBY_CODE), captor.capture());
         
         RoundStartDto captured = captor.getValue();
-        assertThat(captured.type()).isEqualTo("ROUND_READY");
+        assertThat(captured.type()).isEqualTo(GameEventTypes.ROUND_READY);
         assertThat(captured.roundNo()).isEqualTo(2);
         assertThat(captured.timeLimitSeconds()).isEqualTo(30);
 
@@ -353,7 +355,7 @@ class GameRoundProgressIntegrationTest {
         assertThat(redisTemplate.opsForSet().isMember(correctPlayersKey, USER_ID_1)).isFalse();
 
         ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate, times(1)).convertAndSend(eq("/topic/game/" + LOBBY_CODE + "/chat"), chatCaptor.capture());
+        verify(messagingTemplate, times(1)).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
         
         ChatMessageDto capturedChat = chatCaptor.getValue();
         assertThat(capturedChat.getContent()).isEqualTo("***");

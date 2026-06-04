@@ -387,6 +387,7 @@ public class MapService {
         return MapSummaryResponse.builder()
                 .mapId(quizMap.getId())
                 .title(quizMap.getTitle())
+                .description(quizMap.getDescription())
                 .category(quizMap.getCategory())
                 .numOfSong(quizMap.getNumOfSong())
                 .totalPlayTime(quizMap.getTotalPlayTime())

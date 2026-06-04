@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.user.controller;
 
+import io.github.ascrew.monomatbe.domain.user.dto.ChangePasswordRequest;
 import io.github.ascrew.monomatbe.domain.user.dto.MyUserInfoResponse;
 import io.github.ascrew.monomatbe.domain.user.dto.UpdateNicknameRequest;
 import io.github.ascrew.monomatbe.domain.user.service.UserCommandService;
@@ -40,12 +41,16 @@ public class UserController {
             "요청 수신: 내 닉네임 변경 [PATCH /api/users/me/nickname] - userId: {}, userIdentifier: {}";
     private static final String LOG_UPDATE_MY_NICKNAME_RESPONSE =
             "변경 완료: 내 닉네임 변경 - userId: {}, username: {}";
+    private static final String LOG_CHANGE_MY_PASSWORD_REQUEST =
+            "요청 수신: 내 비밀번호 변경 [PATCH /api/users/me/password] - userId: {}, userIdentifier: {}";
+    private static final String LOG_CHANGE_MY_PASSWORD_RESPONSE =
+            "변경 완료: 내 비밀번호 변경 및 활성 세션 만료 - userId: {}";
 
     private final UserQueryService userQueryService;
     private final UserCommandService userCommandService;
 
     /**
-     * 로그인한 사용자의 기본 정보를 조회
+     * 로그인한 사용자의 기본 정보를 조회한다.
      *
      * @param principal JWT 인증 후 SecurityContext에 저장된 사용자 주체
      * @return 내 사용자 기본 정보
@@ -113,5 +118,45 @@ public class UserController {
         );
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 로그인한 정식 회원의 비밀번호를 변경한다.
+     *
+     * @param principal JWT 인증 후 SecurityContext에 저장된 사용자 주체
+     * @param request 비밀번호 변경 요청
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "내 비밀번호 변경",
+            description = """
+                    로그인한 정식 회원의 비밀번호를 변경합니다.
+                    게스트 사용자는 비밀번호를 변경할 수 없습니다.
+                    현재 비밀번호가 일치해야 새 비밀번호로 변경할 수 있습니다.
+                    새 비밀번호는 회원가입과 동일한 비밀번호 정책을 따릅니다.
+                    비밀번호 변경 성공 후 모든 활성 세션을 만료합니다.
+                    따라서 클라이언트는 성공 응답 수신 후 로그인 화면으로 이동해야 합니다.
+                    """
+    )
+    @PatchMapping("/me/password")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> changeMyPassword(
+            @AuthenticationPrincipal CustomPrincipal principal,
+            @Valid @RequestBody ChangePasswordRequest request
+    ) {
+        log.info(
+                LOG_CHANGE_MY_PASSWORD_REQUEST,
+                principal != null ? principal.userId() : null,
+                principal != null ? principal.userIdentifier() : null
+        );
+
+        userCommandService.changeMyPassword(principal, request);
+
+        log.info(
+                LOG_CHANGE_MY_PASSWORD_RESPONSE,
+                principal != null ? principal.userId() : null
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

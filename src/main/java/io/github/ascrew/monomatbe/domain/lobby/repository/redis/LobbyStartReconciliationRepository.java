@@ -128,6 +128,27 @@ public class LobbyStartReconciliationRepository {
     }
 
     /**
+     * 재처리 워커의 최상위 보상 경로에서 호출하는 안전 재적재 메서드.
+     *
+     * 워커는 leftPop으로 payload를 큐에서 꺼낸 뒤 처리하므로, 처리 중 예외가 나면 원본 payload가
+     * 유실될 수 있다. 이 메서드는 rightPush 실패까지도 흡수해(보상 경로가 다시 예외로 중단되지 않도록)
+     * 원본 payload를 best-effort로 다시 큐에 넣는다. 재적재마저 실패하면 ALERT 로그와 실패 metric을 남긴다.
+     *
+     * @param payload 재처리 payload
+     */
+    public void safeRequeueStartReconciliation(String payload) {
+        try {
+            redisTemplate.opsForList().rightPush(
+                    RedisKeys.LOBBY_START_RECONCILIATION_QUEUE,
+                    payload
+            );
+        } catch (Exception e) {
+            incrementStartReconciliationMetric(RedisKeys.METRIC_LOBBY_START_RECONCILIATION_FAILED);
+            log.error("[ALERT_REQUIRED] 게임 시작 상태 재처리 payload 안전 재적재 실패 - payload 유실. payload: {}", payload, e);
+        }
+    }
+
+    /**
      * 게임 시작 상태 재처리 관련 Redis metric counter를 증가시킨다.
      *
      * [정책]

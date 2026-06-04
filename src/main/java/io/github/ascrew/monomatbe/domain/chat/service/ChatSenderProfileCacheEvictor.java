@@ -12,19 +12,24 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
- * 채팅 발신자 프로필 캐시 무효화 컴포넌트
+ * 사용자 표시 정보(닉네임) 캐시 무효화 컴포넌트
  *
  * [책임]
- * - 닉네임 변경 등 사용자 표시 정보가 변경된 경우 Redis에 저장된 채팅 발신자 프로필 캐시를 제거한다.
- * - ChatSenderProfileResolver가 생성하는 Redis cache key 정책을 한 곳에서 관리한다.
+ * - 닉네임 변경 등 사용자 표시 정보가 변경된 경우, userIdentifier 기준으로 캐싱된
+ *   사용자 표시 정보 캐시를 Redis에서 제거한다.
+ * - 무효화 대상은 두 종류다.
+ *   1) 채팅 발신자 프로필 캐시 (chat:sender-profile:{userIdentifier})
+ *   2) 로비 목록/상세 닉네임 캐시 (user:nickname:{sha256(userIdentifier)})
+ * - 두 캐시 모두 userIdentifier 기준이라 식별자 조회를 한 번만 수행하고 함께 무효화한다.
  *
  * [사용 시점]
  * - 사용자 닉네임 변경 트랜잭션이 성공한 뒤 호출한다.
  * - 트랜잭션 내부에서 호출하는 경우, DB 변경 롤백 가능성을 고려해 afterCommit에서 호출하는 편이 더 안전하다.
  *
- * [무효화 대상]
+ * [무효화 대상 식별자]
  * - 회원: ACTIVE user_sessions.session_id 기반 cache key
  * - 게스트: guest_sessions.guest_token 기반 cache key
  */
@@ -51,7 +56,10 @@ public class ChatSenderProfileCacheEvictor {
     }
 
     /**
-     * 사용자 ID에 연결된 모든 채팅 발신자 프로필 캐시를 제거한다.
+     * 사용자 ID에 연결된 모든 사용자 표시 정보 캐시를 제거한다.
+     *
+     * 각 userIdentifier마다 채팅 발신자 프로필 캐시와 로비 닉네임 캐시 키를 함께 만들어
+     * 한 번의 batch 삭제로 무효화한다.
      *
      * @param userId 사용자 ID
      */
@@ -69,7 +77,10 @@ public class ChatSenderProfileCacheEvictor {
 
         List<String> cacheKeys = userIdentifiers.stream()
                 .filter(userIdentifier -> userIdentifier != null && !userIdentifier.isBlank())
-                .map(RedisKeys::chatSenderProfileKey)
+                .flatMap(userIdentifier -> Stream.of(
+                        RedisKeys.chatSenderProfileKey(userIdentifier),
+                        RedisKeys.userNicknameKey(userIdentifier)
+                ))
                 .toList();
 
         if (cacheKeys.isEmpty()) {
@@ -96,7 +107,7 @@ public class ChatSenderProfileCacheEvictor {
             redisTemplate.delete(cacheKeys);
         } catch (RuntimeException e) {
             log.warn(
-                    "채팅 발신자 프로필 캐시 일괄 무효화 실패. userId: {}, targetCount: {}",
+                    "사용자 표시 정보 캐시 일괄 무효화 실패. userId: {}, targetCount: {}",
                     userId,
                     cacheKeys.size(),
                     e

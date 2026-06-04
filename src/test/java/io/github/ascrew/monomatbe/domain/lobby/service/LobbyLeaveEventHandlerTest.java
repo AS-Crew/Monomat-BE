@@ -2,9 +2,11 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.global.event.LobbyClosedEvent;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -19,10 +21,12 @@ class LobbyLeaveEventHandlerTest {
 
     private final LobbyRepository lobbyRepository = mock(LobbyRepository.class);
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier = mock(LobbyRealtimeNotifier.class);
+    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
 
     private final LobbyLeaveEventHandler handler = new LobbyLeaveEventHandler(
             lobbyRepository,
-            lobbyRealtimeNotifier
+            lobbyRealtimeNotifier,
+            eventPublisher
     );
 
     @Test
@@ -90,6 +94,38 @@ class LobbyLeaveEventHandlerTest {
         // then
         verify(lobbyRealtimeNotifier).notifyLobbyListRefresh();
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(LOBBY_CODE);
+    }
+
+    @Test
+    @DisplayName("로비가 폭파되면 게임 세션 정리를 위한 LobbyClosedEvent를 발행한다")
+    void publishLobbyClosedEventWhenLobbyDestroyed() {
+        // given
+        when(lobbyRepository.executeLeaveLobbyProcess(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(new LeaveLobbyResult.Destroyed(LOBBY_CODE));
+
+        PlayerLeaveEvent event = new PlayerLeaveEvent(LOBBY_CODE, USER_IDENTIFIER);
+
+        // when
+        handler.handlePlayerLeave(event);
+
+        // then
+        verify(eventPublisher).publishEvent(new LobbyClosedEvent(LOBBY_CODE));
+    }
+
+    @Test
+    @DisplayName("로비가 폭파되지 않은 일반 퇴장에서는 LobbyClosedEvent를 발행하지 않는다")
+    void doesNotPublishLobbyClosedEventWhenNotDestroyed() {
+        // given
+        when(lobbyRepository.executeLeaveLobbyProcess(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(new LeaveLobbyResult.Left(LOBBY_CODE, USER_IDENTIFIER));
+
+        PlayerLeaveEvent event = new PlayerLeaveEvent(LOBBY_CODE, USER_IDENTIFIER);
+
+        // when
+        handler.handlePlayerLeave(event);
+
+        // then
+        verify(eventPublisher, never()).publishEvent(new LobbyClosedEvent(LOBBY_CODE));
     }
 
     @Test

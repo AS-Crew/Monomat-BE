@@ -17,9 +17,7 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationContext;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,6 +46,7 @@ public class GameRoundEndService {
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
     private final JsonMapper jsonMapper;
     private final GameRoundProgressService gameRoundProgressService;
+    private final GameSessionCleanupService gameSessionCleanupService;
 
     @org.springframework.context.annotation.Lazy
     public GameRoundEndService(
@@ -62,7 +61,8 @@ public class GameRoundEndService {
             GameRealtimeNotifier gameRealtimeNotifier,
             LobbyRealtimeNotifier lobbyRealtimeNotifier,
             JsonMapper jsonMapper,
-            @org.springframework.context.annotation.Lazy GameRoundProgressService gameRoundProgressService) {
+            @org.springframework.context.annotation.Lazy GameRoundProgressService gameRoundProgressService,
+            GameSessionCleanupService gameSessionCleanupService) {
         this.redisTemplate = redisTemplate;
         this.gameSessionJpaRepository = gameSessionJpaRepository;
         this.gameSessionPlayerJpaRepository = gameSessionPlayerJpaRepository;
@@ -75,6 +75,7 @@ public class GameRoundEndService {
         this.lobbyRealtimeNotifier = lobbyRealtimeNotifier;
         this.jsonMapper = jsonMapper;
         this.gameRoundProgressService = gameRoundProgressService;
+        this.gameSessionCleanupService = gameSessionCleanupService;
     }
 
     /**
@@ -220,7 +221,7 @@ public class GameRoundEndService {
                 redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), RedisKeys.FIELD_ROUND_PHASE, "ENDED");
             }
 
-            // 7.5. Redis에 라운드 종료 시각 기록
+            // 7.5. Redis에 라운드 종료 시각 기록 (ENDED 단계 복구 시 다음 라운드 잔여 대기 계산에 사용)
             String endedAtField = RedisKeys.gameSessionRoundEndedAtField(roundNo);
             redisTemplate.opsForHash().put(RedisKeys.gameSessionKey(lobbyCode), endedAtField, String.valueOf(System.currentTimeMillis()));
 
@@ -236,39 +237,25 @@ public class GameRoundEndService {
                     .build();
 
             // 8. 트랜잭션 성공 후 STOMP 브로드캐스트 및 스케줄링 등록
+            // afterCommit의 각 후처리(점수 반영/브로드캐스트/상태전환/다음라운드)는 서로 독립이다.
+            // 한 단계 실패가 이후 단계를 막지 않도록 단계별로 격리한다.
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
                     log.info("라운드 종료 트랜잭션 커밋 완료 - Redis 점수 반영 및 브로드캐스트 전송. code: {}, roundNo: {}, isLast: {}", lobbyCode, roundNo, isLastRound);
-                    
-                    try {
-                        scoreAddedMap.forEach((identifier, scoreAdded) -> {
-                            if (scoreAdded > 0) {
-                                redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
-                            }
-                        });
-                    } catch (Exception e) {
-                        log.error("Redis 점수 증액 반영 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
-                    }
 
-                    try {
-                        gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
-                    } catch (Exception e) {
-                        log.error("ROUND_END 브로드캐스트 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
-                    }
+                    syncRedisScoresQuietly(lobbyCode, roundNo, playersKey, scoreAddedMap);
+                    notifyRoundEndQuietly(lobbyCode, roundNo, metadataDto);
 
                     if (isLastRound) {
-                        try {
-                            lobbyRealtimeNotifier.notifyLobbyInfoRefresh(lobbyCode, "SYSTEM");
-                        } catch (Exception e) {
-                            log.error("게임 종료 후 로비 갱신 알림 실패 - code: {}", lobbyCode, e);
-                        }
+                        /*
+                         * 게임 정상 종료 - 최종 점수/랭킹은 DB에 영구 저장된다.
+                         * Redis 세션 키는 짧은 TTL(grace period)로 만료시켜 정리한다.
+                         */
+                        notifyLobbyRefreshQuietly(lobbyCode);
+                        expireSessionWithGracePeriodQuietly(lobbyCode);
                     } else {
-                        try {
-                            gameRoundProgressService.scheduleNextRound(lobbyCode, roundNo + 1);
-                        } catch (Exception e) {
-                            log.error("다음 라운드 시작 스케줄 등록 실패 - code: {}, nextRoundNo: {}", lobbyCode, roundNo + 1, e);
-                        }
+                        scheduleNextRoundSafely(lobbyCode, roundNo + 1);
                     }
                 }
 
@@ -287,6 +274,55 @@ public class GameRoundEndService {
                 redisTemplate.delete(endedLockKey);
             }
             throw t;
+        }
+    }
+
+    /** Redis 누적 점수(HINCRBY)를 반영한다. 실패해도 이후 후처리 단계 진행에 영향을 주지 않는다. */
+    private void syncRedisScoresQuietly(String lobbyCode, int roundNo, String playersKey, Map<String, Integer> scoreAddedMap) {
+        try {
+            scoreAddedMap.forEach((identifier, scoreAdded) -> {
+                if (scoreAdded > 0) {
+                    redisTemplate.opsForHash().increment(playersKey, identifier, scoreAdded);
+                }
+            });
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] Redis 점수 증액 반영 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
+        }
+    }
+
+    /** 라운드 종료 결과(랭킹/곡 정보)를 브로드캐스트한다. */
+    private void notifyRoundEndQuietly(String lobbyCode, int roundNo, RoundMetadataDto metadataDto) {
+        try {
+            gameRealtimeNotifier.notifyRoundEnd(lobbyCode, metadataDto);
+        } catch (Exception e) {
+            log.error("ROUND_END 브로드캐스트 실패 - code: {}, roundNo: {}", lobbyCode, roundNo, e);
+        }
+    }
+
+    /** 게임 종료 후 로비 갱신 알림을 보낸다. */
+    private void notifyLobbyRefreshQuietly(String lobbyCode) {
+        try {
+            lobbyRealtimeNotifier.notifyLobbyInfoRefresh(lobbyCode, "SYSTEM");
+        } catch (Exception e) {
+            log.error("게임 종료 후 로비 갱신 알림 실패 - code: {}", lobbyCode, e);
+        }
+    }
+
+    /** 게임 정상 종료 시 Redis 세션 키를 짧은 TTL(grace period)로 만료시킨다. */
+    private void expireSessionWithGracePeriodQuietly(String lobbyCode) {
+        try {
+            gameSessionCleanupService.expireWithGracePeriod(lobbyCode);
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] 게임 종료 Redis 세션 정리(grace TTL) 실패 - code: {}", lobbyCode, e);
+        }
+    }
+
+    /** 다음 라운드 시작을 예약한다. */
+    private void scheduleNextRoundSafely(String lobbyCode, int nextRoundNo) {
+        try {
+            gameRoundProgressService.scheduleNextRound(lobbyCode, nextRoundNo);
+        } catch (Exception e) {
+            log.error("[MONITORING_REQUIRED] 다음 라운드 시작 스케줄 등록 실패 - code: {}, nextRoundNo: {}", lobbyCode, nextRoundNo, e);
         }
     }
 

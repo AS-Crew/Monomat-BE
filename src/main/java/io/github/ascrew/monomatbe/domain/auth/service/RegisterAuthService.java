@@ -28,8 +28,6 @@ public class RegisterAuthService {
 
     private static final int MIN_LOGIN_ID_LENGTH = 4;
     private static final int MAX_LOGIN_ID_LENGTH = 50;
-    private static final int MIN_PASSWORD_LENGTH = 8;
-    private static final int MAX_PASSWORD_LENGTH = 100;
     private static final int MIN_NICKNAME_LENGTH = 2;
     private static final int MAX_NICKNAME_LENGTH = 12;
 
@@ -39,11 +37,12 @@ public class RegisterAuthService {
     private final UserCredentialRepository userCredentialRepository;
     private final PasswordEncoder passwordEncoder;
     private final NicknamePolicyValidator nicknamePolicyValidator;
+    private final PasswordPolicyValidator passwordPolicyValidator;
 
     @Transactional
     public RegisterResponse register(String rawLoginId, String rawPassword, String rawNickname) {
         String loginId = normalizeLoginId(rawLoginId);
-        String password = normalizePassword(rawPassword);
+        String password = passwordPolicyValidator.validateNewPassword(rawPassword);
         String nickname = normalizeNickname(rawNickname);
 
         nicknamePolicyValidator.validate(nickname);
@@ -110,20 +109,6 @@ public class RegisterAuthService {
         }
 
         return loginId;
-    }
-
-    private String normalizePassword(String value) {
-        String password = normalizeRequired(value, AuthErrorCode.AUTH_PASSWORD_REQUIRED);
-
-        if (containsWhitespace(password)) {
-            throw new AuthException(AuthErrorCode.AUTH_PASSWORD_CONTAINS_WHITESPACE);
-        }
-
-        if (password.length() < MIN_PASSWORD_LENGTH || password.length() > MAX_PASSWORD_LENGTH) {
-            throw new AuthException(AuthErrorCode.AUTH_PASSWORD_INVALID_LENGTH);
-        }
-
-        return password;
     }
 
     private String normalizeNickname(String value) {

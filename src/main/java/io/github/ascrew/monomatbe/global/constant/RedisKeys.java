@@ -13,6 +13,8 @@
  */
 package io.github.ascrew.monomatbe.global.constant;
 
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
+
 public final class RedisKeys {
 
     // 인스턴스화 방지
@@ -45,6 +47,9 @@ public final class RedisKeys {
 
     /** 채팅 발신자 프로필 캐시 키 접두사 */
     private static final String CHAT_SENDER_PROFILE_PREFIX = "chat:sender-profile:";
+
+    /** userIdentifier 기준 닉네임 캐시 키 접두사 */
+    private static final String USER_NICKNAME_PREFIX = "user:nickname:";
 
     /** 로비 채팅 메시지 신고 중복 방지 lock 키 접두사 */
     private static final String LOBBY_CHAT_MESSAGE_REPORT_LOCK_PREFIX = "lock:report:lobby-chat-message:";
@@ -386,6 +391,28 @@ public final class RedisKeys {
     }
 
     /**
+     * userIdentifier 기준 닉네임 캐시 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : user:nickname:{userIdentifier}
+     * - Type  : String
+     * - Value : 사용자 표시 닉네임 (plain string)
+     *
+     * [사용 목적]
+     * 로비 목록(GET /api/lobbies)은 호출 빈도가 높아 매 요청마다 회원/게스트 닉네임을
+     * DB IN 쿼리로 조회하면 latency spike와 DB 커넥션 병목으로 증폭될 수 있다.
+     * userIdentifier 기준 닉네임 스냅샷을 짧은 TTL로 캐싱해 cache miss만 DB로 조회한다.
+     *
+     * @param userIdentifier 사용자 식별자
+     * @return 닉네임 캐시 키
+     */
+    public static String userNicknameKey(String userIdentifier) {
+        // 세션/게스트 토큰 성격의 식별자 원문을 Redis 키에 노출하지 않도록 SHA-256 해시를 사용한다.
+        // (운영자/모니터링/SCAN 과정의 식별자 노출 방지, 키 길이 고정)
+        return USER_NICKNAME_PREFIX + TokenHashUtils.sha256(userIdentifier);
+    }
+
+    /**
      * 게임 시작 상태 동기화 실패 재처리 큐.
      *
      * 저장 구조:
@@ -411,6 +438,58 @@ public final class RedisKeys {
     /** start_lobby.lua 알 수 없는 반환값 발생 횟수 */
     public static final String METRIC_START_LOBBY_UNKNOWN_RESULT =
             "metric:lobby:start:unknown-result";
+
+    /** 게임 세션 Redis 키 정리 성공 횟수 metric counter */
+    public static final String METRIC_GAME_SESSION_CLEANUP_SUCCESS =
+            "metric:game:session:cleanup:success";
+
+    /**
+     * 게임 세션 Redis 키 즉시 삭제(DELETE) 실패 횟수 metric counter.
+     * DELETE 실패는 orphan 키 잔존(로비 폭파/롤백 보상 누락)을 의미해 EXPIRE 실패와 영향도가 다르다.
+     * (2시간 TTL이 최종 안전망)
+     */
+    public static final String METRIC_GAME_SESSION_CLEANUP_DELETE_FAILED =
+            "metric:game:session:cleanup:delete-failed";
+
+    /**
+     * 게임 세션 Redis 키 TTL 전환(EXPIRE) 실패 횟수 metric counter.
+     * EXPIRE 실패는 정상 종료 후 grace period 전환 누락을 의미한다. (2시간 TTL이 최종 안전망)
+     */
+    public static final String METRIC_GAME_SESSION_CLEANUP_EXPIRE_FAILED =
+            "metric:game:session:cleanup:expire-failed";
+
+    /** 게임 세션 Redis 키 정리 no-op(정리 대상 키 없음) 횟수 metric counter */
+    public static final String METRIC_GAME_SESSION_CLEANUP_NOOP =
+            "metric:game:session:cleanup:noop";
+
+    /**
+     * 다음 라운드 진행 정지 복구 재처리 큐.
+     *
+     * 다음 라운드 시작은 인메모리 TaskScheduler에 의존하므로 인스턴스 재시작/afterCommit 중단 시
+     * 영구 정지될 수 있다. scheduleNextRound 시 durable 복구 요청을 적재해 두고, 복구 워커가
+     * 실제 라운드 진행 여부를 확인해 미진행분만 재트리거한다.
+     *
+     * - Type  : List
+     * - Value : "lobbyCode|expectedRoundNo|attempt|nextRetryAtEpochMillis"
+     */
+    public static final String GAME_ROUND_RECOVERY_QUEUE =
+            "game:round:recovery";
+
+    /** 다음 라운드 진행 복구 큐 적재 횟수 metric counter */
+    public static final String METRIC_GAME_ROUND_RECOVERY_ENQUEUED =
+            "metric:game:round:recovery:enqueued";
+
+    /** 다음 라운드 진행 복구 성공(재트리거 또는 이미 진행 확인) 횟수 metric counter */
+    public static final String METRIC_GAME_ROUND_RECOVERY_SUCCESS =
+            "metric:game:round:recovery:success";
+
+    /** 다음 라운드 진행 복구 실패 횟수 metric counter */
+    public static final String METRIC_GAME_ROUND_RECOVERY_FAILED =
+            "metric:game:round:recovery:failed";
+
+    /** 다음 라운드 in-memory TaskScheduler 예약 등록 실패 횟수 metric counter (durable 복구 큐와 분리 집계) */
+    public static final String METRIC_GAME_ROUND_INMEMORY_SCHEDULE_FAILED =
+            "metric:game:round:inmemory-schedule:failed";
 
     /** 게임 시작 전 stale ready 데이터 정리 횟수 */
     public static final String METRIC_LOBBY_READY_STALE_CLEANUP =
@@ -676,11 +755,41 @@ public final class RedisKeys {
 
     private static final String GAME_SESSION_PREFIX = "game:session:";
 
-    /** 게임 세션 Hash의 현재 라운드 번호 필드 */
+    // --- 게임 세션 진행 상태 마커 (game:session:{code} Hash 내부 필드명) ---
+    // 비정상 종료 복구 진단/판별을 위해 진행 단계를 durable하게 기록한다.
+
+    /** 다음 라운드 시작 예정 시각(epoch millis). 정지 라운드 복구 판별/진단에 사용한다. */
+    public static final String FIELD_NEXT_ROUND_START_AT = "next_round_start_at";
+
+    /** 직전 라운드 종료 브로드캐스트 완료 라운드 번호. */
+    public static final String FIELD_ROUND_END_BROADCASTED = "round_end_broadcasted";
+
+    /** Redis 점수 반영(score sync) 완료 라운드 번호. */
+    public static final String FIELD_SCORE_SYNCED = "score_synced";
+
+    /** 게임 세션 현재 라운드 번호 필드. */
     public static final String FIELD_CURRENT_ROUND_NO = "current_round_no";
 
-    /** 게임 세션 Hash의 라운드 진행 단계 필드 (READY, PLAYING, ENDED, FINISHED) */
+    /** 게임 세션 Hash의 라운드 진행 단계 필드. (READY, PLAYING, ENDED, FINISHED) */
     public static final String FIELD_ROUND_PHASE = "round_phase";
+
+    /**
+     * 게임 세션 키의 base 부분을 반환합니다. ({lobbyCode} hash-tag 적용)
+     *
+     * [Redis Cluster 대비 hash-tag]
+     * cleanup_game_session.lua 등은 하나의 게임 세션에 속한 다수의 키를 단일 Lua로 다룬다.
+     * Redis Cluster는 키 문자열 전체를 해싱하므로 hash-tag가 없으면 같은 게임 세션의 키들이
+     * 서로 다른 슬롯에 분산되어 CROSSSLOT 오류가 발생한다. lobbyCode를 중괄호로 감싸 해시 슬롯
+     * 결정 대상을 lobbyCode로 한정함으로써, game:session 패밀리의 모든 키가 동일 슬롯에 모이게 한다.
+     *
+     * [한계]
+     * ready_to_play.lua는 game:session 키와 lobby:{code}:participants 키를 함께 사용한다.
+     * 완전한 클러스터 안전을 위해선 lobby 패밀리에도 동일한 {code} hash-tag가 필요하며,
+     * 이는 blast radius가 커 별도 후속 작업으로 분리한다. (현 단계는 game:session 패밀리 한정)
+     */
+    private static String gameSessionBase(String lobbyCode) {
+        return GAME_SESSION_PREFIX + "{" + lobbyCode + "}";
+    }
 
     /**
      * 게임 세션 메타데이터 키를 반환합니다.
@@ -689,7 +798,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}"
      */
     public static String gameSessionKey(String lobbyCode) {
-        return GAME_SESSION_PREFIX + lobbyCode;
+        return gameSessionBase(lobbyCode);
     }
 
     /**
@@ -699,7 +808,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:rounds"
      */
     public static String gameSessionRoundsKey(String lobbyCode) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":rounds";
+        return gameSessionBase(lobbyCode) + ":rounds";
     }
 
     /**
@@ -709,7 +818,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:players"
      */
     public static String gameSessionPlayersKey(String lobbyCode) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":players";
+        return gameSessionBase(lobbyCode) + ":players";
     }
 
     /**
@@ -720,7 +829,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:ready"
      */
     public static String gameSessionRoundReadyKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":ready";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":ready";
     }
 
     /**
@@ -731,7 +840,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:playback_lock"
      */
     public static String gameSessionPlaybackLockKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":playback_lock";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":playback_lock";
     }
 
     /**
@@ -742,7 +851,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:data"
      */
     public static String gameSessionRoundDataKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":data";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":data";
     }
 
     /**
@@ -753,7 +862,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:correct_players"
      */
     public static String gameSessionRoundCorrectPlayersKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":correct_players";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":correct_players";
     }
 
     /**
@@ -784,7 +893,7 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:correct_times"
      */
     public static String gameSessionRoundCorrectTimesKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":correct_times";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":correct_times";
     }
 
     /**
@@ -795,17 +904,31 @@ public final class RedisKeys {
      * @return "game:session:{lobbyCode}:round:{roundNo}:ended_lock"
      */
     public static String gameSessionRoundEndedLockKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":ended_lock";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":ended_lock";
     }
 
     /**
-     * 특정 라운드 시작 중복 방지 락 키를 반환합니다.
+     * 다음 라운드 시작 중복 방지 SETNX 락 키를 반환합니다.
+     *
+     * 인메모리 TaskScheduler 예약과 복구 워커가 동시에 startNextRound를 호출해도
+     * (GameSession.nextRound()가 비멱등이라 라운드를 건너뛰지 않도록) 한 번만 진행시키기 위한 락이다.
      *
      * @param lobbyCode 로비 초대 코드
-     * @param roundNo 라운드 번호
+     * @param roundNo 시작할 다음 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:next_round_lock"
+     */
+    public static String gameSessionRoundNextLockKey(String lobbyCode, int roundNo) {
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_round_lock";
+    }
+
+    /**
+     * 다음 라운드 시작 처리 중 중복 방지 락 키를 반환합니다. (GameRoundNextRoundExecutor 전용, 짧은 TTL)
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 시작할 다음 라운드 번호
      * @return "game:session:{lobbyCode}:round:{roundNo}:next_lock"
      */
     public static String gameSessionNextRoundLockKey(String lobbyCode, int roundNo) {
-        return GAME_SESSION_PREFIX + lobbyCode + ":round:" + roundNo + ":next_lock";
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_lock";
     }
 }

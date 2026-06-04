@@ -176,6 +176,8 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         log.debug("STOMP CONNECT 온라인 상태 저장 시작 - userIdentifier: {}, wsSessionId: {}, sessionSequence: {}",
                 userIdentifier, wsSessionId, sessionSequence);
 
+        accessor.setUser(new StompPrincipal(userIdentifier));
+
         saveUserOnlineSession(userIdentifier, wsSessionId);
 
         webSocketMetric.increment();
@@ -469,6 +471,19 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             log.error("STOMP CONNECT 온라인 상태 저장 실패 - userIdentifier: {}, wsSessionId: {}, userStatusKey: {}, userStatusSessionsKey: {}",
                     userIdentifier, wsSessionId, userStatusKey, userStatusSessionsKey, e);
             throw new StompErrorException(StompErrorCode.CONNECT_ONLINE_STATUS_FAILED, e);
+        }
+    }
+
+    private static class StompPrincipal implements java.security.Principal {
+        private final String name;
+
+        public StompPrincipal(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getName() {
+            return name;
         }
     }
 }

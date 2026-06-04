@@ -347,3 +347,122 @@ Content-Type: application/json
 - JWT Access Token이 유효해야 합니다.
 - JWT에서 추출한 `userId`가 `admin_users.user_id`에 등록되어 있어야 합니다.
 - 해당 사용자의 `user_type`이 `REGISTERED`여야 합니다.
+
+---
+
+## 게임 및 인게임 (Game & In-Game)
+
+### 현재 게임 및 라운드 상태 복구 조회
+
+```http
+GET /api/game/{code}/round/current
+Authorization: Bearer {accessToken}
+```
+
+게임 도중 접속이 일시 중단(새로고침, 모바일 환경 백그라운드 전환 등)된 사용자가 현재 진행 중인 게임 세션 및 라운드 상태를 복구할 수 있도록 동영상 메타데이터 및 상태를 조회합니다.
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+```
+
+##### 1. `READY` 단계 (ROUND_READY: 비디오 로딩 대기 상태)
+
+```json
+{
+  "roundNo": 1,
+  "status": "WAITING",
+  "roundPhase": "READY",
+  "timeLimitSeconds": 30,
+  "serverStartedAt": null,
+  "videoId": "vid_123",
+  "youtubeUrl": "https://youtube.com/watch?v=vid_123",
+  "startTime": 15,
+  "endTime": 45,
+  "remainingSeconds": null,
+  "isCorrect": false
+}
+```
+
+##### 2. `PLAYING` 단계 (ROUND_PLAYBACK_STARTED: 재생 진행 중 상태)
+
+```json
+{
+  "roundNo": 1,
+  "status": "PLAYING",
+  "roundPhase": "PLAYING",
+  "timeLimitSeconds": 30,
+  "serverStartedAt": 1717148068000,
+  "videoId": "vid_123",
+  "youtubeUrl": "https://youtube.com/watch?v=vid_123",
+  "startTime": 15,
+  "endTime": 45,
+  "remainingSeconds": 20,
+  "isCorrect": true
+}
+```
+
+##### 3. `ENDED` 단계 (ROUND_END: 결과화면 노출 중 상태)
+
+```json
+{
+  "roundNo": 1,
+  "status": "WAITING",
+  "roundPhase": "ENDED",
+  "timeLimitSeconds": 30,
+  "serverStartedAt": null,
+  "videoId": null,
+  "youtubeUrl": null,
+  "startTime": null,
+  "endTime": null,
+  "remainingSeconds": null,
+  "isCorrect": false
+}
+```
+
+##### 4. `FINISHED` 단계 (게임 세션 종료 상태)
+
+```json
+{
+  "roundNo": 5,
+  "status": "FINISHED",
+  "roundPhase": "FINISHED",
+  "timeLimitSeconds": 30,
+  "serverStartedAt": null,
+  "videoId": null,
+  "youtubeUrl": null,
+  "startTime": null,
+  "endTime": null,
+  "remainingSeconds": null,
+  "isCorrect": false
+}
+```
+
+#### Response Fields
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `roundNo` | number | 현재 진행 중인 라운드 번호 (1-based) |
+| `status` | string | 전체 게임 세션 상태 (`WAITING` \| `PLAYING` \| `FINISHED`) |
+| `roundPhase` | string | 현재 라운드 진행 단계 (`READY` \| `PLAYING` \| `ENDED` \| `FINISHED`) |
+| `timeLimitSeconds` | number | 라운드별 제한 시간(초) |
+| `serverStartedAt` | number \| null | YouTube 영상 실제 재생 시작 시점의 서버 epoch milliseconds. 아직 재생을 시작하지 않았거나 종료된 경우 `null` |
+| `videoId` | string \| null | YouTube 비디오 고유 ID. `READY`/`PLAYING` 단계가 아니면 `null` |
+| `youtubeUrl` | string \| null | YouTube 비디오 전체 URL. `READY`/`PLAYING` 단계가 아니면 `null` |
+| `startTime` | number \| null | 비디오 내 재생 시작 지점(초). `READY`/`PLAYING` 단계가 아니면 `null` |
+| `endTime` | number \| null | 비디오 내 재생 종료 지점(초) (`startTime + timeLimitSeconds`). `READY`/`PLAYING` 단계가 아니면 `null` |
+| `remainingSeconds` | number \| null | 영상 종료 시점까지 남은 제한 시간(초). `PLAYING` 단계가 아니면 `null` |
+| `isCorrect` | boolean | 현재 사용자가 해당 라운드에서 정답을 맞췄는지 여부 |
+
+#### Error Response
+
+| HTTP Status | Message | 상황 |
+| ---: | --- | --- |
+| 401 | `유효하지 않은 인증 정보입니다.` | 인증 정보(Access Token)가 누락되거나 잘못됨 |
+| 403 | `로비 참여자만 게임 상태를 조회할 수 있습니다.` | 세션이 활성화된 로비의 정상 참여자가 아님 |
+| 403 | `강퇴된 로비의 게임 상태는 조회할 수 없습니다.` | 해당 로비에서 강퇴된 사용자가 조회를 시도함 |
+| 404 | `존재하지 않는 로비입니다.` | 존재하지 않는 로비 초대 코드 입력 |
+| 404 | `진행 중인 게임 세션이 없습니다.` | 해당 로비에 매핑된 활성화 상태의 게임 세션이 없음 |
+

@@ -1,9 +1,11 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.game.dto.CurrentRoundStatusResponse;
+import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
+import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -21,22 +24,29 @@ public class GameSessionQueryService {
     private final LobbyRepository lobbyRepository;
     private final GameRoundEndService gameRoundEndService;
     private final GameRoundProgressService gameRoundProgressService;
+    private final MapItemJpaRepository mapItemJpaRepository;
 
     @Lazy
     public GameSessionQueryService(
             StringRedisTemplate redisTemplate,
             LobbyRepository lobbyRepository,
             @Lazy GameRoundEndService gameRoundEndService,
-            @Lazy GameRoundProgressService gameRoundProgressService) {
+            @Lazy GameRoundProgressService gameRoundProgressService,
+            @Lazy MapItemJpaRepository mapItemJpaRepository) {
         this.redisTemplate = redisTemplate;
         this.lobbyRepository = lobbyRepository;
         this.gameRoundEndService = gameRoundEndService;
         this.gameRoundProgressService = gameRoundProgressService;
+        this.mapItemJpaRepository = mapItemJpaRepository;
     }
 
     public CurrentRoundStatusResponse getCurrentRoundStatus(String lobbyCode, String userIdentifier) {
-        if (!lobbyRepository.isParticipant(lobbyCode, userIdentifier)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "로비 참가자만 조회할 수 있습니다.");
+        LobbyUserAccessStatus accessStatus = lobbyRepository.getUserAccessStatus(lobbyCode, userIdentifier);
+        switch (accessStatus) {
+            case LOBBY_NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "존재하지 않는 로비입니다.");
+            case KICKED -> throw new ResponseStatusException(HttpStatus.FORBIDDEN, "강퇴된 로비의 게임 상태는 조회할 수 없습니다.");
+            case NOT_PARTICIPANT -> throw new ResponseStatusException(HttpStatus.FORBIDDEN, "로비 참여자만 게임 상태를 조회할 수 있습니다.");
+            case PARTICIPANT -> {} // 통과
         }
 
         String sessionKey = RedisKeys.gameSessionKey(lobbyCode);
@@ -105,11 +115,59 @@ public class GameSessionQueryService {
             responseStatus = isPlaying ? "PLAYING" : "WAITING";
         }
 
+        // --- 재접속 복구용 추가 데이터 바인딩 ---
+        String videoId = null;
+        String youtubeUrl = null;
+        Integer startTime = null;
+        Integer endTime = null;
+        Integer remainingSeconds = null;
+        boolean isCorrect = false;
+
+        if ("READY".equals(roundPhase) || "PLAYING".equals(roundPhase)) {
+            // 1. 현재 라운드 비디오 정보 복구
+            String roundsKey = RedisKeys.gameSessionRoundsKey(lobbyCode);
+            String mapItemIdStr = redisTemplate.opsForList().index(roundsKey, roundNo - 1);
+            if (mapItemIdStr != null) {
+                try {
+                    Long mapItemId = Long.parseLong(mapItemIdStr);
+                    Optional<MapItem> mapItemOpt = mapItemJpaRepository.findById(mapItemId);
+                    if (mapItemOpt.isPresent()) {
+                        MapItem mapItem = mapItemOpt.get();
+                        videoId = mapItem.getVideoId();
+                        youtubeUrl = mapItem.getYoutubeUrl();
+                        startTime = mapItem.getStartTime();
+                        endTime = mapItem.getStartTime() + timeLimitSeconds;
+                    }
+                } catch (Exception e) {
+                    log.error("getCurrentRoundStatus: MapItem 조회 중 예외 발생 - code: {}, roundNo: {}, mapItemIdStr: {}",
+                            lobbyCode, roundNo, mapItemIdStr, e);
+                }
+            }
+
+            // 2. 이미 정답을 제출하여 맞췄는지 여부 판별
+            String correctPlayersKey = RedisKeys.gameSessionRoundCorrectPlayersKey(lobbyCode, roundNo);
+            isCorrect = Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(correctPlayersKey, userIdentifier));
+
+            // 3. 실제 재생 시작 시각 기준 남은 시간 계산
+            if ("PLAYING".equals(roundPhase) && serverStartedAt != null) {
+                long elapsed = System.currentTimeMillis() - serverStartedAt;
+                long remainingMillis = (timeLimitSeconds * 1000L) - elapsed;
+                remainingSeconds = (int) Math.max(0, (remainingMillis + 999) / 1000);
+            }
+        }
+
         return CurrentRoundStatusResponse.builder()
                 .roundNo(roundNo)
                 .status(responseStatus)
+                .roundPhase(roundPhase)
                 .timeLimitSeconds(timeLimitSeconds)
                 .serverStartedAt(serverStartedAt)
+                .videoId(videoId)
+                .youtubeUrl(youtubeUrl)
+                .startTime(startTime)
+                .endTime(endTime)
+                .remainingSeconds(remainingSeconds)
+                .isCorrect(isCorrect)
                 .build();
     }
 }

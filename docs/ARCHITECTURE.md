@@ -1117,6 +1117,25 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
   - 게임의 최종 종료는 별도 `GAME_FINISHED` 이벤트를 발행하지 않고, 라운드 종료 결과 알림(`ROUND_END`) 내 `isLastRound=true`인 것을 기준으로 처리합니다. 
   - FE는 `isLastRound=true` 조건이 들어오면 다음 라운드 준비를 하지 않고 최종 스코어보드 및 결과 연출 화면으로 전환합니다.
 
+#### 5) 인게임 재접속 및 현재 라운드 상태 복구 (핵심 계약)
+- **상태 조회 API**: 사용자가 일시적으로 네트워크 단절을 겪거나 브라우저를 새로고침(재접속)하여 게임 화면에 다시 접근하면, FE는 가장 먼저 `GET /api/game/{code}/round/current` API를 호출하여 현재 세션과 라운드의 정적/동적 상태 데이터를 획득해야 합니다.
+- **READY 단계 복구**:
+  - `status`가 `"WAITING"`이고 `roundPhase`가 `"READY"`인 경우, 동영상 재생 전 대기 상태입니다.
+  - FE는 `videoId`, `youtubeUrl`, `startTime`, `endTime`을 사용하여 유튜브 IFrame 플레이어에 비디오를 로드(`cueVideoById` 등)하지만, 재생은 시작하지 않고 일시정지/정지 상태로 둡니다.
+  - 비디오 로드가 완료되면 즉시 `SEND /app/game/{code}/ready-to-play`를 전송하여 대기 상태에 참가해야 합니다.
+- **PLAYING 단계 복구**:
+  - `status`가 `"PLAYING"`이고 `roundPhase`가 `"PLAYING"`인 경우, 이미 라운드 재생이 진행 중인 상태입니다.
+  - FE는 비디오 메타데이터를 로드한 뒤, 서버 실제 재생 시작 시각인 `serverStartedAt`과 클라이언트의 현재 시간을 비교(Clock Skew 보정 필수)하여 흘러간 재생 시간(`elapsedSeconds`)을 계산합니다.
+  - `targetSeekPosition = startTime + elapsedSeconds` 지점으로 비디오를 이동(`seekTo`)하고 재생(`playVideo`)하여 싱크를 복구합니다.
+  - `isCorrect` 필드가 `true`인 경우, 해당 유저가 이미 정답을 맞춘 상태이므로 입력 창을 비활성화하고 blind chat/blind 연출을 표시합니다.
+  - 남은 제한 시간(`remainingSeconds`) 필드를 활용해 UI 카운트다운을 복원합니다.
+- **ENDED 단계 복구**:
+  - `status`가 `"WAITING"`이고 `roundPhase`가 `"ENDED"`인 경우, 라운드 종료 후 결과화면 노출 중인 상태입니다.
+  - 비디오 관련 필드는 `null`이며, FE는 인게임 재생을 멈추고 랭킹 및 결과 화면 UI를 유지합니다. (이후 서버에서 자동으로 다음 라운드 시작 `ROUND_READY` 이벤트를 WebSocket으로 브로드캐스트하므로, 이에 따라 READY 단계로 이행해야 합니다.)
+- **FINISHED 단계 복구**:
+  - `status`가 `"FINISHED"`이고 `roundPhase`가 `"FINISHED"`인 경우, 전체 게임이 종료된 상태입니다.
+  - FE는 비디오를 멈추고 최종 결과 및 스코어보드 화면으로 전환합니다.
+
 ## 게임 세션 Redis 키 정리 정책
 
 게임 세션 관련 Redis 키는 생성 시 **2시간(7200초) TTL**을 최종 안전망으로 가지며, 종료/폭파/롤백 시점에 명시적으로 정리한다.

@@ -182,10 +182,14 @@ public class GameSessionCreateService {
 
         // putAll + expire를 단일 파이프라인으로 일괄 전송해 라운드당 2 RTT 누적(N라운드 = 2N RTT)을 줄인다.
         redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
-            StringRedisConnection stringConnection = (StringRedisConnection) connection;
             for (RoundCacheEntry entry : roundCacheEntries) {
-                stringConnection.hMSet(entry.key(), entry.data());
-                stringConnection.expire(entry.key(), 7200L);
+                byte[] key = entry.key().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                Map<byte[], byte[]> dataMap = new java.util.HashMap<>();
+                entry.data().forEach((k, v) -> {
+                    dataMap.put(k.getBytes(java.nio.charset.StandardCharsets.UTF_8), v.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                });
+                connection.hashCommands().hMSet(key, dataMap);
+                connection.keyCommands().expire(key, 7200L);
             }
             return null;
         });

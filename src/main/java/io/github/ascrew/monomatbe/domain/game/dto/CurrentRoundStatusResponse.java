@@ -6,7 +6,15 @@ import lombok.Builder;
 public record CurrentRoundStatusResponse(
         int roundNo,
         String status,
+        String roundPhase,
         int timeLimitSeconds,
-        Long serverStartedAt
+        Long serverStartedAt,
+        String videoId,
+        String youtubeUrl,
+        Integer startTime,
+        Integer endTime,
+        Integer remainingSeconds,
+        boolean isCorrect
 ) {
 }
+

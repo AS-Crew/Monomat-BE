@@ -5,6 +5,7 @@ import io.github.ascrew.monomatbe.domain.game.service.GameSessionQueryService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,7 +21,7 @@ public class GameSessionController {
     @GetMapping("/{code}/round/current")
     public ResponseEntity<CurrentRoundStatusResponse> getCurrentRoundStatus(
             @PathVariable("code") String code,
-            CustomPrincipal principal) {
+            @AuthenticationPrincipal CustomPrincipal principal) {
         if (principal == null || principal.userIdentifier() == null) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.UNAUTHORIZED,

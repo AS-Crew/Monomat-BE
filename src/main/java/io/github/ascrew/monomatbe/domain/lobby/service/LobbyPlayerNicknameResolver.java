@@ -165,7 +165,10 @@ public class LobbyPlayerNicknameResolver {
 
         try {
             redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
-                StringRedisConnection stringConnection = (StringRedisConnection) connection;
+                org.springframework.data.redis.connection.StringRedisConnection stringConnection =
+                        connection instanceof org.springframework.data.redis.connection.StringRedisConnection ?
+                                (org.springframework.data.redis.connection.StringRedisConnection) connection :
+                                new org.springframework.data.redis.connection.DefaultStringRedisConnection(connection);
                 loadedNicknames.forEach((userIdentifier, nickname) -> {
                     if (nickname == null || nickname.isBlank()) {
                         return;
@@ -174,7 +177,7 @@ public class LobbyPlayerNicknameResolver {
                             RedisKeys.userNicknameKey(userIdentifier),
                             nickname,
                             Expiration.from(ttl),
-                            RedisStringCommands.SetOption.upsert()
+                            org.springframework.data.redis.connection.RedisStringCommands.SetOption.upsert()
                     );
                 });
                 return null;

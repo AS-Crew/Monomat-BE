@@ -14,7 +14,7 @@ public record RoundCorrectResponse(
         String message
 ) {
     public RoundCorrectResponse {
-        if (type == null) {
+        if (type == null || !GameEventTypes.ROUND_CORRECT.equals(type)) {
             type = GameEventTypes.ROUND_CORRECT;
         }
     }

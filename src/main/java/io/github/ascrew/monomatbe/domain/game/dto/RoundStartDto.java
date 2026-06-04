@@ -19,7 +19,7 @@ public record RoundStartDto(
         long serverStartedAt
 ) {
     public RoundStartDto {
-        if (type == null) {
+        if (type == null || !GameEventTypes.ROUND_READY.equals(type)) {
             type = GameEventTypes.ROUND_READY;
         }
     }

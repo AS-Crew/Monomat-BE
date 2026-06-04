@@ -19,7 +19,7 @@ public record RoundMetadataDto(
         boolean isLastRound
 ) {
     public RoundMetadataDto {
-        if (type == null) {
+        if (type == null || !GameEventTypes.ROUND_END.equals(type)) {
             type = GameEventTypes.ROUND_END;
         }
     }

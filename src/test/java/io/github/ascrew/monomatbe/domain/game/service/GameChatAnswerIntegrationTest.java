@@ -146,7 +146,7 @@ class GameChatAnswerIntegrationTest {
         assertThat(broadcasted.getContent()).contains(NICKNAME + "님이 정답을 맞췄습니다!");
 
         // 2. 정답자 본인에게 개인 축하 메시지 수신 검증
-        verify(messagingTemplate).convertAndSendToUser(eq(USER_ID), eq(StompDestinations.SUBSCRIBE_GAME_ANSWERS), any(RoundCorrectResponse.class));
+        verify(messagingTemplate).convertAndSendToUser(eq(USER_ID), eq(StompDestinations.SERVER_USER_GAME_ANSWERS), any(RoundCorrectResponse.class));
 
         // 3. Redis Set에 정답자로 등록 검증
         Boolean isCorrect = redisTemplate.opsForSet().isMember(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1), USER_ID);

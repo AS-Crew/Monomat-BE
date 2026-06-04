@@ -252,7 +252,7 @@ public class GameAnswerService {
                 .isFuzzy(isFuzzy)
                 .message(isFuzzy ? "오타 허용 정답입니다!" : "완벽한 정답입니다!")
                 .build();
-        messagingTemplate.convertAndSendToUser(userIdentifier, StompDestinations.SUBSCRIBE_GAME_ANSWERS, response);
+        messagingTemplate.convertAndSendToUser(userIdentifier, StompDestinations.SERVER_USER_GAME_ANSWERS, response);
     }
 
     private String getNickname(String userIdentifier) {

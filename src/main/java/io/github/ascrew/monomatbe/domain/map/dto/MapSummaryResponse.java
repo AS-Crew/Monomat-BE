@@ -7,6 +7,7 @@ import lombok.Builder;
 public record MapSummaryResponse(
         Long mapId,
         String title,
+        String description,
         MapCategory category,
         int numOfSong,
         int totalPlayTime,

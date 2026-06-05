@@ -151,22 +151,39 @@ public class MapService {
                 .build();
     }
 
-    // 로그인한 사용자의 맵 목록(공개/비공개 모두, 삭제 제외)을 페이징하여 조회합니다.
-    // 개인 데이터이므로 Redis 캐시를 적용하지 않습니다.
+    // 로그인한 사용자의 맵 목록(공개/비공개/공개 대기 모두, 삭제 제외)을 페이징하여 조회합니다.
+// 개인 데이터이므로 Redis 캐시를 적용하지 않습니다.
     @Transactional(readOnly = true)
     public MapPageResponse getMyMaps(Integer page, Integer size, CustomPrincipal principal) {
+        return getMyMaps(page, size, null, null, null, principal);
+    }
+
+    @Transactional(readOnly = true)
+    public MapPageResponse getMyMaps(
+            Integer page,
+            Integer size,
+            String keyword,
+            String rawCategory,
+            MapSortType sort,
+            CustomPrincipal principal
+    ) {
         validatePrincipal(principal);
 
         int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
         int normalizedSize = size == null || size <= 0 ? DEFAULT_SIZE : Math.min(size, MAX_SIZE);
+        MapSortType normalizedSort = sort == null ? MapSortType.NEWEST : sort;
+        String normalizedKeyword = normalizeKeyword(keyword);
+        MapCategory category = parseCategory(rawCategory);
 
-        Specification<QuizMap> spec =
-                QuizMapSpecification.ownedByAndNotDeleted(principal.userId());
+        Specification<QuizMap> spec = Specification
+                .where(QuizMapSpecification.ownedByAndNotDeleted(principal.userId()))
+                .and(QuizMapSpecification.withKeywordIncludingCategory(normalizedKeyword))
+                .and(QuizMapSpecification.withCategory(category));
 
         Pageable pageable = PageRequest.of(
                 normalizedPage,
                 normalizedSize,
-                Sort.by(Sort.Direction.DESC, "updatedAt")
+                toSort(normalizedSort)
         );
 
         Page<QuizMap> pageResult = quizMapJpaRepository.findAll(spec, pageable);
@@ -322,6 +339,29 @@ public class MapService {
             throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
                     ERROR_REGISTERED_ONLY
+            );
+        }
+    }
+
+    private String normalizeKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+
+        return keyword.trim().toLowerCase();
+    }
+
+    private MapCategory parseCategory(String rawCategory) {
+        if (rawCategory == null || rawCategory.isBlank()) {
+            return null;
+        }
+
+        try {
+            return MapCategory.from(rawCategory);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "지원하지 않는 category입니다: " + rawCategory
             );
         }
     }

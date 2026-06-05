@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -31,6 +32,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import org.mockito.ArgumentCaptor;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -408,6 +410,118 @@ class MapServiceTest {
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
         assertThat(response.content().get(0).playCount()).isEqualTo(12L);
+    }
+
+    @Test
+    void getMyMaps_withKeywordCategoryAndSort_queriesRepositoryWithConditions() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(100L)
+                .owner(owner)
+                .title("OST 모음")
+                .description("내 맵 설명")
+                .category(MapCategory.OST)
+                .numOfSong(3)
+                .totalPlayTime(600)
+                .playCount(12L)
+                .isPublic(false)
+                .pendingPublic(true)
+                .build();
+
+        when(quizMapJpaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(quizMap)));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        var response = mapService.getMyMaps(
+                0,
+                20,
+                "ost",
+                "OST",
+                MapSortType.TITLE_ASC,
+                principal
+        );
+
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).mapId()).isEqualTo(100L);
+        assertThat(response.content().get(0).category()).isEqualTo(MapCategory.OST);
+        assertThat(response.content().get(0).pendingPublic()).isTrue();
+        assertThat(response.content().get(0).playCount()).isEqualTo(12L);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(quizMapJpaRepository).findAll(any(Specification.class), pageableCaptor.capture());
+
+        Pageable pageable = pageableCaptor.getValue();
+        assertThat(pageable.getPageNumber()).isZero();
+        assertThat(pageable.getPageSize()).isEqualTo(20);
+        assertThat(pageable.getSort().getOrderFor("title")).isNotNull();
+        assertThat(pageable.getSort().getOrderFor("title").isAscending()).isTrue();
+    }
+
+    @Test
+    void getMyMaps_acceptsFlexibleCategoryValue() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(101L)
+                .owner(owner)
+                .title("애니 노래")
+                .description("애니 맵")
+                .category(MapCategory.ANIME)
+                .numOfSong(5)
+                .totalPlayTime(800)
+                .playCount(3L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(quizMap)));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        var response = mapService.getMyMaps(
+                0,
+                20,
+                "애니",
+                "anime",
+                MapSortType.NEWEST,
+                principal
+        );
+
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).category()).isEqualTo(MapCategory.ANIME);
+        assertThat(response.content().get(0).title()).isEqualTo("애니 노래");
+    }
+
+    @Test
+    void getMyMaps_invalidCategory_throws400AndDoesNotQueryRepository() {
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapService.getMyMaps(
+                0,
+                20,
+                null,
+                "INVALID_CATEGORY",
+                MapSortType.NEWEST,
+                principal
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("지원하지 않는 category입니다");
+
+        verify(quizMapJpaRepository, never()).findAll(any(Specification.class), any(Pageable.class));
     }
 
     @Test

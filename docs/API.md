@@ -301,40 +301,67 @@ HTTP/1.1 200 OK
 ### 내 맵 목록 조회
 
 ```http
-GET /api/maps/me?page=0&size=20
+GET /api/maps/me?page=0&size=20&keyword=ost&category=OST&sort=NEWEST
 Authorization: Bearer {accessToken}
 ```
 
-로그인한 사용자가 생성한 맵 목록을 조회합니다. 공개/비공개 맵을 모두 포함하되, 삭제된 맵은 제외합니다.
-
 #### Query Parameters
 
-| 필드     | 타입     | 필수 | 기본값 | 설명             |
-| ------ | ------ | -: | --: | -------------- |
-| `page` | number |  X |   0 | 0-based 페이지 번호 |
-| `size` | number |  X |  20 | 페이지 크기. 최대 100 |
+| 이름 | 타입 | 필수 | 기본값 | 설명 |
+| --- | --- | --- | --- | --- |
+| page | number | N | 0 | 페이지 번호 |
+| size | number | N | 20 | 페이지 크기 |
+| keyword | string | N | - | 내 맵 제목 검색어. 카테고리 값으로 해석 가능한 경우 카테고리도 검색 대상에 포함 |
+| category | string | N | - | 명시적 카테고리 필터 |
+| sort | string | N | NEWEST | 정렬 기준 |
 
-#### Success Response
+#### category 지원 값
 
-```http
-HTTP/1.1 200 OK
+| 입력 예시 | 처리 결과 |
+| --- | --- |
+| K-POP, KPOP, kpop | K-POP |
+| J-POP, JPOP, jpop | J-POP |
+| POP, pop | POP |
+| OST, ost | OST |
+| 애니, ANIME, anime | 애니 |
+
+#### sort 지원 값
+
+| 값 | 설명 |
+| --- | --- |
+| NEWEST | 최신순 |
+| OLDEST | 오래된순 |
+| MOST_SONGS | 곡 수 많은 순 |
+| TITLE_ASC | 제목 오름차순 |
+
+#### 검색 조건
+
+```txt
+ownerId = 로그인 사용자 ID
+AND isDeleted = false
+AND keyword 조건
+AND category 조건
 ```
+
+`keyword`와 `category`가 함께 들어오면 AND 조건으로 동작합니다.
+
+#### Response
 
 ```json
 {
   "content": [
     {
       "mapId": 1,
-      "title": "내 K-POP 퀴즈",
-      "description": "직접 만든 문제 모음",
-      "category": "KPOP",
+      "title": "OST 모음",
+      "description": "내가 만든 OST 퀴즈",
+      "category": "OST",
       "numOfSong": 10,
       "totalPlayTime": 300,
       "isPublic": false,
-      "pendingPublic": false,
+      "pendingPublic": true,
       "ownerId": 10,
-      "ownerNickname": "owner",
-      "playCount": 7
+      "ownerNickname": "hyeon",
+      "playCount": 12
     }
   ],
   "page": 0,
@@ -344,16 +371,6 @@ HTTP/1.1 200 OK
   "hasNext": false
 }
 ```
-
-#### Response Fields
-
-공개 맵 목록 조회의 `Map Summary` 응답 필드와 동일합니다.
-
-#### Error Response
-
-| HTTP Status | 상황                               |
-| ----------: | -------------------------------- |
-|         401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
 
 ---
 

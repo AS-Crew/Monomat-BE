@@ -46,15 +46,18 @@ public class MapController {
         return ResponseEntity.ok(mapService.getPublicMaps(page, size, keyword, category, sort));
     }
 
-    @Operation(summary = "내 맵 목록 조회", description = "로그인한 사용자의 공개/비공개 맵을 모두 조회합니다.")
+    @Operation(summary = "내 맵 목록 조회", description = "로그인한 사용자의 공개/비공개/공개 대기 맵을 검색/필터/정렬하여 조회합니다.")
     @GetMapping("/me")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<MapPageResponse> getMyMaps(
             @RequestParam(defaultValue = "0") Integer page,
             @RequestParam(defaultValue = "20") Integer size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) MapSortType sort,
             @AuthenticationPrincipal CustomPrincipal principal
     ) {
-        return ResponseEntity.ok(mapService.getMyMaps(page, size, principal));
+        return ResponseEntity.ok(mapService.getMyMaps(page, size, keyword, category, sort, principal));
     }
 
     @Operation(summary = "공개 맵 단건 조회")

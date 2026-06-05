@@ -61,8 +61,6 @@ public class MapPlayCountService {
             return;
         }
 
-        registerRollbackCleanup(countedKey, lobbyCode, mapId);
-
         try {
             int updated = quizMapJpaRepository.increasePlayCount(mapId);
 
@@ -70,6 +68,7 @@ public class MapPlayCountService {
                 throw new IllegalStateException("맵 플레이 횟수 증가 대상이 존재하지 않습니다. mapId=" + mapId);
             }
 
+            registerRollbackCleanup(countedKey, lobbyCode, mapId);
             registerAfterCommitCacheEviction(mapId);
 
             log.info(

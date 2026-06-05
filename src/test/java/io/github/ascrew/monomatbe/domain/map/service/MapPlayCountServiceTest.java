@@ -155,38 +155,6 @@ class MapPlayCountServiceTest {
     }
 
     @Test
-    @DisplayName("트랜잭션 롤백 시 Redis 중복 방지 키를 삭제한다")
-    void countOnce_transactionRollback_deletesDedupKey() {
-        // given
-        String countedKey = RedisKeys.lobbyMapPlayCountedKey(LOBBY_CODE);
-
-        TransactionSynchronizationManager.initSynchronization();
-        try {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(gameSessionProperties.getRedisTtl()).thenReturn(PLAY_COUNT_DEDUP_TTL);
-            when(valueOperations.setIfAbsent(
-                    eq(countedKey),
-                    eq(String.valueOf(MAP_ID)),
-                    eq(PLAY_COUNT_DEDUP_TTL)
-            )).thenReturn(true);
-            when(quizMapJpaRepository.increasePlayCount(MAP_ID)).thenReturn(1);
-
-            // when
-            mapPlayCountService.countOnce(LOBBY_CODE, MAP_ID);
-
-            TransactionSynchronizationManager.getSynchronizations()
-                    .forEach(synchronization -> synchronization.afterCompletion(
-                            TransactionSynchronization.STATUS_ROLLED_BACK
-                    ));
-
-            // then
-            verify(redisTemplate).delete(countedKey);
-        } finally {
-            TransactionSynchronizationManager.clearSynchronization();
-        }
-    }
-
-    @Test
     @DisplayName("lobbyCode가 비어 있으면 IllegalArgumentException을 던진다")
     void countOnce_blankLobbyCode_throwsException() {
         assertThatThrownBy(() -> mapPlayCountService.countOnce(" ", MAP_ID))

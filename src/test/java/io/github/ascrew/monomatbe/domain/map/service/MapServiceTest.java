@@ -486,7 +486,6 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .build();
 
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(any(String.class))).thenReturn(null);
         when(quizMapJpaRepository.findByIdAndIsDeletedFalseAndIsPublicTrue(300L))
                 .thenReturn(Optional.of(quizMap));
@@ -498,7 +497,7 @@ class MapServiceTest {
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("상세 맵");
     }
-
+    
     @Test
     void getPublicMap_cacheHit_returnsOwnerNickname() {
         MapDetailResponse cachedResponse = MapDetailResponse.builder()

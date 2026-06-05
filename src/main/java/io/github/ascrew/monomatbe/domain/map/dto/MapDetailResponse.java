@@ -17,6 +17,7 @@ public record MapDetailResponse(
         int totalPlayTime,
         boolean isPublic,
         boolean pendingPublic,
+        Long playCount,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

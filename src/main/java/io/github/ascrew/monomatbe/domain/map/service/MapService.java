@@ -395,6 +395,7 @@ public class MapService {
                 .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
                 .ownerId(quizMap.getOwner().getId())
                 .ownerNickname(quizMap.getOwner().getUsername())
+                .playCount(quizMap.getPlayCount())
                 .build();
     }
 
@@ -410,6 +411,7 @@ public class MapService {
                 .totalPlayTime(quizMap.getTotalPlayTime())
                 .isPublic(Boolean.TRUE.equals(quizMap.getIsPublic()))
                 .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
+                .playCount(quizMap.getPlayCount())
                 .createdAt(quizMap.getCreatedAt())
                 .updatedAt(quizMap.getUpdatedAt())
                 .build();

@@ -81,11 +81,14 @@ public final class RedisKeys {
     /** 공개 맵 목록 캐시 키 */
     private static final String MAP_PUBLIC_LIST_PREFIX = "map:public:list";
 
+    /** 공개 맵 목록 응답 스키마 버전 */
+    private static final String MAP_PUBLIC_LIST_SCHEMA_VERSION = "2";
+
     /** 공개 맵 목록 캐시 버전 키 */
     private static final String MAP_PUBLIC_LIST_VERSION = "map:public:list:version";
 
     /** 공개 맵 단건 캐시 키 접두사 */
-    private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:";
+    private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:v2:";
 
     /** YouTube oEmbed 성공 캐시 키 접두사 */
     private static final String YOUTUBE_OEMBED_SUCCESS_PREFIX = "youtube:oembed:success:";
@@ -652,7 +655,11 @@ public final class RedisKeys {
      * @return "map:public:list:v:{version}:p:{page}:s:{size}"
      */
     public static String mapPublicListKey(String version, int page, int size) {
-        return MAP_PUBLIC_LIST_PREFIX + ":v:" + version + ":p:" + page + ":s:" + size;
+        return MAP_PUBLIC_LIST_PREFIX
+                + ":schema:" + MAP_PUBLIC_LIST_SCHEMA_VERSION
+                + ":v:" + version
+                + ":p:" + page
+                + ":s:" + size;
     }
 
     /**
@@ -678,6 +685,7 @@ public final class RedisKeys {
             int size
     ) {
         return MAP_PUBLIC_LIST_PREFIX
+                + ":schema:" + MAP_PUBLIC_LIST_SCHEMA_VERSION
                 + ":v:" + version
                 + ":k:" + (keyword == null ? "" : keyword)
                 + ":c:" + (category == null ? "" : category)

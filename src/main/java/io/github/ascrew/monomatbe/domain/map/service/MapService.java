@@ -394,6 +394,7 @@ public class MapService {
                 .isPublic(Boolean.TRUE.equals(quizMap.getIsPublic()))
                 .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
                 .ownerId(quizMap.getOwner().getId())
+                .ownerNickname(quizMap.getOwner().getUsername())
                 .build();
     }
 
@@ -401,6 +402,7 @@ public class MapService {
         return MapDetailResponse.builder()
                 .id(quizMap.getId())
                 .ownerId(quizMap.getOwner().getId())
+                .ownerNickname(quizMap.getOwner().getUsername())
                 .title(quizMap.getTitle())
                 .description(quizMap.getDescription())
                 .category(quizMap.getCategory())

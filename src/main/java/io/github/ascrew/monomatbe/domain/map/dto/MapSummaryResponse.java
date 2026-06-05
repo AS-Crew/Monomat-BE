@@ -13,6 +13,7 @@ public record MapSummaryResponse(
         int totalPlayTime,
         boolean isPublic,
         boolean pendingPublic,
-        Long ownerId
+        Long ownerId,
+        String ownerNickname
 ) {
 }

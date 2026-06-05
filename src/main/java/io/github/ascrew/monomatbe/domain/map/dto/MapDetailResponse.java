@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 public record MapDetailResponse(
         Long id,
         Long ownerId,
+        String ownerNickname,
         String title,
         String description,
         MapCategory category,

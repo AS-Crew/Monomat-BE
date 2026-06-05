@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
+import io.github.ascrew.monomatbe.domain.game.config.GameSessionProperties;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,15 +19,10 @@ import java.time.Duration;
 @RequiredArgsConstructor
 public class MapPlayCountService {
 
-    /*
-     * 현재 게임 세션 Redis TTL이 7200초로 초기화되고 있으므로,
-     * 동일 로비 중복 집계 방지 키도 같은 수명으로 유지한다.
-     */
-    private static final Duration PLAY_COUNT_DEDUP_TTL = Duration.ofHours(2);
-
     private final StringRedisTemplate redisTemplate;
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapCacheEvictor mapCacheEvictor;
+    private final GameSessionProperties gameSessionProperties;
 
     /**
      * 특정 로비에서 선택된 맵의 플레이 횟수를 한 번만 증가시킨다.
@@ -54,7 +50,7 @@ public class MapPlayCountService {
         Boolean counted = redisTemplate.opsForValue().setIfAbsent(
                 countedKey,
                 String.valueOf(mapId),
-                PLAY_COUNT_DEDUP_TTL
+                gameSessionProperties.getRedisTtl()
         );
 
         if (!Boolean.TRUE.equals(counted)) {

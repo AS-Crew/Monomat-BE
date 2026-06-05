@@ -105,6 +105,7 @@ class MapServiceTest {
                     .pendingPublic(input.getPendingPublic())
                     .numOfSong(0)
                     .totalPlayTime(0)
+                    .playCount(0L)
                     .build();
         });
 
@@ -117,6 +118,7 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("new map");
+        assertThat(response.playCount()).isEqualTo(0L);
         // 생성 시 아이템이 0이므로 공개 의도는 pendingPublic 으로 보존되고 isPublic 은 false 로 저장된다.
         assertThat(response.isPublic()).isFalse();
         assertThat(response.pendingPublic()).isTrue();
@@ -170,6 +172,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(200L)).thenReturn(Optional.of(quizMap));
@@ -201,6 +204,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(400L)).thenReturn(Optional.of(quizMap));
@@ -238,6 +242,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(1)
                 .totalPlayTime(30)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(500L)).thenReturn(Optional.of(quizMap));
@@ -253,6 +258,7 @@ class MapServiceTest {
         assertThat(quizMap.getPendingPublic()).isFalse();
         assertThat(response.isPublic()).isTrue();
         assertThat(response.pendingPublic()).isFalse();
+        assertThat(response.playCount()).isEqualTo(0L);
     }
 
     @Test
@@ -274,6 +280,7 @@ class MapServiceTest {
                 .pendingPublic(true)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(600L)).thenReturn(Optional.of(quizMap));
@@ -309,6 +316,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(1)
                 .totalPlayTime(30)
+                .playCount(21L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(700L)).thenReturn(Optional.of(quizMap));
@@ -322,6 +330,7 @@ class MapServiceTest {
         assertThat(quizMap.getIsPublic()).isTrue();
         assertThat(response.title()).isEqualTo("new title");
         assertThat(response.isPublic()).isTrue();
+        assertThat(response.playCount()).isEqualTo(21L);
     }
 
     @Test
@@ -345,6 +354,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(1)
                 .totalPlayTime(30)
+                .playCount(33L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(800L)).thenReturn(Optional.of(quizMap));
@@ -360,10 +370,11 @@ class MapServiceTest {
         verify(publicationValidator, never()).requirePublishable(any());
         assertThat(response.title()).isEqualTo("fixed title");
         assertThat(response.isPublic()).isTrue();
+        assertThat(response.playCount()).isEqualTo(33L);
     }
 
     @Test
-    void getMyMaps_includesDescriptionInSummary() {
+    void getMyMaps_includesDescriptionAndPlayCountInSummary() {
         User owner = User.builder()
                 .id(10L)
                 .username("owner")
@@ -379,6 +390,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(3)
                 .totalPlayTime(600)
+                .playCount(12L)
                 .isPublic(false)
                 .pendingPublic(false)
                 .build();
@@ -395,6 +407,7 @@ class MapServiceTest {
         assertThat(response.content().get(0).description()).isEqualTo("내 맵 설명");
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+        assertThat(response.content().get(0).playCount()).isEqualTo(12L);
     }
 
     @Test
@@ -414,6 +427,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .isPublic(false)
                 .pendingPublic(false)
                 .build();
@@ -429,10 +443,11 @@ class MapServiceTest {
         assertThat(response.content().get(0).description()).isNull();
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+        assertThat(response.content().get(0).playCount()).isEqualTo(0L);
     }
 
     @Test
-    void getPublicMaps_includesDescriptionInSummary() {
+    void getPublicMaps_includesDescriptionAndPlayCountInSummary() {
         User owner = User.builder()
                 .id(10L)
                 .username("owner")
@@ -448,6 +463,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(5)
                 .totalPlayTime(900)
+                .playCount(34L)
                 .isPublic(true)
                 .pendingPublic(false)
                 .build();
@@ -463,10 +479,11 @@ class MapServiceTest {
         assertThat(response.content().get(0).description()).isEqualTo("공개 맵 설명");
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+        assertThat(response.content().get(0).playCount()).isEqualTo(34L);
     }
 
     @Test
-    void getPublicMap_includesOwnerNicknameInDetail() {
+    void getPublicMap_includesOwnerNicknameAndPlayCountInDetail() {
         User owner = User.builder()
                 .id(10L)
                 .username("owner")
@@ -482,6 +499,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(5)
                 .totalPlayTime(900)
+                .playCount(56L)
                 .isPublic(true)
                 .pendingPublic(false)
                 .build();
@@ -496,10 +514,11 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("상세 맵");
+        assertThat(response.playCount()).isEqualTo(56L);
     }
-    
+
     @Test
-    void getPublicMap_cacheHit_returnsOwnerNickname() {
+    void getPublicMap_cacheHit_returnsOwnerNicknameAndPlayCount() {
         MapDetailResponse cachedResponse = MapDetailResponse.builder()
                 .id(300L)
                 .ownerId(10L)
@@ -509,6 +528,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(5)
                 .totalPlayTime(900)
+                .playCount(78L)
                 .isPublic(true)
                 .pendingPublic(false)
                 .build();
@@ -522,6 +542,7 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("상세 맵");
+        assertThat(response.playCount()).isEqualTo(78L);
 
         verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalseAndIsPublicTrue(any());
     }

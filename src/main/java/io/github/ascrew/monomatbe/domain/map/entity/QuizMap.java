@@ -54,6 +54,9 @@ public class QuizMap {
     @Column(name = "total_play_time", nullable = false)
     private Integer totalPlayTime;
 
+    @Column(name = "play_count", nullable = false)
+    private Long playCount;
+
     @Column(name = "is_public", nullable = false)
     private Boolean isPublic;
 
@@ -81,6 +84,9 @@ public class QuizMap {
         }
         if (this.totalPlayTime == null) {
             this.totalPlayTime = 0;
+        }
+        if (this.playCount == null) {
+            this.playCount = 0L;
         }
         if (this.isPublic == null) {
             this.isPublic = false;

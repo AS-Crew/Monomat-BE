@@ -353,11 +353,15 @@ public final class RedisKeys {
      * - Key   : lobby:{code}:map-play-counted
      * - Type  : String
      * - Value : mapId
-     * - TTL   : 게임/로비 TTL과 동일한 수준
+     * - TTL   : GameSessionProperties.redisTtl 설정값과 동일하게 유지한다.
      *
      * [사용 목적]
      * 동일 로비에서 중복 시작 요청, 재시도, WebSocket 재연결 등으로
      * 같은 맵의 playCount가 중복 증가하지 않도록 SETNX 기준 키로 사용한다.
+     *
+     * [주의]
+     * 이 키의 TTL은 게임 세션 Redis 키 TTL과 동일해야 한다.
+     * TTL 정책은 {@code monomat.game.session.redis-ttl} 설정을 기준으로 관리한다.
      *
      * @param code 로비 초대 코드
      * @return 로비별 맵 플레이 횟수 집계 완료 Redis key

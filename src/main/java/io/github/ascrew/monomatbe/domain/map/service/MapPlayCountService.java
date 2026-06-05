@@ -68,7 +68,6 @@ public class MapPlayCountService {
             int updated = quizMapJpaRepository.increasePlayCount(mapId);
 
             if (updated != 1) {
-                redisTemplate.delete(countedKey);
                 throw new IllegalStateException("맵 플레이 횟수 증가 대상이 존재하지 않습니다. mapId=" + mapId);
             }
 

@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * RedisKeys 게임 세션 키 생성 정책 검증.
  * RedisKeys 키 생성 정책 검증.
  *
  * 특히 userNicknameKey는 세션/게스트 토큰 성격의 식별자 원문을 키에 노출하지 않아야 한다.
@@ -71,5 +70,36 @@ class RedisKeysTest {
                 .startsWith("user:nickname:")
                 .doesNotContain(userIdentifier)
                 .matches("user:nickname:[0-9a-f]{64}");
+    }
+
+    @Test
+    @DisplayName("공개 맵 목록 기본 캐시 key는 응답 schema version을 포함한다")
+    void mapPublicListKey_includesSchemaVersion() {
+        String key = RedisKeys.mapPublicListKey("1", 0, 20);
+
+        assertThat(key).isEqualTo("map:public:list:schema:2:v:1:p:0:s:20");
+    }
+
+    @Test
+    @DisplayName("공개 맵 목록 조건 캐시 key는 응답 schema version을 포함한다")
+    void mapPublicListKeyWithCondition_includesSchemaVersion() {
+        String key = RedisKeys.mapPublicListKey(
+                "1",
+                null,
+                "KPOP",
+                "NEWEST",
+                0,
+                20
+        );
+
+        assertThat(key).isEqualTo("map:public:list:schema:2:v:1:k::c:KPOP:sort:NEWEST:p:0:s:20");
+    }
+
+    @Test
+    @DisplayName("공개 맵 상세 캐시 key는 v2 prefix를 사용한다")
+    void mapPublicDetailKey_usesVersionedPrefix() {
+        String key = RedisKeys.mapPublicDetailKey(300L);
+
+        assertThat(key).isEqualTo("map:public:v2:300");
     }
 }

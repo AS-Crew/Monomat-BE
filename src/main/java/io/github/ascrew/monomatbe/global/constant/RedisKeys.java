@@ -81,11 +81,14 @@ public final class RedisKeys {
     /** 공개 맵 목록 캐시 키 */
     private static final String MAP_PUBLIC_LIST_PREFIX = "map:public:list";
 
+    /** 공개 맵 목록 응답 스키마 버전 */
+    private static final String MAP_PUBLIC_LIST_SCHEMA_VERSION = "2";
+
     /** 공개 맵 목록 캐시 버전 키 */
     private static final String MAP_PUBLIC_LIST_VERSION = "map:public:list:version";
 
     /** 공개 맵 단건 캐시 키 접두사 */
-    private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:";
+    private static final String MAP_PUBLIC_DETAIL_PREFIX = "map:public:v2:";
 
     /** YouTube oEmbed 성공 캐시 키 접두사 */
     private static final String YOUTUBE_OEMBED_SUCCESS_PREFIX = "youtube:oembed:success:";
@@ -649,10 +652,14 @@ public final class RedisKeys {
      * @param version 캐시 버전
      * @param page 페이지 번호
      * @param size 페이지 크기
-     * @return "map:public:list:v:{version}:p:{page}:s:{size}"
+     * @return "map:public:list:schema:2:v:{version}:p:{page}:s:{size}"
      */
     public static String mapPublicListKey(String version, int page, int size) {
-        return MAP_PUBLIC_LIST_PREFIX + ":v:" + version + ":p:" + page + ":s:" + size;
+        return MAP_PUBLIC_LIST_PREFIX
+                + ":schema:" + MAP_PUBLIC_LIST_SCHEMA_VERSION
+                + ":v:" + version
+                + ":p:" + page
+                + ":s:" + size;
     }
 
     /**
@@ -667,7 +674,7 @@ public final class RedisKeys {
      * @param sort     정렬 기준 이름 (null 허용)
      * @param page     페이지 번호
      * @param size     페이지 크기
-     * @return "map:public:list:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
+     * @return "map:public:list:schema:2:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
      */
     public static String mapPublicListKey(
             String version,
@@ -678,6 +685,7 @@ public final class RedisKeys {
             int size
     ) {
         return MAP_PUBLIC_LIST_PREFIX
+                + ":schema:" + MAP_PUBLIC_LIST_SCHEMA_VERSION
                 + ":v:" + version
                 + ":k:" + (keyword == null ? "" : keyword)
                 + ":c:" + (category == null ? "" : category)
@@ -690,7 +698,7 @@ public final class RedisKeys {
      * 공개 맵 단건 캐시 키를 반환합니다.
      *
      * @param mapId 맵 ID
-     * @return "map:public:{mapId}"
+     * @return "map:public:v2:{mapId}"
      */
     public static String mapPublicDetailKey(Long mapId) {
         return MAP_PUBLIC_DETAIL_PREFIX + mapId;

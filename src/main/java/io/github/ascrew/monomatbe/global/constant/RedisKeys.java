@@ -652,7 +652,7 @@ public final class RedisKeys {
      * @param version 캐시 버전
      * @param page 페이지 번호
      * @param size 페이지 크기
-     * @return "map:public:list:v:{version}:p:{page}:s:{size}"
+     * @return "map:public:list:schema:2:v:{version}:p:{page}:s:{size}"
      */
     public static String mapPublicListKey(String version, int page, int size) {
         return MAP_PUBLIC_LIST_PREFIX
@@ -674,7 +674,7 @@ public final class RedisKeys {
      * @param sort     정렬 기준 이름 (null 허용)
      * @param page     페이지 번호
      * @param size     페이지 크기
-     * @return "map:public:list:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
+     * @return "map:public:list:schema:2:v:{version}:k:{keyword}:c:{category}:sort:{sort}:p:{page}:s:{size}"
      */
     public static String mapPublicListKey(
             String version,
@@ -698,7 +698,7 @@ public final class RedisKeys {
      * 공개 맵 단건 캐시 키를 반환합니다.
      *
      * @param mapId 맵 ID
-     * @return "map:public:{mapId}"
+     * @return "map:public:v2:{mapId}"
      */
     public static String mapPublicDetailKey(Long mapId) {
         return MAP_PUBLIC_DETAIL_PREFIX + mapId;

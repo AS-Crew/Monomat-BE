@@ -6,6 +6,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
@@ -496,5 +497,33 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("상세 맵");
+    }
+
+    @Test
+    void getPublicMap_cacheHit_returnsOwnerNickname() {
+        MapDetailResponse cachedResponse = MapDetailResponse.builder()
+                .id(300L)
+                .ownerId(10L)
+                .ownerNickname("owner")
+                .title("상세 맵")
+                .description("상세 맵 설명")
+                .category(MapCategory.KPOP)
+                .numOfSong(5)
+                .totalPlayTime(900)
+                .isPublic(true)
+                .pendingPublic(false)
+                .build();
+
+        when(valueOperations.get(any(String.class))).thenReturn("{}");
+        when(jsonMapper.readValue("{}", MapDetailResponse.class)).thenReturn(cachedResponse);
+
+        var response = mapService.getPublicMap(300L);
+
+        assertThat(response.id()).isEqualTo(300L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.ownerNickname()).isEqualTo("owner");
+        assertThat(response.title()).isEqualTo("상세 맵");
+
+        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalseAndIsPublicTrue(any());
     }
 }

@@ -32,6 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 
 @Slf4j
 @Service
@@ -152,7 +153,7 @@ public class MapService {
     }
 
     // 로그인한 사용자의 맵 목록(공개/비공개/공개 대기 모두, 삭제 제외)을 페이징하여 조회합니다.
-// 개인 데이터이므로 Redis 캐시를 적용하지 않습니다.
+    // 개인 데이터이므로 Redis 캐시를 적용하지 않습니다.
     @Transactional(readOnly = true)
     public MapPageResponse getMyMaps(Integer page, Integer size, CustomPrincipal principal) {
         return getMyMaps(page, size, null, null, null, principal);
@@ -348,7 +349,7 @@ public class MapService {
             return null;
         }
 
-        return keyword.trim().toLowerCase();
+        return keyword.trim().toLowerCase(Locale.ROOT);
     }
 
     private MapCategory parseCategory(String rawCategory) {

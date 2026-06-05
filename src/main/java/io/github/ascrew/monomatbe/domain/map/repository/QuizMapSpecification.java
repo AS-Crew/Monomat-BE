@@ -4,7 +4,11 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import org.springframework.data.jpa.domain.Specification;
 
+import java.util.Locale;
+
 public class QuizMapSpecification {
+
+    private static final char LIKE_ESCAPE = '\\';
 
     private QuizMapSpecification() {}
 
@@ -30,9 +34,9 @@ public class QuizMapSpecification {
             return (root, query, cb) -> null;
         }
 
-        String pattern = "%" + keyword.toLowerCase() + "%";
+        String pattern = toContainsLikePattern(keyword);
         return (root, query, cb) ->
-                cb.like(cb.lower(root.get("title")), pattern);
+                cb.like(cb.lower(root.get("title")), pattern, LIKE_ESCAPE);
     }
 
     /**
@@ -49,13 +53,11 @@ public class QuizMapSpecification {
             return (root, query, cb) -> null;
         }
 
-        String normalizedKeyword = keyword.trim().toLowerCase();
-        String pattern = "%" + normalizedKeyword + "%";
-
+        String pattern = toContainsLikePattern(keyword);
         MapCategory keywordCategory = tryParseCategory(keyword);
 
         return (root, query, cb) -> {
-            var titlePredicate = cb.like(cb.lower(root.get("title")), pattern);
+            var titlePredicate = cb.like(cb.lower(root.get("title")), pattern, LIKE_ESCAPE);
 
             if (keywordCategory == null) {
                 return titlePredicate;
@@ -75,6 +77,17 @@ public class QuizMapSpecification {
         }
 
         return (root, query, cb) -> cb.equal(root.get("category"), category);
+    }
+
+    private static String toContainsLikePattern(String keyword) {
+        return "%" + escapeLike(keyword.trim().toLowerCase(Locale.ROOT)) + "%";
+    }
+
+    private static String escapeLike(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 
     private static MapCategory tryParseCategory(String rawCategory) {

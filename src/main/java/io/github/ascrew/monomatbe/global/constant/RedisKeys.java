@@ -45,6 +45,9 @@ public final class RedisKeys {
     /** 로비별 최근 채팅 메시지 List 키 접미사 */
     private static final String RECENT_CHAT_MESSAGES_SUFFIX = ":chats:recent";
 
+    /** 로비별 맵 플레이 횟수 집계 완료 키 접미사 */
+    private static final String MAP_PLAY_COUNTED_SUFFIX = ":map-play-counted";
+
     /** 채팅 발신자 프로필 캐시 키 접두사 */
     private static final String CHAT_SENDER_PROFILE_PREFIX = "chat:sender-profile:";
 
@@ -341,6 +344,26 @@ public final class RedisKeys {
      */
     public static String lobbyRecentChatMessagesKey(String code) {
         return LOBBY_PREFIX + code + RECENT_CHAT_MESSAGES_SUFFIX;
+    }
+
+    /**
+     * 로비별 맵 플레이 횟수 집계 완료 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : lobby:{code}:map-play-counted
+     * - Type  : String
+     * - Value : mapId
+     * - TTL   : 게임/로비 TTL과 동일한 수준
+     *
+     * [사용 목적]
+     * 동일 로비에서 중복 시작 요청, 재시도, WebSocket 재연결 등으로
+     * 같은 맵의 playCount가 중복 증가하지 않도록 SETNX 기준 키로 사용한다.
+     *
+     * @param code 로비 초대 코드
+     * @return 로비별 맵 플레이 횟수 집계 완료 Redis key
+     */
+    public static String lobbyMapPlayCountedKey(String code) {
+        return LOBBY_PREFIX + code + MAP_PLAY_COUNTED_SUFFIX;
     }
 
     /**

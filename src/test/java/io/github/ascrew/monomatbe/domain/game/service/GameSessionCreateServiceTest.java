@@ -14,6 +14,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.domain.map.service.MapPlayCountService;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
 import org.junit.jupiter.api.DisplayName;
@@ -36,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -62,6 +64,8 @@ class GameSessionCreateServiceTest {
     private GameSessionCleanupService gameSessionCleanupService;
     @Mock
     private io.github.ascrew.monomatbe.domain.game.config.GameSessionProperties gameSessionProperties;
+    @Mock
+    private MapPlayCountService mapPlayCountService;
 
     @InjectMocks
     private GameSessionCreateService gameSessionCreateService;
@@ -160,6 +164,8 @@ class GameSessionCreateServiceTest {
         assertThat(result.roundNo()).isEqualTo(1);
         assertThat(result.serverStartedAt()).isGreaterThan(0L);
 
+        verify(mapPlayCountService).countOnce("ABC1234", 1L);
+
         // title, artist, answer 같은 필드가 DTO에 아예 존재하지 않음을 코드 구조상(record 정의) 보장됨.
     }
 
@@ -196,6 +202,8 @@ class GameSessionCreateServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameSessionCreateService.createGameSession(lobby, quizMap))
                 .isInstanceOf(GameSessionAlreadyExistsException.class)
                 .hasMessage("게임 세션이 이미 존재합니다.");
+
+        verify(mapPlayCountService, never()).countOnce(anyString(), any());
     }
 
     @Test
@@ -267,6 +275,7 @@ class GameSessionCreateServiceTest {
         assertThat(stale.getStatus()).isEqualTo(GameSessionStatus.FINISHED);
         verify(gameSessionCleanupService).deleteNow("ABC1234");
         verify(gameSessionJpaRepository).save(any(GameSession.class));
+        verify(mapPlayCountService).countOnce("ABC1234", 1L);
         assertThat(result.roundNo()).isEqualTo(1);
     }
 }

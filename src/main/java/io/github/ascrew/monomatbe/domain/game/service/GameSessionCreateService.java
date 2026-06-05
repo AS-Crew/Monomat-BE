@@ -13,6 +13,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.domain.map.service.MapPlayCountService;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
@@ -60,6 +61,7 @@ public class GameSessionCreateService {
     private final JsonMapper jsonMapper;
     private final GameSessionCleanupService gameSessionCleanupService;
     private final GameSessionProperties gameSessionProperties;
+    private final MapPlayCountService mapPlayCountService;
 
     /**
      * 로비 게임 시작 시 호출되어 게임 세션을 초기화한다.
@@ -194,8 +196,14 @@ public class GameSessionCreateService {
             return null;
         });
 
+        /*
+         * 게임 세션 생성과 Redis 초기화가 성공한 이후에만 맵 플레이 횟수를 집계한다.
+         * countOnce 내부에서 lobbyCode 기준 SETNX로 중복 증가를 방지한다.
+         */
+        mapPlayCountService.countOnce(code, map.getId());
+
         log.info("게임 세션 생성 완료 - 로비 코드: {}, 문제 갯수: {}, 참여자 수: {}",
-                 code, lobby.getQuestionCount(), participantIdentifiers.size());
+                code, lobby.getQuestionCount(), participantIdentifiers.size());
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override

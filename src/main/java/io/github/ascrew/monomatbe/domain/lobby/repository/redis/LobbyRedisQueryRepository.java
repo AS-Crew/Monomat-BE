@@ -313,6 +313,52 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
+     * 빈 로비 reaper용으로 lobby:all Set의 일부 로비 코드를 조회한다.
+     *
+     * [사용 목적]
+     * reaper 스케줄러가 공개·비공개를 포함한 전체 로비를 제한된 개수만큼 점진적으로
+     * 순회하며 "활성 세션 0" 여부를 검사하기 위해 사용한다.
+     *
+     * [SSCAN 사용 이유]
+     * Set은 순서가 없으므로 SSCAN으로 전체를 점진적으로 훑어 특정 구간에 치우치지 않게 한다.
+     * ScanOptions.count()는 정확한 개수가 아니라 Redis에 전달하는 hint이므로,
+     * 최종 후보 개수는 limit으로 한 번 더 제어한다.
+     *
+     * @param limit 조회할 최대 code 수
+     * @return reaper 검사 후보 로비 코드 목록
+     */
+    public List<String> getAllLobbyCodesForReaping(int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+
+        List<String> candidates = new ArrayList<>();
+
+        ScanOptions scanOptions = ScanOptions.scanOptions()
+                .count(limit)
+                .build();
+
+        try (Cursor<String> cursor =
+                     redisTemplate.opsForSet().scan(RedisKeys.LOBBY_ALL, scanOptions)) {
+
+            while (cursor.hasNext() && candidates.size() < limit) {
+                String code = cursor.next();
+
+                if (code == null || code.isBlank()) {
+                    continue;
+                }
+
+                candidates.add(code);
+            }
+
+        } catch (Exception e) {
+            log.warn("전체 로비(lobby:all) reaper 후보 스캔 실패", e);
+        }
+
+        return candidates;
+    }
+
+    /**
      * lobby:public Set에서 cleanup 후보를 수집한다.
      *
      * [정책]

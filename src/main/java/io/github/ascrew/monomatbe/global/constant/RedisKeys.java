@@ -124,6 +124,25 @@ public final class RedisKeys {
     public static final String LOBBY_PUBLIC = "lobby:public";
 
     /**
+     * 공개·비공개를 포함한 전체 로비 코드 목록을 담는 전역 Set 키.
+     *
+     * [사용 목적]
+     * lobby:public은 공개 로비만 담으므로, 비정상 종료로 유령 참여자만 남거나
+     * 생성 직후 아무도 구독하지 않은 빈 로비(공개/비공개 모두)를 주기적으로 찾아
+     * 폭파(reaper)하려면 전체 로비를 열거할 수 있어야 한다.
+     *
+     * [생명주기]
+     * - create_lobby.lua : 로비 생성 시 SADD (공개/비공개 무관)
+     * - leave_lobby.lua / reap_lobby.lua : 로비 폭파 시 SREM
+     * - deleteFromRedis : 보상/롤백 삭제 시 SREM
+     *
+     * [정합성]
+     * reap_lobby.lua는 Hash가 없는 stale 엔트리를 만나면 스스로 SREM 하므로,
+     * 일부 SREM이 누락돼도 인덱스는 점진적으로 정합화된다.
+     */
+    public static final String LOBBY_ALL = "lobby:all";
+
+    /**
      * 공개 로비 최신순 정렬 인덱스 ZSET 키
      *
      * 저장 구조 :
@@ -508,6 +527,20 @@ public final class RedisKeys {
      */
     public static String userStatusKey(String userIdentifier) {
         return USER_STATUS_PREFIX + userIdentifier;
+    }
+
+    /**
+     * 사용자 온라인 상태 키의 prefix를 반환한다.
+     *
+     * [사용 목적]
+     * reap_lobby.lua가 참여자 식별자별 온라인 상태 키(user_status:{id})를
+     * 스크립트 내부에서 동적으로 구성하므로, prefix를 ARGV로 전달하기 위해 사용한다.
+     * 하드코딩을 피하고 키 포맷을 RedisKeys 한 곳에서 관리하기 위함이다.
+     *
+     * @return "user_status:"
+     */
+    public static String userStatusKeyPrefix() {
+        return USER_STATUS_PREFIX;
     }
 
     /**

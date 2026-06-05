@@ -97,6 +97,7 @@ public class LobbyRedisCommandRepository {
         try {
             redisTemplate.delete(keysToDelete);
             redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
+            redisTemplate.opsForSet().remove(RedisKeys.LOBBY_ALL, inviteCode);
 
             log.info("Redis 보상 삭제 완료 - code: {}, keys: {}", inviteCode, keysToDelete);
             return true;

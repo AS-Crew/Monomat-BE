@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
+import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -183,6 +184,27 @@ public interface LobbyRepository {
    * @return 정리 후보 로비 코드 목록
    */
   List<String> getPublicLobbyCodesForCleanup(int limit);
+
+  /**
+   * 빈 로비 reaper용으로 전체 로비(lobby:all)의 일부 로비 코드를 조회한다.
+   *
+   * [사용 목적]
+   * reaper 스케줄러가 공개·비공개를 포함한 전체 로비를 제한된 개수만큼 점진적으로
+   * 순회하기 위해 사용한다.
+   *
+   * @param limit 조회할 최대 code 수
+   * @return reaper 검사 후보 로비 코드 목록
+   */
+  List<String> getAllLobbyCodesForReaping(int limit);
+
+  /**
+   * Lua 스크립트를 실행하여 빈 로비(활성 세션 0)를 원자적으로 폭파한다.
+   *
+   * @param code        대상 로비 코드
+   * @param graceMillis 생성 직후 폭파를 보류할 grace 기간(ms)
+   * @return reaper 처리 결과 (REAPED | ALIVE | TOO_YOUNG | STALE_INDEX | ERROR)
+   */
+  ReapLobbyResult reapEmptyLobby(String code, long graceMillis);
 
   /**
    * 공개 로비 최신순 ZSET 인덱스 존재 여부를 확인한다.

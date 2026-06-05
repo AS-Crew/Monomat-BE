@@ -1,7 +1,7 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.domain.game.config.GameSessionProperties;
+import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,8 +11,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-
-import java.time.Duration;
 
 @Slf4j
 @Service
@@ -32,6 +30,7 @@ public class MapPlayCountService {
      * - 게임 세션 생성이 성공한 뒤 호출되어야 한다.
      * - 동일 lobbyCode 기준으로 SETNX가 성공한 경우에만 DB playCount를 증가시킨다.
      * - DB 증가 실패 또는 트랜잭션 롤백 시 Redis 중복 방지 키를 삭제해 재시도 가능 상태로 되돌린다.
+     * - 공개 맵 캐시 무효화는 DB 트랜잭션 커밋 이후에만 수행한다.
      *
      * @param lobbyCode 로비 초대 코드
      * @param mapId 게임에 사용된 맵 ID
@@ -71,10 +70,10 @@ public class MapPlayCountService {
                 throw new IllegalStateException("맵 플레이 횟수 증가 대상이 존재하지 않습니다. mapId=" + mapId);
             }
 
-            mapCacheEvictor.evictPublicMapCaches(mapId);
+            registerAfterCommitCacheEviction(mapId);
 
             log.info(
-                    "맵 플레이 횟수 증가 완료 - lobbyCode: {}, mapId: {}",
+                    "맵 플레이 횟수 증가 예약 완료 - lobbyCode: {}, mapId: {}",
                     lobbyCode,
                     mapId
             );
@@ -101,6 +100,24 @@ public class MapPlayCountService {
                 if (status == STATUS_ROLLED_BACK) {
                     deleteDedupKey(countedKey, lobbyCode, mapId);
                 }
+            }
+        });
+    }
+
+    private void registerAfterCommitCacheEviction(Long mapId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            log.warn(
+                    "맵 플레이 횟수 캐시 무효화 afterCommit 등록 실패 - 트랜잭션 동기화 비활성. mapId: {}",
+                    mapId
+            );
+            mapCacheEvictor.evictPublicMapCaches(mapId);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                mapCacheEvictor.evictPublicMapCaches(mapId);
             }
         });
     }

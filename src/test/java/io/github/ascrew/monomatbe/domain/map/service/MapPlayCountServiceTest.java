@@ -10,6 +10,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 
@@ -154,5 +156,36 @@ class MapPlayCountServiceTest {
 
         verify(redisTemplate, never()).opsForValue();
         verify(quizMapJpaRepository, never()).increasePlayCount(any());
+    }
+
+    @Test
+    @DisplayName("트랜잭션 롤백 시 Redis 중복 방지 키를 삭제한다")
+    void countOnce_transactionRollback_deletesDedupKey() {
+        // given
+        String countedKey = RedisKeys.lobbyMapPlayCountedKey(LOBBY_CODE);
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+            when(valueOperations.setIfAbsent(
+                    eq(countedKey),
+                    eq(String.valueOf(MAP_ID)),
+                    eq(PLAY_COUNT_DEDUP_TTL)
+            )).thenReturn(true);
+            when(quizMapJpaRepository.increasePlayCount(MAP_ID)).thenReturn(1);
+
+            // when
+            mapPlayCountService.countOnce(LOBBY_CODE, MAP_ID);
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(synchronization -> synchronization.afterCompletion(
+                            TransactionSynchronization.STATUS_ROLLED_BACK
+                    ));
+
+            // then
+            verify(redisTemplate).delete(countedKey);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }

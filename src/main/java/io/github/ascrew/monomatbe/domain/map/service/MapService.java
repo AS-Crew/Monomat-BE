@@ -5,15 +5,14 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
-import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapPageResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapSpecification;
-import org.springframework.data.jpa.domain.Specification;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +21,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -81,10 +81,7 @@ public class MapService {
         int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
         int normalizedSize = size == null || size <= 0 ? DEFAULT_SIZE : Math.min(size, MAX_SIZE);
         MapSortType normalizedSort = sort == null ? MapSortType.NEWEST : sort;
-
-        String normalizedKeyword = (keyword == null || keyword.isBlank())
-                ? null
-                : keyword.trim().toLowerCase();
+        String normalizedKeyword = normalizeKeyword(keyword);
 
         if (normalizedKeyword != null) {
             return queryPublicMaps(normalizedKeyword, category, normalizedPage, normalizedSize, normalizedSort);
@@ -411,16 +408,16 @@ public class MapService {
         try {
             redisTemplate.delete(key);
         } catch (Exception e) {
-            log.warn("손상 캐시 삭제 실패 - key: {}", key, e);
+            log.warn("손상 캐시 삭제 실패 - key: {}", key);
         }
     }
 
     private Sort toSort(MapSortType sort) {
         return switch (sort) {
-            case NEWEST     -> Sort.by(Sort.Direction.DESC, "updatedAt");
-            case OLDEST     -> Sort.by(Sort.Direction.ASC,  "updatedAt");
+            case NEWEST -> Sort.by(Sort.Direction.DESC, "updatedAt");
+            case OLDEST -> Sort.by(Sort.Direction.ASC, "updatedAt");
             case MOST_SONGS -> Sort.by(Sort.Direction.DESC, "numOfSong");
-            case TITLE_ASC  -> Sort.by(Sort.Direction.ASC,  "title");
+            case TITLE_ASC -> Sort.by(Sort.Direction.ASC, "title");
         };
     }
 

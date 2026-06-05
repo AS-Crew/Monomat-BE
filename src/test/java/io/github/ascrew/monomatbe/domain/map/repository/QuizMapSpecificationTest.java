@@ -6,41 +6,22 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.support.RepositoryTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers
 @DataJpaTest(properties = {
         "spring.test.database.replace=none",
         "spring.flyway.enabled=false",
         "spring.jpa.hibernate.ddl-auto=create-drop"
 })
-class QuizMapSpecificationTest {
-
-    @Container
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0")
-            .withDatabaseName("monomat_test")
-            .withUsername("test")
-            .withPassword("test");
-
-    @DynamicPropertySource
-    static void registerDataSourceProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", MYSQL::getJdbcUrl);
-        registry.add("spring.datasource.username", MYSQL::getUsername);
-        registry.add("spring.datasource.password", MYSQL::getPassword);
-        registry.add("spring.datasource.driver-class-name", MYSQL::getDriverClassName);
-    }
+class QuizMapSpecificationTest extends RepositoryTestSupport {
 
     @Autowired
     private QuizMapJpaRepository quizMapJpaRepository;
@@ -141,9 +122,9 @@ class QuizMapSpecificationTest {
     }
 
     @Test
-    void keywordSearch_treatsLikeWildcardCharactersAsPlainText() {
+    void keywordSearch_treatsPercentWildcardCharacterAsPlainText() {
         User owner = userRepository.save(User.builder()
-                .username("spec-owner-wildcard")
+                .username("spec-owner-percent")
                 .userType(UserType.REGISTERED)
                 .status(UserStatus.ACTIVE)
                 .build());
@@ -175,5 +156,42 @@ class QuizMapSpecificationTest {
         assertThat(result)
                 .extracting(QuizMap::getId)
                 .containsExactly(literalPercentMap.getId());
+    }
+
+    @Test
+    void keywordSearch_treatsUnderscoreWildcardCharacterAsPlainText() {
+        User owner = userRepository.save(User.builder()
+                .username("spec-owner-underscore")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build());
+
+        QuizMap literalUnderscoreMap = quizMapJpaRepository.save(QuizMap.builder()
+                .owner(owner)
+                .title("A_B OST")
+                .description("literal underscore")
+                .category(MapCategory.OST)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build());
+
+        quizMapJpaRepository.save(QuizMap.builder()
+                .owner(owner)
+                .title("ACB OST")
+                .description("should not match underscore wildcard")
+                .category(MapCategory.OST)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build());
+
+        Specification<QuizMap> spec = Specification
+                .where(QuizMapSpecification.ownedByAndNotDeleted(owner.getId()))
+                .and(QuizMapSpecification.withKeywordIncludingCategory("A_B"));
+
+        List<QuizMap> result = quizMapJpaRepository.findAll(spec);
+
+        assertThat(result)
+                .extracting(QuizMap::getId)
+                .containsExactly(literalUnderscoreMap.getId());
     }
 }

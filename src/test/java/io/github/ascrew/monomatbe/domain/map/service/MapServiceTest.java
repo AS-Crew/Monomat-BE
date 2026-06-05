@@ -5,6 +5,7 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
@@ -114,6 +115,7 @@ class MapServiceTest {
 
         assertThat(response.id()).isEqualTo(300L);
         assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("new map");
         // 생성 시 아이템이 0이므로 공개 의도는 pendingPublic 으로 보존되고 isPublic 은 false 로 저장된다.
         assertThat(response.isPublic()).isFalse();
@@ -391,6 +393,8 @@ class MapServiceTest {
         assertThat(response.content()).hasSize(1);
         assertThat(response.content().get(0).mapId()).isEqualTo(100L);
         assertThat(response.content().get(0).description()).isEqualTo("내 맵 설명");
+        assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
+        assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
     }
 
     @Test
@@ -423,6 +427,8 @@ class MapServiceTest {
 
         assertThat(response.content()).hasSize(1);
         assertThat(response.content().get(0).description()).isNull();
+        assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
+        assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
     }
 
     @Test
@@ -455,5 +461,68 @@ class MapServiceTest {
         assertThat(response.content()).hasSize(1);
         assertThat(response.content().get(0).mapId()).isEqualTo(200L);
         assertThat(response.content().get(0).description()).isEqualTo("공개 맵 설명");
+        assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
+        assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+    }
+
+    @Test
+    void getPublicMap_includesOwnerNicknameInDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(300L)
+                .owner(owner)
+                .title("상세 맵")
+                .description("상세 맵 설명")
+                .category(MapCategory.KPOP)
+                .numOfSong(5)
+                .totalPlayTime(900)
+                .isPublic(true)
+                .pendingPublic(false)
+                .build();
+
+        when(valueOperations.get(any(String.class))).thenReturn(null);
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalseAndIsPublicTrue(300L))
+                .thenReturn(Optional.of(quizMap));
+
+        var response = mapService.getPublicMap(300L);
+
+        assertThat(response.id()).isEqualTo(300L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.ownerNickname()).isEqualTo("owner");
+        assertThat(response.title()).isEqualTo("상세 맵");
+    }
+    
+    @Test
+    void getPublicMap_cacheHit_returnsOwnerNickname() {
+        MapDetailResponse cachedResponse = MapDetailResponse.builder()
+                .id(300L)
+                .ownerId(10L)
+                .ownerNickname("owner")
+                .title("상세 맵")
+                .description("상세 맵 설명")
+                .category(MapCategory.KPOP)
+                .numOfSong(5)
+                .totalPlayTime(900)
+                .isPublic(true)
+                .pendingPublic(false)
+                .build();
+
+        when(valueOperations.get(any(String.class))).thenReturn("{}");
+        when(jsonMapper.readValue("{}", MapDetailResponse.class)).thenReturn(cachedResponse);
+
+        var response = mapService.getPublicMap(300L);
+
+        assertThat(response.id()).isEqualTo(300L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.ownerNickname()).isEqualTo("owner");
+        assertThat(response.title()).isEqualTo("상세 맵");
+
+        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalseAndIsPublicTrue(any());
     }
 }

@@ -624,7 +624,7 @@ SUBSCRIBE /topic/lobby/{code}
 | --- | --- | --- | --- |
 | 로비가 삭제됨 | `LOBBY_NOT_FOUND` | `LOBBY_NOT_FOUND` | 로비 목록으로 복귀 |
 | REST join 이후 정원이 참 | `FULL` | `LOBBY_FULL` | 로비 목록으로 복귀 |
-| 방장이 게임을 시작함 | `LOBBY_NOT_WAITING` | `LOBBY_NOT_WAITING` | 로비 목록으로 복귀 |
+| 방장이 게임을 시작함 | `LOBBY_NOT_WAITING` | `LOBBY_NOT_WAITING` | 로비 목록으로 복귀 (단, 인게임 중 기존 참여자의 재접속은 허용) |
 | 강퇴된 유저 재입장 | `KICKED_USER` | `LOBBY_KICKED_USER` | 로비 목록으로 복귀 |
 | 더 최신 세션이 존재함 | `STALE_SESSION:{wsSessionId}` | `LOBBY_STALE_SESSION` | 현재 세션 폐기 후 재연결 |
 | 세션 sequence 누락/비정상 | `INVALID_SEQUENCE` | `LOBBY_INVALID_SEQUENCE` | 새로고침 후 재시도 |
@@ -1135,6 +1135,17 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - **FINISHED 단계 복구**:
   - `status`가 `"FINISHED"`이고 `roundPhase`가 `"FINISHED"`인 경우, 전체 게임이 종료된 상태입니다.
   - FE는 비디오를 멈추고 최종 결과 및 스코어보드 화면으로 전환합니다.
+
+#### 6) 인게임 플레이어 이탈 및 연결 끊김 처리 정책 (Grace Period)
+- **이탈 및 복귀 메커니즘**:
+  - 게임 진행 중(`PLAYING` 상태) 플레이어의 WebSocket 연결이 해제되면, 즉시 로비 퇴장 처리를 하지 않고 **5초간의 재접속 유예 기간(Grace Period)**을 부여합니다.
+  - 이탈 시점 즉시 `{nickname}님이 이탈하셨습니다. 재접속을 대기합니다.` (type: `SYSTEM`) 메시지를 브로드캐스트합니다.
+  - 유예 기간 내에 해당 플레이어가 다시 동일 로비에 접속(`SUBSCRIBE`)하면, 이탈 타이머가 취소되고 `{nickname}님이 복귀하셨습니다.` (type: `SYSTEM`) 메시지를 브로드캐스트하며 게임이 정상 지속됩니다.
+- **유예 기간 초과(영구 퇴장) 정책**:
+  - 5초 유예 기간 동안 복귀하지 못하면 영구 퇴장으로 판정되어 로비 참여자 목록(`participants`, `order`)에서 최종 제거되고, `{nickname}님이 퇴장하셨습니다.` (type: `LEAVE`) 메시지가 브로드캐스트됩니다.
+  - 퇴장 유저의 획득 점수 및 순위 기록은 게임 결과 집계의 신뢰성을 위해 점수판(`game:session:{code}:players` 및 DB)에 그대로 유지됩니다.
+  - 영구 퇴장 처리와 동시에 남은 활성 참여자 중 모든 플레이어가 해당 라운드의 정답을 맞춘 상태가 되면, 라운드를 즉시 조기 종료합니다.
+  - 퇴장한 유저가 방장인 경우, 다음 순번 참여자에게 방장 권한이 위임됩니다. 로비 내 모든 사용자가 퇴장하여 남은 인원이 0명이 되면 로비는 즉시 폭파되며 인게임 세션 키도 즉시 삭제(deleteNow)됩니다.
 
 ## 게임 세션 Redis 키 정리 정책
 

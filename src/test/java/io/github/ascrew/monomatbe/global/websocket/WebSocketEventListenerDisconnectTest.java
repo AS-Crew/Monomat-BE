@@ -49,8 +49,6 @@ class WebSocketEventListenerDisconnectTest {
     private final SetOperations<String, String> setOperations = mock(SetOperations.class);
     private final ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
 
-    private final io.github.ascrew.monomatbe.domain.game.service.GameDisconnectManager gameDisconnectManager = mock(io.github.ascrew.monomatbe.domain.game.service.GameDisconnectManager.class);
-
     private final WebSocketEventListener listener = new WebSocketEventListener(
             redisTemplate,
             redisPublisher,
@@ -58,8 +56,7 @@ class WebSocketEventListenerDisconnectTest {
             eventPublisher,
             webSocketMetric,
             pubSubJsonMapper,
-            Duration.ofHours(2),
-            gameDisconnectManager
+            Duration.ofHours(2)
     );
 
     @Test

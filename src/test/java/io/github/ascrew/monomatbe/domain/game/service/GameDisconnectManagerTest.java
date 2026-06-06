@@ -2,7 +2,9 @@ package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
 import io.github.ascrew.monomatbe.global.event.LobbyClosedEvent;
+import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameDisconnectEvent;
+import io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameReconnectEvent;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +18,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ScheduledFuture;
@@ -40,6 +43,8 @@ class GameDisconnectManagerTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
     @Mock
+    private RedisPublisher redisPublisher;
+    @Mock
     private ScheduledFuture<?> scheduledFuture;
 
     private GameDisconnectManager gameDisconnectManager;
@@ -55,7 +60,9 @@ class GameDisconnectManagerTest {
                 nicknameResolver,
                 messagingTemplate,
                 pubSubJsonMapper,
-                eventPublisher
+                eventPublisher,
+                redisPublisher,
+                Duration.ofSeconds(5)
         );
     }
 
@@ -65,7 +72,7 @@ class GameDisconnectManagerTest {
         // given
         PlayerInGameDisconnectEvent event = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
-        when(pubSubJsonMapper.writeValueAsString(any())).thenReturn("{}");
+        when(redisPublisher.publish(anyString(), any())).thenReturn(true);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         // when
@@ -74,7 +81,7 @@ class GameDisconnectManagerTest {
         // then
         verify(nicknameResolver).resolveNicknameMap(eq(java.util.List.of(userIdentifier)));
         verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
-        verify(messagingTemplate).convertAndSend(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), anyString());
+        verify(redisPublisher).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
     }
 
     @Test
@@ -83,7 +90,7 @@ class GameDisconnectManagerTest {
         // given
         PlayerInGameDisconnectEvent event = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
-        when(pubSubJsonMapper.writeValueAsString(any())).thenReturn("{}");
+        when(redisPublisher.publish(anyString(), any())).thenReturn(true);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         // 이탈 먼저 처리하여 타이머 등록
@@ -94,7 +101,7 @@ class GameDisconnectManagerTest {
 
         // then
         verify(scheduledFuture).cancel(false);
-        verify(messagingTemplate, times(2)).convertAndSend(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), anyString());
+        verify(redisPublisher, times(2)).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
     }
 
     @Test
@@ -104,6 +111,7 @@ class GameDisconnectManagerTest {
         PlayerInGameDisconnectEvent event1 = new PlayerInGameDisconnectEvent(lobbyCode, "user1");
         PlayerInGameDisconnectEvent event2 = new PlayerInGameDisconnectEvent(lobbyCode, "user2");
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of("user1", "U1", "user2", "U2"));
+        when(redisPublisher.publish(anyString(), any())).thenReturn(true);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         gameDisconnectManager.handleInGameDisconnect(event1);
@@ -114,5 +122,51 @@ class GameDisconnectManagerTest {
 
         // then
         verify(scheduledFuture, times(2)).cancel(false);
+    }
+
+    @Test
+    @DisplayName("재연결 이벤트 수신 시 이탈 대기 타이머가 취소된다")
+    void handleInGameReconnect_cancelsTimer() throws Exception {
+        // given
+        PlayerInGameDisconnectEvent disconnectEvent = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
+        when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
+        when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
+
+        // 이탈 처리
+        gameDisconnectManager.handleInGameDisconnect(disconnectEvent);
+
+        // when
+        PlayerInGameReconnectEvent reconnectEvent = new PlayerInGameReconnectEvent(lobbyCode, userIdentifier);
+        gameDisconnectManager.handleInGameReconnect(reconnectEvent);
+
+        // then
+        verify(scheduledFuture).cancel(false);
+        verify(redisPublisher, times(2)).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
+    }
+
+    @Test
+    @DisplayName("이탈 유예 만료 시점 이전에 복귀하여 토큰이 취소된 경우, 스케줄 작업이 만료 시점에 도달해도 영구 퇴장 이벤트를 발행하지 않는다")
+    void executePermanentLeave_withInvalidToken_ignoresEventPublishing() throws Exception {
+        // given
+        PlayerInGameDisconnectEvent disconnectEvent = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
+        when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
+        when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        doReturn(scheduledFuture).when(taskScheduler).schedule(runnableCaptor.capture(), any(Instant.class));
+
+        // 이탈 처리
+        gameDisconnectManager.handleInGameDisconnect(disconnectEvent);
+
+        // 복귀 처리하여 토큰 무효화
+        gameDisconnectManager.cancelDisconnectTask(lobbyCode, userIdentifier);
+
+        // when: 스케줄러가 보관하던 람다를 직접 실행
+        Runnable scheduledTask = runnableCaptor.getValue();
+        scheduledTask.run();
+
+        // then: PlayerLeaveEvent가 한 번도 발행되지 않아야 함
+        verify(eventPublisher, never()).publishEvent(any(PlayerLeaveEvent.class));
     }
 }

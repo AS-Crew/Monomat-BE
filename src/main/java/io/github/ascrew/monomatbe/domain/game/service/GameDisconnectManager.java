@@ -3,11 +3,14 @@ package io.github.ascrew.monomatbe.domain.game.service;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.event.LobbyClosedEvent;
+import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameDisconnectEvent;
+import io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameReconnectEvent;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -15,6 +18,7 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -30,21 +34,28 @@ public class GameDisconnectManager {
     private final SimpMessagingTemplate messagingTemplate;
     private final JsonMapper pubSubJsonMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final RedisPublisher redisPublisher;
+    private final Duration disconnectGracePeriod;
 
     private final Map<String, ScheduledFuture<?>> disconnectTasks = new ConcurrentHashMap<>();
+    private final Map<String, String> activeTokens = new ConcurrentHashMap<>();
 
     public GameDisconnectManager(
             TaskScheduler taskScheduler,
             LobbyPlayerNicknameResolver nicknameResolver,
             SimpMessagingTemplate messagingTemplate,
             @Qualifier("pubSubJsonMapper") JsonMapper pubSubJsonMapper,
-            ApplicationEventPublisher eventPublisher
+            ApplicationEventPublisher eventPublisher,
+            RedisPublisher redisPublisher,
+            @Value("${monomat.game.disconnect-grace-period:PT5S}") Duration disconnectGracePeriod
     ) {
         this.taskScheduler = taskScheduler;
         this.nicknameResolver = nicknameResolver;
         this.messagingTemplate = messagingTemplate;
         this.pubSubJsonMapper = pubSubJsonMapper;
         this.eventPublisher = eventPublisher;
+        this.redisPublisher = redisPublisher;
+        this.disconnectGracePeriod = disconnectGracePeriod;
     }
 
     @EventListener
@@ -55,7 +66,8 @@ public class GameDisconnectManager {
 
         log.info("[GameDisconnectManager] 인게임 이탈 감지 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
 
-        // 기존 대기 작업이 있다면 취소
+        // 기존 대기 작업이 있다면 취소 및 토큰 제거
+        activeTokens.remove(key);
         ScheduledFuture<?> existing = disconnectTasks.remove(key);
         if (existing != null) {
             existing.cancel(false);
@@ -65,16 +77,26 @@ public class GameDisconnectManager {
         String nickname = resolveNickname(userIdentifier);
         broadcastSystemMessage(lobbyCode, userIdentifier, String.format("%s님이 이탈하셨습니다. 재접속을 대기합니다.", nickname));
 
-        // 2. 5초 후 영구 퇴장 처리 스케줄링
+        // 2. 고유 토큰 생성 및 등록
+        String tokenId = java.util.UUID.randomUUID().toString();
+        activeTokens.put(key, tokenId);
+
+        // 3. 유예 기간 후 영구 퇴장 처리 스케줄링
         ScheduledFuture<?> future = taskScheduler.schedule(
-                () -> executePermanentLeave(lobbyCode, userIdentifier),
-                Instant.now().plusSeconds(5)
+                () -> executePermanentLeave(lobbyCode, userIdentifier, tokenId),
+                Instant.now().plus(disconnectGracePeriod)
         );
         disconnectTasks.put(key, future);
     }
 
+    @EventListener
+    public void handleInGameReconnect(PlayerInGameReconnectEvent event) {
+        cancelDisconnectTask(event.lobbyCode(), event.userIdentifier());
+    }
+
     public void cancelDisconnectTask(String lobbyCode, String userIdentifier) {
         String key = getTaskKey(lobbyCode, userIdentifier);
+        activeTokens.remove(key);
         ScheduledFuture<?> future = disconnectTasks.remove(key);
         if (future != null) {
             future.cancel(false);
@@ -91,6 +113,7 @@ public class GameDisconnectManager {
         String lobbyCode = event.lobbyCode();
         if (lobbyCode != null) {
             log.info("[GameDisconnectManager] 로비 폭파 감지 - 해당 로비의 이탈 복귀 타이머 제거. 로비: {}", lobbyCode);
+            activeTokens.keySet().removeIf(key -> key.startsWith(lobbyCode + ":"));
             disconnectTasks.keySet().removeIf(key -> {
                 if (key.startsWith(lobbyCode + ":")) {
                     ScheduledFuture<?> future = disconnectTasks.get(key);
@@ -104,8 +127,15 @@ public class GameDisconnectManager {
         }
     }
 
-    private void executePermanentLeave(String lobbyCode, String userIdentifier) {
+    private void executePermanentLeave(String lobbyCode, String userIdentifier, String tokenId) {
         String key = getTaskKey(lobbyCode, userIdentifier);
+        
+        // 토큰이 유효한지 확인하고 원자적으로 제거
+        if (!activeTokens.remove(key, tokenId)) {
+            log.info("[GameDisconnectManager] 만료된 이탈 타이머 실행 무시 - 로비: {}, 식별자: {}, 토큰: {}", lobbyCode, userIdentifier, tokenId);
+            return;
+        }
+
         disconnectTasks.remove(key);
 
         log.info("[GameDisconnectManager] 인게임 재접속 제한 시간 초과 - 영구 퇴장 처리 실행. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
@@ -146,14 +176,23 @@ public class GameDisconnectManager {
     }
 
     private void sendChatMessage(String lobbyCode, ChatMessageDto message) {
-        try {
-            String payload = pubSubJsonMapper.writeValueAsString(message);
-            messagingTemplate.convertAndSend(
-                    StompDestinations.subscribeLobbyChat(lobbyCode),
-                    payload
-            );
-        } catch (Exception e) {
-            log.error("[GameDisconnectManager] 시스템 메시지 전송 실패 - 로비: {}, sender: {}", lobbyCode, message.getSender(), e);
+        boolean published = redisPublisher.publish(
+                StompDestinations.subscribeLobbyChat(lobbyCode),
+                message
+        );
+
+        if (!published) {
+            log.error("[GameDisconnectManager] 시스템 메시지 Pub/Sub 발행 실패 - 로컬 WebSocket fallback 전송. 로비: {}, sender: {}",
+                    lobbyCode, message.getSender());
+            try {
+                String payload = pubSubJsonMapper.writeValueAsString(message);
+                messagingTemplate.convertAndSend(
+                        StompDestinations.subscribeLobbyChat(lobbyCode),
+                        payload
+                );
+            } catch (Exception e) {
+                log.error("[GameDisconnectManager] 시스템 메시지 직접 전송 실패 - 로비: {}, sender: {}", lobbyCode, message.getSender(), e);
+            }
         }
     }
 

@@ -5,10 +5,10 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
-import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
-import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.domain.youtube.service.YoutubeValidationService;
@@ -16,24 +16,22 @@ import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,16 +43,10 @@ class MapManageServiceTest {
     private QuizMapJpaRepository quizMapJpaRepository;
 
     @Mock
-    private MapItemJpaRepository mapItemJpaRepository;
-
-    @Mock
     private YoutubeValidationService youtubeValidationService;
 
     @Mock
-    private MapPublicationValidator publicationValidator;
-
-    @Mock
-    private MapCacheEvictor mapCacheEvictor;
+    private MapManageTransactionService mapManageTransactionService;
 
     @Mock
     private JsonMapper jsonMapper;
@@ -65,39 +57,16 @@ class MapManageServiceTest {
     void setUp() {
         mapManageService = new MapManageService(
                 quizMapJpaRepository,
-                mapItemJpaRepository,
                 youtubeValidationService,
-                publicationValidator,
-                mapCacheEvictor,
+                mapManageTransactionService,
                 jsonMapper
         );
     }
 
     @Test
-    void updateManagedMap_success_updatesMapAndItemsAtomically() {
+    void updateManagedMap_success_preparesYoutubeMetadataBeforeTransaction() {
         User owner = registeredUser(10L, "owner");
         QuizMap quizMap = quizMap(owner);
-
-        MapItem item1 = mapItem(
-                100L,
-                quizMap,
-                1,
-                "https://www.youtube.com/watch?v=old1",
-                "old1",
-                0,
-                30,
-                "[\"old1\"]"
-        );
-        MapItem item2 = mapItem(
-                101L,
-                quizMap,
-                2,
-                "https://www.youtube.com/watch?v=old2",
-                "old2",
-                30,
-                60,
-                "[\"old2\"]"
-        );
 
         ManageMapRequest request = new ManageMapRequest(
                 "J-POP 퀴즈",
@@ -114,67 +83,59 @@ class MapManageServiceTest {
                                 List.of(" Ditto ", "ditto"),
                                 "ㄷㅌ",
                                 15
-                        ),
-                        new ManageMapItemRequest(
-                                null,
-                                2,
-                                "https://www.youtube.com/watch?v=new2",
-                                0,
-                                30,
-                                List.of("OMG"),
-                                "ㅇㅇㅈ",
-                                15
                         )
                 ),
-                List.of(101L)
+                List.of()
         );
 
-        when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 10L))
-                .thenReturn(Optional.of(quizMap));
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item1, item2))
-                .thenReturn(List.of(item1, item2))
-                .thenReturn(List.of(item1, savedNewItem(quizMap)));
-        when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=new1"))
-                .thenReturn(new YoutubeMetadata("new1", "YouTube title 1", "YouTube author 1", "https://thumbnail/1", null));
-        when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=new2"))
-                .thenReturn(new YoutubeMetadata("new2", "YouTube title 2", "YouTube author 2", "https://thumbnail/2", null));
-        when(jsonMapper.writeValueAsString(List.of("ditto"))).thenReturn("[\"ditto\"]");
-        when(jsonMapper.writeValueAsString(List.of("omg"))).thenReturn("[\"omg\"]");
-        when(jsonMapper.readValue(eq("[\"ditto\"]"), any(TypeReference.class))).thenReturn(List.of("ditto"));
-        when(jsonMapper.readValue(eq("[\"omg\"]"), any(TypeReference.class))).thenReturn(List.of("omg"));
+        ManageMapResponse expectedResponse = ManageMapResponse.builder()
+                .map(MapDetailResponse.builder()
+                        .id(1L)
+                        .ownerId(10L)
+                        .ownerNickname("owner")
+                        .title("J-POP 퀴즈")
+                        .description("J-POP 중심 퀴즈 맵")
+                        .category(MapCategory.JPOP)
+                        .numOfSong(1)
+                        .totalPlayTime(30)
+                        .isPublic(false)
+                        .pendingPublic(false)
+                        .playCount(0L)
+                        .createdAt(LocalDateTime.of(2026, 6, 6, 12, 0))
+                        .updatedAt(LocalDateTime.of(2026, 6, 6, 12, 10))
+                        .build())
+                .items(List.of())
+                .build();
 
         CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
 
-        var response = mapManageService.updateManagedMap(1L, request, principal);
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+        when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=new1"))
+                .thenReturn(new YoutubeMetadata("new1", "YouTube title", "YouTube author", "https://thumbnail", null));
+        when(jsonMapper.writeValueAsString(List.of("ditto"))).thenReturn("[\"ditto\"]");
+        when(mapManageTransactionService.updateManagedMapInTransaction(eq(1L), eq(request), eq(principal), any()))
+                .thenReturn(expectedResponse);
 
-        assertThat(response.map().id()).isEqualTo(1L);
-        assertThat(response.map().title()).isEqualTo("J-POP 퀴즈");
-        assertThat(response.map().description()).isEqualTo("J-POP 중심 퀴즈 맵");
-        assertThat(response.map().category()).isEqualTo(MapCategory.JPOP);
-        assertThat(response.map().numOfSong()).isEqualTo(2);
-        assertThat(response.map().totalPlayTime()).isEqualTo(60);
-        assertThat(response.map().isPublic()).isFalse();
-        assertThat(response.items()).hasSize(2);
+        ManageMapResponse response = mapManageService.updateManagedMap(1L, request, principal);
 
-        assertThat(quizMap.getTitle()).isEqualTo("J-POP 퀴즈");
-        assertThat(quizMap.getDescription()).isEqualTo("J-POP 중심 퀴즈 맵");
-        assertThat(quizMap.getCategory()).isEqualTo(MapCategory.JPOP);
-        assertThat(quizMap.getNumOfSong()).isEqualTo(2);
-        assertThat(quizMap.getTotalPlayTime()).isEqualTo(60);
+        assertThat(response).isSameAs(expectedResponse);
 
-        assertThat(item1.getYoutubeUrl()).isEqualTo("https://www.youtube.com/watch?v=new1");
-        assertThat(item1.getVideoId()).isEqualTo("new1");
-        assertThat(item1.getStartTime()).isEqualTo(10);
-        assertThat(item1.getEndTime()).isEqualTo(40);
-        assertThat(item1.getAnswers()).isEqualTo("[\"ditto\"]");
+        ArgumentCaptor<List<PreparedManageItem>> captor = ArgumentCaptor.forClass(List.class);
+        verify(mapManageTransactionService).updateManagedMapInTransaction(
+                eq(1L),
+                eq(request),
+                eq(principal),
+                captor.capture()
+        );
 
-        assertThat(item2.getIsDeleted()).isTrue();
+        List<PreparedManageItem> preparedItems = captor.getValue();
+        assertThat(preparedItems).hasSize(1);
+        assertThat(preparedItems.get(0).metadata().videoId()).isEqualTo("new1");
+        assertThat(preparedItems.get(0).answersJson()).isEqualTo("[\"ditto\"]");
+        assertThat(preparedItems.get(0).hint()).isEqualTo("ㄷㅌ");
+        assertThat(preparedItems.get(0).hintTime()).isEqualTo(15);
 
-        verify(mapItemJpaRepository).setTemporaryOrderNums(1L);
-        verify(mapItemJpaRepository).save(any(MapItem.class));
-        verify(mapItemJpaRepository).flush();
-        verify(mapCacheEvictor).evictPublicMapCaches(1L);
+        verify(youtubeValidationService).validateYoutubeUrl("https://www.youtube.com/watch?v=new1");
     }
 
     @Test
@@ -187,7 +148,8 @@ class MapManageServiceTest {
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
                 .hasMessageContaining("정식 회원만 맵을 관리할 수 있습니다.");
 
-        verify(quizMapJpaRepository, never()).findOwnedByIdAndIsDeletedFalseForUpdate(anyLong(), anyLong());
+        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalse(anyLong());
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -198,15 +160,14 @@ class MapManageServiceTest {
         ManageMapRequest request = validEmptyRequest();
         CustomPrincipal anotherUser = new CustomPrincipal(99L, "u-99", UserType.REGISTERED);
 
-        when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 99L))
-                .thenReturn(Optional.empty());
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L))
-                .thenReturn(Optional.of(quizMap));
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
 
         assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, anotherUser))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
                 .hasMessageContaining("본인 소유의 맵만 수정할 수 있습니다.");
+
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -214,15 +175,14 @@ class MapManageServiceTest {
         ManageMapRequest request = validEmptyRequest();
         CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
 
-        when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 10L))
-                .thenReturn(Optional.empty());
-        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L))
-                .thenReturn(Optional.empty());
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND))
                 .hasMessageContaining("맵을 찾을 수 없습니다.");
+
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -246,52 +206,13 @@ class MapManageServiceTest {
                 .hasMessageContaining("중복된 문제 순서가 있습니다.");
 
         verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
     @Test
-    void updateManagedMap_requestItemAndDeletedItemDuplicated_returns400() {
+    void updateManagedMap_youtubeValidationFailure_doesNotEnterTransaction() {
         User owner = registeredUser(10L, "owner");
         QuizMap quizMap = quizMap(owner);
-        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, 30, "[\"old\"]");
-
-        ManageMapRequest request = new ManageMapRequest(
-                "title",
-                "description",
-                MapCategory.JPOP,
-                false,
-                List.of(new ManageMapItemRequest(
-                        100L,
-                        1,
-                        "https://www.youtube.com/watch?v=new",
-                        0,
-                        30,
-                        List.of("new"),
-                        "n",
-                        15
-                )),
-                List.of(100L)
-        );
-
-        when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 10L))
-                .thenReturn(Optional.of(quizMap));
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item));
-
-        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
-
-        assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
-                .hasMessageContaining("수정할 문제와 삭제할 문제가 중복되었습니다.");
-
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
-    }
-
-    @Test
-    void updateManagedMap_youtubeValidationFailure_rollsBackBeforeMutation() {
-        User owner = registeredUser(10L, "owner");
-        QuizMap quizMap = quizMap(owner);
-        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, 30, "[\"old\"]");
 
         ManageMapRequest request = new ManageMapRequest(
                 "new title",
@@ -311,71 +232,18 @@ class MapManageServiceTest {
                 List.of()
         );
 
-        when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 10L))
-                .thenReturn(Optional.of(quizMap));
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item));
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
         when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=invalid"))
                 .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, "YouTube URL 검증 실패"));
-
-        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
 
         assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
                 .hasMessageContaining("YouTube URL 검증 실패");
 
-        assertThat(quizMap.getTitle()).isEqualTo("old map");
-        assertThat(item.getYoutubeUrl()).isEqualTo("https://www.youtube.com/watch?v=old");
-
-        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(anyLong());
-        verify(mapCacheEvictor, never()).evictPublicMapCaches(anyLong());
-    }
-
-    @Test
-    void updateManagedMap_dataIntegrityViolation_returns409() {
-        User owner = registeredUser(10L, "owner");
-        QuizMap quizMap = quizMap(owner);
-        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, 30, "[\"old\"]");
-
-        ManageMapRequest request = new ManageMapRequest(
-                "new title",
-                "new description",
-                MapCategory.JPOP,
-                false,
-                List.of(new ManageMapItemRequest(
-                        100L,
-                        1,
-                        "https://www.youtube.com/watch?v=new",
-                        0,
-                        30,
-                        List.of("answer"),
-                        "hint",
-                        15
-                )),
-                List.of()
-        );
-
-        when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 10L))
-                .thenReturn(Optional.of(quizMap))
-                .thenReturn(Optional.of(quizMap));
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item))
-                .thenReturn(List.of(item));
-        when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=new"))
-                .thenReturn(new YoutubeMetadata("new", "title", "artist", "thumbnail", null));
-        when(jsonMapper.writeValueAsString(List.of("answer"))).thenReturn("[\"answer\"]");
-        doThrow(new DataIntegrityViolationException("duplicate order"))
-                .when(mapItemJpaRepository).flush();
-
-        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
-
-        assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("이미 사용 중인 문제 순서입니다.");
-
-        verify(mapCacheEvictor, never()).evictPublicMapCaches(anyLong());
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
     private ManageMapRequest validEmptyRequest() {
@@ -410,53 +278,6 @@ class MapManageServiceTest {
                 .playCount(0L)
                 .isPublic(false)
                 .pendingPublic(false)
-                .isDeleted(false)
-                .build();
-    }
-
-    private MapItem mapItem(
-            Long id,
-            QuizMap quizMap,
-            int orderNum,
-            String youtubeUrl,
-            String videoId,
-            int startTime,
-            int endTime,
-            String answers
-    ) {
-        return MapItem.builder()
-                .id(id)
-                .map(quizMap)
-                .orderNum(orderNum)
-                .youtubeUrl(youtubeUrl)
-                .videoId(videoId)
-                .startTime(startTime)
-                .endTime(endTime)
-                .title("old title")
-                .artist("old artist")
-                .thumbnailUrl("old thumbnail")
-                .answers(answers)
-                .hint("old hint")
-                .hintTime(15)
-                .isDeleted(false)
-                .build();
-    }
-
-    private MapItem savedNewItem(QuizMap quizMap) {
-        return MapItem.builder()
-                .id(200L)
-                .map(quizMap)
-                .orderNum(2)
-                .youtubeUrl("https://www.youtube.com/watch?v=new2")
-                .videoId("new2")
-                .startTime(0)
-                .endTime(30)
-                .title("YouTube title 2")
-                .artist("YouTube author 2")
-                .thumbnailUrl("https://thumbnail/2")
-                .answers("[\"omg\"]")
-                .hint("ㅇㅇㅈ")
-                .hintTime(15)
                 .isDeleted(false)
                 .build();
     }

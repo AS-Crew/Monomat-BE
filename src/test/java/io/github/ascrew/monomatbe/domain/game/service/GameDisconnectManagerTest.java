@@ -75,7 +75,8 @@ class GameDisconnectManagerTest {
                 eventPublisher,
                 redisPublisher,
                 stringRedisTemplate,
-                Duration.ofSeconds(5)
+                Duration.ofSeconds(5),
+                Duration.ofMinutes(5)
         );
     }
 
@@ -115,8 +116,8 @@ class GameDisconnectManagerTest {
         // 이탈 먼저 처리하여 타이머 등록
         gameDisconnectManager.handleInGameDisconnect(event);
 
-        // 복귀 시 토큰이 존재하는 상태 시뮬레이션
-        when(valueOperations.get(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)))).thenReturn("token-123");
+        // 복귀 시 토큰이 존재하는 상태 시뮬레이션 (Lua 스크립트 실행이 토큰ID를 반환)
+        when(stringRedisTemplate.execute(any(RedisScript.class), anyList(), eq(lobbyCode), eq(userIdentifier))).thenReturn("token-123");
 
         // when
         gameDisconnectManager.cancelDisconnectTask(lobbyCode, userIdentifier);
@@ -124,8 +125,8 @@ class GameDisconnectManagerTest {
         // then
         verify(scheduledFuture).cancel(false);
         verify(redisPublisher, times(2)).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
-        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
-        verify(zSetOperations).remove(eq(RedisKeys.gameDisconnectPendingZsetKey()), eq(lobbyCode + ":" + userIdentifier + ":token-123"));
+        verify(stringRedisTemplate).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
+        verify(stringRedisTemplate).execute(any(RedisScript.class), anyList(), eq(lobbyCode), eq(userIdentifier));
     }
 
     @Test
@@ -172,8 +173,8 @@ class GameDisconnectManagerTest {
         // 이탈 처리
         gameDisconnectManager.handleInGameDisconnect(disconnectEvent);
 
-        // 복귀 시 토큰이 존재하는 상태 시뮬레이션
-        when(valueOperations.get(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)))).thenReturn("token-123");
+        // 복귀 시 토큰이 존재하는 상태 시뮬레이션 (Lua 스크립트 실행이 토큰ID를 반환)
+        when(stringRedisTemplate.execute(any(RedisScript.class), anyList(), eq(lobbyCode), eq(userIdentifier))).thenReturn("token-123");
 
         // when
         PlayerInGameReconnectEvent reconnectEvent = new PlayerInGameReconnectEvent(lobbyCode, userIdentifier);
@@ -182,8 +183,8 @@ class GameDisconnectManagerTest {
         // then
         verify(scheduledFuture).cancel(false);
         verify(redisPublisher, times(2)).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
-        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
-        verify(zSetOperations).remove(eq(RedisKeys.gameDisconnectPendingZsetKey()), eq(lobbyCode + ":" + userIdentifier + ":token-123"));
+        verify(stringRedisTemplate).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
+        verify(stringRedisTemplate).execute(any(RedisScript.class), anyList(), eq(lobbyCode), eq(userIdentifier));
     }
 
     @Test

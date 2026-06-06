@@ -45,6 +45,19 @@ public class GameDisconnectManager {
             Long.class
     );
 
+    private static final DefaultRedisScript<String> RECONNECT_AND_CLEANUP_SCRIPT = new DefaultRedisScript<>(
+            "local token_id = redis.call('get', KEYS[1]) " +
+            "if token_id then " +
+            "    redis.call('del', KEYS[1]) " +
+            "    local zset_member = ARGV[1] .. ':' .. ARGV[2] .. ':' .. token_id " +
+            "    redis.call('zrem', KEYS[2], zset_member) " +
+            "    return token_id " +
+            "else " +
+            "    return nil " +
+            "end",
+            String.class
+    );
+
     private final TaskScheduler taskScheduler;
     private final LobbyPlayerNicknameResolver nicknameResolver;
     private final SimpMessagingTemplate messagingTemplate;
@@ -53,6 +66,7 @@ public class GameDisconnectManager {
     private final RedisPublisher redisPublisher;
     private final StringRedisTemplate stringRedisTemplate;
     private final Duration disconnectGracePeriod;
+    private final Duration disconnectTokenTtl;
 
     private final Map<String, ScheduledFuture<?>> disconnectTasks = new ConcurrentHashMap<>();
 
@@ -64,7 +78,8 @@ public class GameDisconnectManager {
             ApplicationEventPublisher eventPublisher,
             RedisPublisher redisPublisher,
             StringRedisTemplate stringRedisTemplate,
-            @Value("${monomat.game.disconnect-grace-period:PT5S}") Duration disconnectGracePeriod
+            @Value("${monomat.game.disconnect-grace-period:PT5S}") Duration disconnectGracePeriod,
+            @Value("${monomat.game.disconnect-token-ttl:PT5M}") Duration disconnectTokenTtl
     ) {
         this.taskScheduler = taskScheduler;
         this.nicknameResolver = nicknameResolver;
@@ -74,6 +89,7 @@ public class GameDisconnectManager {
         this.redisPublisher = redisPublisher;
         this.stringRedisTemplate = stringRedisTemplate;
         this.disconnectGracePeriod = disconnectGracePeriod;
+        this.disconnectTokenTtl = disconnectTokenTtl;
     }
 
     @EventListener
@@ -102,9 +118,9 @@ public class GameDisconnectManager {
         String nickname = resolveNickname(userIdentifier);
         broadcastSystemMessage(lobbyCode, userIdentifier, String.format("%s님이 이탈하셨습니다. 재접속을 대기합니다.", nickname));
 
-        // 3. 고유 토큰 생성하여 Redis에 저장 (유예 기간 + 10초 여유를 주어 스케줄러 실행 시점까지 유효하도록 설정)
+        // 3. 고유 토큰 생성하여 Redis에 저장 (복구 가능 기간 동안 유지되도록 TTL 설정)
         String tokenId = java.util.UUID.randomUUID().toString();
-        stringRedisTemplate.opsForValue().set(tokenKey, tokenId, disconnectGracePeriod.plusSeconds(10));
+        stringRedisTemplate.opsForValue().set(tokenKey, tokenId, disconnectTokenTtl);
 
         // 4. Redis ZSET에 유예 만료 시간 저장 (score = expireAtMillis)
         long expireAtMillis = System.currentTimeMillis() + disconnectGracePeriod.toMillis();
@@ -128,15 +144,19 @@ public class GameDisconnectManager {
     public void cancelDisconnectTask(String lobbyCode, String userIdentifier) {
         String key = getTaskKey(lobbyCode, userIdentifier);
         
-        // Redis 토큰 조회 후 토큰 및 ZSET에서 제거
+        // Lua 스크립트를 사용하여 원자적으로 토큰 조회, 삭제 및 ZSET 제거 실행
         String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
-        String tokenId = stringRedisTemplate.opsForValue().get(tokenKey);
-        if (tokenId != null) {
-            String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
-            stringRedisTemplate.opsForZSet().remove(zsetKey, lobbyCode + ":" + userIdentifier + ":" + tokenId);
-            stringRedisTemplate.delete(tokenKey);
+        String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+        String tokenId = stringRedisTemplate.execute(
+                RECONNECT_AND_CLEANUP_SCRIPT,
+                java.util.List.of(tokenKey, zsetKey),
+                lobbyCode,
+                userIdentifier
+        );
 
-            log.info("[GameDisconnectManager] 인게임 복귀 완료 - Redis 토큰 및 ZSET 제거. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+        if (tokenId != null) {
+            log.info("[GameDisconnectManager] 인게임 복귀 완료 - Redis 토큰 및 ZSET 제거 (Lua 원자적 처리). 로비: {}, 식별자: {}, 토큰: {}", 
+                    lobbyCode, userIdentifier, tokenId);
 
             // 복귀 안내 시스템 메시지 브로드캐스트
             String nickname = resolveNickname(userIdentifier);

@@ -379,7 +379,7 @@ AND category 조건
 ```http
 GET /api/maps/me/{mapId}
 Authorization: Bearer {accessToken}
-````
+```
 
 로그인한 정식 회원이 본인 소유의 공개/비공개/공개 대기 맵을 단건 조회합니다.
 
@@ -424,7 +424,7 @@ HTTP/1.1 200 OK
 | `ownerId`       | number        | 맵 소유자 ID               |
 | `ownerNickname` | string        | 맵 소유자 닉네임              |
 | `title`         | string        | 맵 제목                   |
-| `description`   | string | null | 맵 설명                   |
+| `description`   | string \| null | 맵 설명                   |
 | `category`      | string        | 맵 카테고리                 |
 | `numOfSong`     | number        | 맵에 등록된 곡/문제 수          |
 | `totalPlayTime` | number        | 맵 전체 재생 시간             |

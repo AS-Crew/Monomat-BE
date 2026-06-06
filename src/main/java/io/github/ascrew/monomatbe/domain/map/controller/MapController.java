@@ -1,11 +1,14 @@
 package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapPageResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
+import io.github.ascrew.monomatbe.domain.map.service.MapManageService;
 import io.github.ascrew.monomatbe.domain.map.service.MapService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MapController {
 
     private final MapService mapService;
+    private final MapManageService mapManageService;
 
     @Operation(summary = "공개 맵 목록 조회")
     @GetMapping
@@ -98,6 +102,20 @@ public class MapController {
             @AuthenticationPrincipal CustomPrincipal principal
     ) {
         return ResponseEntity.ok(mapService.updateMap(mapId, request, principal));
+    }
+
+    @Operation(
+            summary = "맵 관리 일괄 저장",
+            description = "맵 기본 정보와 문제 목록의 생성/수정/삭제/순서 변경을 하나의 트랜잭션으로 처리합니다."
+    )
+    @PutMapping("/{mapId}/manage")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<ManageMapResponse> updateManagedMap(
+            @PathVariable Long mapId,
+            @Valid @RequestBody ManageMapRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        return ResponseEntity.ok(mapManageService.updateManagedMap(mapId, request, principal));
     }
 
     @Operation(summary = "맵 삭제", description = "맵 소유자만 삭제 가능하며 Soft Delete 처리됩니다.")

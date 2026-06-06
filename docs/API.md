@@ -446,6 +446,106 @@ HTTP/1.1 200 OK
 
 ---
 
+### 맵 관리 일괄 저장
+
+맵 기본 정보와 문제 목록의 생성/수정/삭제/순서 변경을 하나의 트랜잭션으로 처리합니다.
+
+```http
+PUT /api/maps/{mapId}/manage
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+````
+
+#### Request
+
+```json
+{
+  "title": "J-POP 퀴즈",
+  "description": "J-POP 중심 퀴즈 맵",
+  "category": "J-POP",
+  "isPublic": false,
+  "items": [
+    {
+      "id": 10,
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=example",
+      "startTime": 30,
+      "endTime": 60,
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15
+    },
+    {
+      "id": null,
+      "orderNum": 2,
+      "youtubeUrl": "https://www.youtube.com/watch?v=example2",
+      "startTime": 0,
+      "endTime": 30,
+      "answers": ["omg"],
+      "hint": "ㅇㅇㅈ",
+      "hintTime": 15
+    }
+  ],
+  "deletedItemIds": [11, 12]
+}
+```
+
+#### Response
+
+```json
+{
+  "map": {
+    "id": 1,
+    "ownerId": 1,
+    "ownerNickname": "nickname",
+    "title": "J-POP 퀴즈",
+    "description": "J-POP 중심 퀴즈 맵",
+    "category": "J-POP",
+    "numOfSong": 2,
+    "totalPlayTime": 60,
+    "isPublic": false,
+    "pendingPublic": false,
+    "playCount": 0,
+    "createdAt": "2026-06-06T12:00:00",
+    "updatedAt": "2026-06-06T12:10:00"
+  },
+  "items": [
+    {
+      "id": 10,
+      "mapId": 1,
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=example",
+      "videoId": "example",
+      "startTime": 30,
+      "endTime": 60,
+      "title": "YouTube title",
+      "artist": "YouTube author",
+      "thumbnailUrl": "https://...",
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15,
+      "createdAt": "2026-06-06T12:00:00",
+      "updatedAt": "2026-06-06T12:10:00"
+    }
+  ]
+}
+```
+
+#### Error
+
+| Status | Case              |
+| ------ | ----------------- |
+| 401    | 미인증               |
+| 403    | 정식 회원 아님          |
+| 403    | 본인 소유 맵 아님        |
+| 404    | 존재하지 않거나 삭제된 맵    |
+| 400    | 요청 값 검증 실패        |
+| 400    | YouTube URL 검증 실패 |
+| 409    | 공개 검증 실패          |
+| 409    | 순서 중복/동시성 충돌      |
+
+---
+
 ### 공개 맵 상세 조회
 
 ```http

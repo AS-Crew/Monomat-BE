@@ -60,6 +60,19 @@ public class MapController {
         return ResponseEntity.ok(mapService.getMyMaps(page, size, keyword, category, sort, principal));
     }
 
+    @Operation(
+            summary = "내 맵 단건 조회",
+            description = "로그인한 정식 회원이 본인 소유의 공개/비공개/공개 대기 맵을 단건 조회합니다."
+    )
+    @GetMapping("/me/{mapId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<MapDetailResponse> getMyMap(
+            @PathVariable Long mapId,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        return ResponseEntity.ok(mapService.getMyMap(mapId, principal));
+    }
+
     @Operation(summary = "공개 맵 단건 조회")
     @GetMapping("/{mapId}")
     public ResponseEntity<MapDetailResponse> getPublicMap(@PathVariable Long mapId) {

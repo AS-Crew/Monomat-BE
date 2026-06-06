@@ -660,4 +660,176 @@ class MapServiceTest {
 
         verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalseAndIsPublicTrue(any());
     }
+
+    @Test
+    void getMyMap_privateMapOwner_returnsMapDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(100L)
+                .owner(owner)
+                .title("내 비공개 맵")
+                .description("관리 페이지에서 조회할 맵")
+                .category(MapCategory.JPOP)
+                .numOfSong(10)
+                .totalPlayTime(300)
+                .playCount(5L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(100L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        MapDetailResponse response = mapService.getMyMap(100L, principal);
+
+        assertThat(response.id()).isEqualTo(100L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.ownerNickname()).isEqualTo("owner");
+        assertThat(response.title()).isEqualTo("내 비공개 맵");
+        assertThat(response.description()).isEqualTo("관리 페이지에서 조회할 맵");
+        assertThat(response.category()).isEqualTo(MapCategory.JPOP);
+        assertThat(response.numOfSong()).isEqualTo(10);
+        assertThat(response.totalPlayTime()).isEqualTo(300);
+        assertThat(response.playCount()).isEqualTo(5L);
+        assertThat(response.isPublic()).isFalse();
+        assertThat(response.pendingPublic()).isFalse();
+    }
+
+    @Test
+    void getMyMap_pendingPublicMapOwner_returnsMapDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(101L)
+                .owner(owner)
+                .title("공개 대기 맵")
+                .description("아이템 추가 후 공개될 맵")
+                .category(MapCategory.KPOP)
+                .numOfSong(0)
+                .totalPlayTime(0)
+                .playCount(0L)
+                .isPublic(false)
+                .pendingPublic(true)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(101L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        MapDetailResponse response = mapService.getMyMap(101L, principal);
+
+        assertThat(response.id()).isEqualTo(101L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.isPublic()).isFalse();
+        assertThat(response.pendingPublic()).isTrue();
+        assertThat(response.playCount()).isEqualTo(0L);
+    }
+
+    @Test
+    void getMyMap_publicMapOwner_returnsMapDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(102L)
+                .owner(owner)
+                .title("내 공개 맵")
+                .description("공개된 내 맵")
+                .category(MapCategory.POP)
+                .numOfSong(7)
+                .totalPlayTime(210)
+                .playCount(13L)
+                .isPublic(true)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(102L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        MapDetailResponse response = mapService.getMyMap(102L, principal);
+
+        assertThat(response.id()).isEqualTo(102L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.isPublic()).isTrue();
+        assertThat(response.pendingPublic()).isFalse();
+        assertThat(response.playCount()).isEqualTo(13L);
+    }
+
+    @Test
+    void getMyMap_guestUser_throws403AndDoesNotQueryRepository() {
+        CustomPrincipal guest = new CustomPrincipal(10L, "guest-10", UserType.GUEST);
+
+        assertThatThrownBy(() -> mapService.getMyMap(100L, guest))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
+                .hasMessageContaining("정식 회원만 본인 맵을 조회할 수 있습니다.");
+
+        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalse(any());
+    }
+
+    @Test
+    void getMyMap_notFound_throws404() {
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(999L))
+                .thenReturn(Optional.empty());
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapService.getMyMap(999L, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND))
+                .hasMessageContaining("맵을 찾을 수 없습니다.");
+    }
+
+    @Test
+    void getMyMap_notOwner_throws403() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(100L)
+                .owner(owner)
+                .title("타인 맵")
+                .description("타인 소유")
+                .category(MapCategory.OST)
+                .numOfSong(3)
+                .totalPlayTime(90)
+                .playCount(1L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(100L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal anotherUser = new CustomPrincipal(11L, "u-11", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapService.getMyMap(100L, anotherUser))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
+                .hasMessageContaining("본인 소유의 맵만 조회할 수 있습니다.");
+    }
 }

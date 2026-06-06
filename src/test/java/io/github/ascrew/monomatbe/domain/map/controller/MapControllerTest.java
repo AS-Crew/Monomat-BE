@@ -33,6 +33,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ExtendWith(MockitoExtension.class)
 class MapControllerTest {
 
+    /*
+     * Security Filter Chain을 로딩하지 않는 standalone controller test
+     * 이 테스트는 신규 경로가 공개 맵 조회가 아니라 소유자 전용 조회 메서드로 매핑되는지,
+     * AuthenticationPrincipalArgumentResolver가 CustomPrincipal을 서비스로 전달하는지 검증한다.
+     *
+     * JWT 인증 실패(401)와 @PreAuthorize 동작은 Spring Security 통합 테스트에서 검증해야 한다.
+     */
+
     private MockMvc mockMvc;
 
     @Mock

@@ -19,6 +19,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -36,6 +37,11 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class MapItemServiceTest {
+
+    private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
+    private static final String ERROR_NEGATIVE_START_TIME = "재생 시작 시간은 0초 이상이어야 합니다.";
+    private static final String ERROR_START_TIME_EXCEEDS_DURATION = "재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.";
+    private static final String ERROR_END_TIME_EXCEEDS_DURATION = "재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.";
 
     @Mock
     private MapItemPersistenceService persistenceService;
@@ -71,8 +77,33 @@ class MapItemServiceTest {
         );
 
         assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("재생 구간은 시작 시간보다 종료 시간이 커야 합니다.");
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_INVALID_TIME_RANGE);
+                });
+
+        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
+    }
+
+    @Test
+    void createMapItem_negativeStartTime_skipsExternalCallsAndPersistence() {
+        CreateMapItemRequest request = new CreateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                -1,
+                30,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_NEGATIVE_START_TIME);
+                });
 
         verify(youtubeValidationService, never()).validateYoutubeUrl(any());
         verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
@@ -153,8 +184,10 @@ class MapItemServiceTest {
         when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
 
         assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.");
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_START_TIME_EXCEEDS_DURATION);
+                });
 
         verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
         verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
@@ -176,8 +209,10 @@ class MapItemServiceTest {
         when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
 
         assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.");
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_END_TIME_EXCEEDS_DURATION);
+                });
 
         verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
         verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
@@ -246,8 +281,10 @@ class MapItemServiceTest {
         when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
 
         assertThatThrownBy(() -> mapItemService.updateMapItem(1L, 100L, request, principal(10L)))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.");
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_START_TIME_EXCEEDS_DURATION);
+                });
 
         verify(persistenceService, never()).update(any(), any(), any(), any(), any(), any(), any(), anyInt());
         verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
@@ -269,8 +306,10 @@ class MapItemServiceTest {
         when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
 
         assertThatThrownBy(() -> mapItemService.updateMapItem(1L, 100L, request, principal(10L)))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.");
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_END_TIME_EXCEEDS_DURATION);
+                });
 
         verify(persistenceService, never()).update(any(), any(), any(), any(), any(), any(), any(), anyInt());
         verify(mapCacheEvictor, never()).evictPublicMapCaches(any());

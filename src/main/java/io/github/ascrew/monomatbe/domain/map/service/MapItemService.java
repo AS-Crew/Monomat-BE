@@ -29,6 +29,7 @@ public class MapItemService {
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵 문제를 관리할 수 있습니다.";
     private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
+    private static final String ERROR_NEGATIVE_START_TIME = "재생 시작 시간은 0초 이상이어야 합니다.";
     private static final String ERROR_INVALID_VIDEO_DURATION = "YouTube 영상 길이 정보가 올바르지 않습니다.";
     private static final String ERROR_START_TIME_EXCEEDS_DURATION = "재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.";
     private static final String ERROR_END_TIME_EXCEEDS_DURATION = "재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.";
@@ -157,7 +158,15 @@ public class MapItemService {
     }
 
     private void validateBasicTimeRange(Integer startTime, Integer endTime) {
-        if (startTime == null || endTime == null || endTime <= startTime) {
+        if (startTime == null || endTime == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TIME_RANGE);
+        }
+
+        if (startTime < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_NEGATIVE_START_TIME);
+        }
+
+        if (endTime <= startTime) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TIME_RANGE);
         }
     }

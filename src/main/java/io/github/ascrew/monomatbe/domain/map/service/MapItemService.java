@@ -29,6 +29,9 @@ public class MapItemService {
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵 문제를 관리할 수 있습니다.";
     private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
+    private static final String ERROR_INVALID_VIDEO_DURATION = "YouTube 영상 길이 정보가 올바르지 않습니다.";
+    private static final String ERROR_START_TIME_EXCEEDS_DURATION = "재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.";
+    private static final String ERROR_END_TIME_EXCEEDS_DURATION = "재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.";
     private static final String ERROR_DUPLICATE_ORDER = "이미 사용 중인 문제 순서입니다.";
     private static final String ERROR_NO_VALID_ANSWER = "정답은 최소 1개 이상이어야 합니다.";
 
@@ -60,10 +63,12 @@ public class MapItemService {
 
     public MapItemResponse createMapItem(Long mapId, CreateMapItemRequest request, CustomPrincipal principal) {
         validateRegisteredPrincipal(principal);
-        validateTimeRange(request.startTime(), request.endTime());
+        validateBasicTimeRange(request.startTime(), request.endTime());
 
         // 외부 oEmbed 호출은 트랜잭션/DB 커넥션 점유 밖에서 수행한다.
         YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(request.youtubeUrl());
+        validateTimeRangeWithinDuration(request.startTime(), request.endTime(), metadata.durationSeconds());
+
         String answersJson = serializeAnswers(request.answers());
         int hintTime = request.hintTime() == null ? DEFAULT_HINT_TIME : request.hintTime();
         String hint = request.hint().trim();
@@ -92,10 +97,12 @@ public class MapItemService {
 
     public MapItemResponse updateMapItem(Long mapId, Long itemId, UpdateMapItemRequest request, CustomPrincipal principal) {
         validateRegisteredPrincipal(principal);
-        validateTimeRange(request.startTime(), request.endTime());
+        validateBasicTimeRange(request.startTime(), request.endTime());
 
         // 외부 oEmbed 호출은 트랜잭션/DB 커넥션 점유 밖에서 수행한다.
         YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(request.youtubeUrl());
+        validateTimeRangeWithinDuration(request.startTime(), request.endTime(), metadata.durationSeconds());
+
         String answersJson = serializeAnswers(request.answers());
         int hintTime = request.hintTime() == null ? DEFAULT_HINT_TIME : request.hintTime();
         String hint = request.hint().trim();
@@ -149,9 +156,27 @@ public class MapItemService {
         }
     }
 
-    private void validateTimeRange(Integer startTime, Integer endTime) {
+    private void validateBasicTimeRange(Integer startTime, Integer endTime) {
         if (startTime == null || endTime == null || endTime <= startTime) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TIME_RANGE);
+        }
+    }
+
+    private void validateTimeRangeWithinDuration(Integer startTime, Integer endTime, Integer durationSeconds) {
+        if (durationSeconds == null) {
+            return;
+        }
+
+        if (durationSeconds <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_VIDEO_DURATION);
+        }
+
+        if (startTime >= durationSeconds) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_START_TIME_EXCEEDS_DURATION);
+        }
+
+        if (endTime > durationSeconds) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_END_TIME_EXCEEDS_DURATION);
         }
     }
 

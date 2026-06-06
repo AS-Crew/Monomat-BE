@@ -101,7 +101,10 @@ public class YoutubeValidationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
         }
 
-        return new YoutubeMetadata(videoId, title, artist, thumbnailUrl);
+        // YouTube oEmbed는 영상 길이를 제공하지 않는다.
+        // durationSeconds는 향후 Data API, 별도 metadata resolver, IFrame 기반 사전 수집 등으로
+        // 확보할 수 있을 때 채워 넣기 위해 nullable 필드로 유지한다.
+        return new YoutubeMetadata(videoId, title, artist, thumbnailUrl, null);
     }
 
     private boolean isBlank(String value) {

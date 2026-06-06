@@ -148,7 +148,7 @@ class YoutubeValidationServiceTest {
 
     @Test
     void validateYoutubeUrl_successCacheHit_returnsCachedMetadata() {
-        YoutubeMetadata cached = new YoutubeMetadata(TEST_VIDEO_ID, "title", "artist", "thumb");
+        YoutubeMetadata cached = new YoutubeMetadata(TEST_VIDEO_ID, "title", "artist", "thumb", null);
         String serialized = jsonMapper.writeValueAsString(cached);
 
         when(valueOperations.get(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))).thenReturn(serialized);
@@ -157,6 +157,7 @@ class YoutubeValidationServiceTest {
 
         assertThat(result.videoId()).isEqualTo(TEST_VIDEO_ID);
         assertThat(result.title()).isEqualTo("title");
+        assertThat(result.durationSeconds()).isNull();
         verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
     }
 
@@ -179,6 +180,7 @@ class YoutubeValidationServiceTest {
 
         assertThat(result.videoId()).isEqualTo(TEST_VIDEO_ID);
         assertThat(result.artist()).isEqualTo("new artist");
+        assertThat(result.durationSeconds()).isNull();
         verify(valueOperations).set(anyString(), anyString(), any());
     }
 

@@ -4,6 +4,16 @@ public record YoutubeMetadata(
         String videoId,
         String title,
         String artist,
-        String thumbnailUrl
+        String thumbnailUrl,
+        Integer durationSeconds
 ) {
+
+    public YoutubeMetadata(
+            String videoId,
+            String title,
+            String artist,
+            String thumbnailUrl
+    ) {
+        this(videoId, title, artist, thumbnailUrl, null);
+    }
 }

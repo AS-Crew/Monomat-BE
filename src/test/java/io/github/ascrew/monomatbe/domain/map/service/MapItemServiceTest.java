@@ -5,8 +5,8 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ReorderMapItemsRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
-import org.springframework.dao.DataIntegrityViolationException;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
@@ -18,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -79,6 +80,203 @@ class MapItemServiceTest {
     }
 
     @Test
+    void createMapItem_durationUnknown_skipsDurationValidation() throws Exception {
+        CreateMapItemRequest request = new CreateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                10_000,
+                10_030,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", null);
+        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
+        when(jsonMapper.writeValueAsString(List.of("정답"))).thenReturn("[\"정답\"]");
+
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        MapItem persisted = mapItem(
+                100L,
+                quizMap,
+                request.orderNum(),
+                request.youtubeUrl(),
+                metadata,
+                request.startTime(),
+                request.endTime(),
+                "[\"정답\"]",
+                request.hint(),
+                request.hintTime()
+        );
+
+        when(persistenceService.create(
+                eq(1L),
+                eq(10L),
+                eq(request),
+                eq(metadata),
+                eq("[\"정답\"]"),
+                eq("힌트"),
+                eq(15)
+        )).thenReturn(persisted);
+
+        var response = mapItemService.createMapItem(1L, request, principal(10L));
+
+        assertThat(response.id()).isEqualTo(100L);
+        assertThat(response.startTime()).isEqualTo(10_000);
+        assertThat(response.endTime()).isEqualTo(10_030);
+
+        verify(persistenceService).create(
+                eq(1L),
+                eq(10L),
+                eq(request),
+                eq(metadata),
+                eq("[\"정답\"]"),
+                eq("힌트"),
+                eq(15)
+        );
+        verify(mapCacheEvictor).evictPublicMapCaches(1L);
+    }
+
+    @Test
+    void createMapItem_startTimeGreaterThanOrEqualDuration_throwsBadRequest() {
+        CreateMapItemRequest request = new CreateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                180,
+                181,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
+        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
+
+        assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.");
+
+        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
+    }
+
+    @Test
+    void createMapItem_endTimeGreaterThanDuration_throwsBadRequest() {
+        CreateMapItemRequest request = new CreateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                170,
+                181,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
+        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
+
+        assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.");
+
+        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
+    }
+
+    @Test
+    void createMapItem_endTimeEqualsDuration_success() throws Exception {
+        CreateMapItemRequest request = new CreateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                170,
+                180,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
+        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
+        when(jsonMapper.writeValueAsString(List.of("정답"))).thenReturn("[\"정답\"]");
+
+        QuizMap quizMap = quizMap(1L, owner(10L));
+        MapItem persisted = mapItem(
+                100L,
+                quizMap,
+                request.orderNum(),
+                request.youtubeUrl(),
+                metadata,
+                request.startTime(),
+                request.endTime(),
+                "[\"정답\"]",
+                request.hint(),
+                request.hintTime()
+        );
+
+        when(persistenceService.create(
+                eq(1L),
+                eq(10L),
+                eq(request),
+                eq(metadata),
+                eq("[\"정답\"]"),
+                eq("힌트"),
+                eq(15)
+        )).thenReturn(persisted);
+
+        var response = mapItemService.createMapItem(1L, request, principal(10L));
+
+        assertThat(response.startTime()).isEqualTo(170);
+        assertThat(response.endTime()).isEqualTo(180);
+        verify(mapCacheEvictor).evictPublicMapCaches(1L);
+    }
+
+    @Test
+    void updateMapItem_startTimeGreaterThanOrEqualDuration_throwsBadRequest() {
+        UpdateMapItemRequest request = new UpdateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                180,
+                181,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
+        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
+
+        assertThatThrownBy(() -> mapItemService.updateMapItem(1L, 100L, request, principal(10L)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.");
+
+        verify(persistenceService, never()).update(any(), any(), any(), any(), any(), any(), any(), anyInt());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
+    }
+
+    @Test
+    void updateMapItem_endTimeGreaterThanDuration_throwsBadRequest() {
+        UpdateMapItemRequest request = new UpdateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                170,
+                181,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
+        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
+
+        assertThatThrownBy(() -> mapItemService.updateMapItem(1L, 100L, request, principal(10L)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.");
+
+        verify(persistenceService, never()).update(any(), any(), any(), any(), any(), any(), any(), anyInt());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
+    }
+
+    @Test
     void createMapItem_success_callsYoutubeBeforePersistenceAndEvictsCacheAfter() throws Exception {
         // "좋은날"과 "좋은 날"은 정규화 후 동일 → dedup되어 단일 정답으로 저장된다.
         CreateMapItemRequest request = new CreateMapItemRequest(
@@ -91,7 +289,7 @@ class MapItemServiceTest {
                 null
         );
 
-        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb");
+        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", null);
         when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
         when(jsonMapper.writeValueAsString(List.of("좋은날"))).thenReturn("[\"좋은날\"]");
 
@@ -220,6 +418,35 @@ class MapItemServiceTest {
                 .totalPlayTime(0)
                 .isPublic(false)
                 .isDeleted(false)
+                .build();
+    }
+
+    private MapItem mapItem(
+            Long id,
+            QuizMap quizMap,
+            Integer orderNum,
+            String youtubeUrl,
+            YoutubeMetadata metadata,
+            Integer startTime,
+            Integer endTime,
+            String answers,
+            String hint,
+            Integer hintTime
+    ) {
+        return MapItem.builder()
+                .id(id)
+                .map(quizMap)
+                .orderNum(orderNum)
+                .youtubeUrl(youtubeUrl)
+                .videoId(metadata.videoId())
+                .startTime(startTime)
+                .endTime(endTime)
+                .title(metadata.title())
+                .artist(metadata.artist())
+                .thumbnailUrl(metadata.thumbnailUrl())
+                .answers(answers)
+                .hint(hint)
+                .hintTime(hintTime)
                 .build();
     }
 

@@ -293,6 +293,100 @@ class MapManageTransactionServiceTest {
         verify(mapCacheEvictor, never()).evictPublicMapCaches(anyLong());
     }
 
+    @Test
+    void updateManagedMapInTransaction_preparedItemsSizeMismatch_throwsIllegalStateException() {
+        User owner = registeredUser(10L, "owner");
+        QuizMap quizMap = quizMap(owner);
+
+        ManageMapItemRequest itemRequest = new ManageMapItemRequest(
+                100L,
+                1,
+                "https://www.youtube.com/watch?v=new",
+                0,
+                30,
+                List.of("answer"),
+                "hint",
+                15
+        );
+
+        ManageMapRequest request = new ManageMapRequest(
+                "new title",
+                "new description",
+                MapCategory.JPOP,
+                false,
+                List.of(itemRequest),
+                List.of()
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapManageTransactionService.updateManagedMapInTransaction(
+                1L,
+                request,
+                principal,
+                List.of()
+        ))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("맵 관리 일괄 저장 준비 데이터가 요청 데이터와 일치하지 않습니다.");
+
+        verify(quizMapJpaRepository, never()).findOwnedByIdAndIsDeletedFalseForUpdate(anyLong(), anyLong());
+        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(anyLong());
+    }
+
+    @Test
+    void updateManagedMapInTransaction_preparedItemRequestMismatch_throwsIllegalStateException() {
+        ManageMapItemRequest requestItem = new ManageMapItemRequest(
+                100L,
+                1,
+                "https://www.youtube.com/watch?v=request",
+                0,
+                30,
+                List.of("answer"),
+                "hint",
+                15
+        );
+
+        ManageMapItemRequest preparedRequestItem = new ManageMapItemRequest(
+                100L,
+                1,
+                "https://www.youtube.com/watch?v=prepared",
+                0,
+                30,
+                List.of("answer"),
+                "hint",
+                15
+        );
+
+        ManageMapRequest request = new ManageMapRequest(
+                "new title",
+                "new description",
+                MapCategory.JPOP,
+                false,
+                List.of(requestItem),
+                List.of()
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapManageTransactionService.updateManagedMapInTransaction(
+                1L,
+                request,
+                principal,
+                List.of(new PreparedManageItem(
+                        preparedRequestItem,
+                        new YoutubeMetadata("prepared", "title", "artist", "thumbnail", null),
+                        "[\"answer\"]",
+                        "hint",
+                        15
+                ))
+        ))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("맵 관리 일괄 저장 준비 데이터가 요청 데이터와 일치하지 않습니다.");
+
+        verify(quizMapJpaRepository, never()).findOwnedByIdAndIsDeletedFalseForUpdate(anyLong(), anyLong());
+        verify(mapItemJpaRepository, never()).setTemporaryOrderNums(anyLong());
+    }
+
     private User registeredUser(Long id, String username) {
         return User.builder()
                 .id(id)

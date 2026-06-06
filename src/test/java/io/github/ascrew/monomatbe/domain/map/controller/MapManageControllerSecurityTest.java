@@ -40,6 +40,8 @@ class MapManageControllerSecurityTest {
     @Test
     void updateManagedMap_withoutAuthentication_returns401() throws Exception {
         mockMvc.perform(put("/api/maps/{mapId}/manage", 1L)
+                        // PUT 요청에서 CSRF 403이 먼저 발생하지 않도록 CSRF 검증은 통과시키고,
+                        // 인증 정보 부재로 인한 401만 검증한다.
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

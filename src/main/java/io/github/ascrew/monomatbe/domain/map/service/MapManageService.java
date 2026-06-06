@@ -43,6 +43,7 @@ public class MapManageService {
     private static final String ERROR_NO_VALID_ANSWER = "정답은 최소 1개 이상이어야 합니다.";
     private static final String ERROR_MAP_ITEM_LIMIT_EXCEEDED =
             "한 맵에 등록할 수 있는 문제는 최대 " + MapItemPolicy.MAX_ITEMS_PER_MAP + "개입니다.";
+    private static final String ERROR_DUPLICATE_DELETED_ITEM_ID = "중복된 삭제 문제 ID가 있습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final YoutubeValidationService youtubeValidationService;
@@ -110,6 +111,7 @@ public class MapManageService {
 
         validateOrderNumbers(request.items());
         validateDuplicateItemIds(request.items());
+        validateDuplicateDeletedItemIds(request.deletedItemIds());
     }
 
     private void validateOrderNumbers(List<ManageMapItemRequest> items) {
@@ -202,5 +204,18 @@ public class MapManageService {
         }
 
         return jsonMapper.writeValueAsString(normalized);
+    }
+
+    private void validateDuplicateDeletedItemIds(List<Long> deletedItemIds) {
+        if (deletedItemIds == null || deletedItemIds.isEmpty()) {
+            return;
+        }
+
+        Set<Long> ids = new HashSet<>();
+        for (Long deletedItemId : deletedItemIds) {
+            if (!ids.add(deletedItemId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_DUPLICATE_DELETED_ITEM_ID);
+            }
+        }
     }
 }

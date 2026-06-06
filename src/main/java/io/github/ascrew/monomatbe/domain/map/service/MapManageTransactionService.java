@@ -36,6 +36,7 @@ public class MapManageTransactionService {
     private static final String ERROR_MISSING_ACTIVE_ITEM = "기존 활성 문제는 수정 목록 또는 삭제 목록에 모두 포함되어야 합니다.";
     private static final String ERROR_INVALID_ITEM_ID = "현재 맵에 속하지 않는 문제 ID가 포함되어 있습니다.";
     private static final String ERROR_DUPLICATE_ACTIVE_ORDER = "이미 사용 중인 문제 순서입니다.";
+    private static final String ERROR_INVALID_PREPARED_ITEMS = "맵 관리 일괄 저장 준비 데이터가 요청 데이터와 일치하지 않습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
@@ -64,6 +65,8 @@ public class MapManageTransactionService {
             CustomPrincipal principal,
             List<PreparedManageItem> preparedItems
     ) {
+        validatePreparedItems(request.items(), preparedItems);
+
         QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, principal.userId());
 
         List<MapItem> activeItems = mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId);
@@ -151,6 +154,21 @@ public class MapManageTransactionService {
                     .build();
         } catch (DataIntegrityViolationException e) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ACTIVE_ORDER, e);
+        }
+    }
+
+    private void validatePreparedItems(
+            List<ManageMapItemRequest> requestItems,
+            List<PreparedManageItem> preparedItems
+    ) {
+        if (preparedItems == null || requestItems.size() != preparedItems.size()) {
+            throw new IllegalStateException(ERROR_INVALID_PREPARED_ITEMS);
+        }
+
+        for (int i = 0; i < requestItems.size(); i++) {
+            if (!requestItems.get(i).equals(preparedItems.get(i).request())) {
+                throw new IllegalStateException(ERROR_INVALID_PREPARED_ITEMS);
+            }
         }
     }
 

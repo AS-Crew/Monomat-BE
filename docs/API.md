@@ -454,7 +454,7 @@ HTTP/1.1 200 OK
 PUT /api/maps/{mapId}/manage
 Authorization: Bearer {accessToken}
 Content-Type: application/json
-````
+```
 
 #### Request
 
@@ -489,6 +489,10 @@ Content-Type: application/json
   "deletedItemIds": [11, 12]
 }
 ```
+> `items`는 변경된 문제 목록이 아니라 저장 후 활성 상태로 남아야 하는 전체 문제 목록입니다.
+> 기존 활성 문제는 `items[].id` 또는 `deletedItemIds` 중 하나에 반드시 포함되어야 합니다.
+> 신규 문제는 `id: null`로 전달합니다.
+> `items[].id`와 `deletedItemIds`는 중복될 수 없습니다.
 
 #### Response
 

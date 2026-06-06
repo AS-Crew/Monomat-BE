@@ -92,6 +92,7 @@ class MapManageTransactionServiceTest {
                 60,
                 "[\"old2\"]"
         );
+        MapItem savedNewItem = savedNewItem(quizMap);
 
         ManageMapItemRequest updateItemRequest = new ManageMapItemRequest(
                 100L,
@@ -145,8 +146,8 @@ class MapManageTransactionServiceTest {
                 .thenReturn(Optional.of(quizMap));
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
                 .thenReturn(List.of(item1, item2))
-                .thenReturn(List.of(item1, item2))
-                .thenReturn(List.of(item1, savedNewItem(quizMap)));
+                .thenReturn(List.of(item1, item2));
+        when(mapItemJpaRepository.save(any(MapItem.class))).thenReturn(savedNewItem);
         when(jsonMapper.readValue(eq("[\"ditto\"]"), any(TypeReference.class))).thenReturn(List.of("ditto"));
         when(jsonMapper.readValue(eq("[\"omg\"]"), any(TypeReference.class))).thenReturn(List.of("omg"));
 
@@ -162,6 +163,8 @@ class MapManageTransactionServiceTest {
         assertThat(response.map().totalPlayTime()).isEqualTo(60);
         assertThat(response.map().isPublic()).isFalse();
         assertThat(response.items()).hasSize(2);
+        assertThat(response.items().get(0).id()).isEqualTo(100L);
+        assertThat(response.items().get(1).id()).isEqualTo(200L);
 
         assertThat(quizMap.getTitle()).isEqualTo("J-POP 퀴즈");
         assertThat(quizMap.getDescription()).isEqualTo("J-POP 중심 퀴즈 맵");
@@ -295,9 +298,6 @@ class MapManageTransactionServiceTest {
 
     @Test
     void updateManagedMapInTransaction_preparedItemsSizeMismatch_throwsIllegalStateException() {
-        User owner = registeredUser(10L, "owner");
-        QuizMap quizMap = quizMap(owner);
-
         ManageMapItemRequest itemRequest = new ManageMapItemRequest(
                 100L,
                 1,

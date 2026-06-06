@@ -15,11 +15,15 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -36,7 +40,8 @@ public class MapManageTransactionService {
     private static final String ERROR_MISSING_ACTIVE_ITEM = "기존 활성 문제는 수정 목록 또는 삭제 목록에 모두 포함되어야 합니다.";
     private static final String ERROR_INVALID_ITEM_ID = "현재 맵에 속하지 않는 문제 ID가 포함되어 있습니다.";
     private static final String ERROR_DUPLICATE_ACTIVE_ORDER = "이미 사용 중인 문제 순서입니다.";
-    private static final String ERROR_INVALID_PREPARED_ITEMS = "맵 관리 일괄 저장 준비 데이터가 요청 데이터와 일치하지 않습니다.";
+    private static final String ERROR_INVALID_PREPARED_ITEMS =
+            "맵 관리 일괄 저장 준비 데이터가 요청 데이터와 일치하지 않습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final MapItemJpaRepository mapItemJpaRepository;
@@ -67,14 +72,21 @@ public class MapManageTransactionService {
     ) {
         validatePreparedItems(request.items(), preparedItems);
 
+        /*
+         * 벌크 orderNum 임시 변경 전에 반드시 소유권 검증과 PESSIMISTIC_WRITE 락을 먼저 획득한다.
+         * 이 조회를 제거하면 권한 없는 요청이 setTemporaryOrderNums(mapId)를 먼저 실행할 수 있어
+         * 타인 맵의 orderNum을 임시 음수로 변경하는 보안/동시성 문제가 생길 수 있다.
+         */
         QuizMap quizMap = getOwnedMapForWriteOrThrow(mapId, principal.userId());
 
         List<MapItem> activeItems = mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId);
         validateItemIdentity(activeItems, request);
 
         try {
-            // 기존 활성 문제의 orderNum을 모두 음수로 밀어 최종 순서 적용 중 UNIQUE 충돌을 방지한다.
-            // 이 쿼리는 clearAutomatically=true 이므로 이후 엔티티는 반드시 재조회한다.
+            /*
+             * setTemporaryOrderNums()는 clearAutomatically=true 벌크 업데이트이므로
+             * 영속성 컨텍스트가 초기화된다. 이후 변경에 사용할 QuizMap/MapItem은 반드시 재조회한다.
+             */
             mapItemJpaRepository.setTemporaryOrderNums(mapId);
 
             quizMap = getOwnedMapForWriteOrThrow(mapId, principal.userId());
@@ -97,11 +109,13 @@ public class MapManageTransactionService {
                 mapItem.softDelete();
             }
 
+            List<MapItem> latestItems = new ArrayList<>();
+
             for (PreparedManageItem preparedItem : preparedItems) {
                 ManageMapItemRequest itemRequest = preparedItem.request();
 
                 if (itemRequest.id() == null) {
-                    mapItemJpaRepository.save(MapItem.builder()
+                    MapItem saved = mapItemJpaRepository.save(MapItem.builder()
                             .map(quizMap)
                             .orderNum(itemRequest.orderNum())
                             .youtubeUrl(itemRequest.youtubeUrl().trim())
@@ -115,6 +129,8 @@ public class MapManageTransactionService {
                             .hint(preparedItem.hint())
                             .hintTime(preparedItem.hintTime())
                             .build());
+
+                    latestItems.add(saved);
                     continue;
                 }
 
@@ -136,6 +152,8 @@ public class MapManageTransactionService {
                         preparedItem.hint(),
                         preparedItem.hintTime()
                 );
+
+                latestItems.add(mapItem);
             }
 
             recalculateMapMetadata(quizMap, preparedItems);
@@ -143,10 +161,9 @@ public class MapManageTransactionService {
 
             mapItemJpaRepository.flush();
 
-            List<MapItem> latestItems =
-                    mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(mapId);
+            latestItems.sort(Comparator.comparing(MapItem::getOrderNum));
 
-            mapCacheEvictor.evictPublicMapCaches(mapId);
+            registerCacheEvictionAfterCommit(mapId);
 
             return ManageMapResponse.builder()
                     .map(toMapDetailResponse(quizMap))
@@ -247,6 +264,21 @@ public class MapManageTransactionService {
         mapItemJpaRepository.flush();
         publicationValidator.requirePublishable(quizMap.getId());
         quizMap.markAsPublished();
+    }
+
+    private void registerCacheEvictionAfterCommit(Long mapId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            mapCacheEvictor.evictPublicMapCaches(mapId);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                mapCacheEvictor.evictPublicMapCaches(mapId);
+            }
+        });
     }
 
     private MapDetailResponse toMapDetailResponse(QuizMap quizMap) {

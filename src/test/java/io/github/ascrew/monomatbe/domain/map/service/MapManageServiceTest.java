@@ -210,6 +210,29 @@ class MapManageServiceTest {
     }
 
     @Test
+    void updateManagedMap_duplicateDeletedItemIds_returns400() {
+        ManageMapRequest request = new ManageMapRequest(
+                "title",
+                "description",
+                MapCategory.JPOP,
+                false,
+                List.of(),
+                List.of(100L, 100L)
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("중복된 삭제 문제 ID가 있습니다.");
+
+        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalse(anyLong());
+        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
+    }
+
+    @Test
     void updateManagedMap_youtubeValidationFailure_doesNotEnterTransaction() {
         User owner = registeredUser(10L, "owner");
         QuizMap quizMap = quizMap(owner);
@@ -243,29 +266,6 @@ class MapManageServiceTest {
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
                 .hasMessageContaining("YouTube URL 검증 실패");
 
-        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
-    }
-
-    @Test
-    void updateManagedMap_duplicateDeletedItemIds_returns400() {
-        ManageMapRequest request = new ManageMapRequest(
-                "title",
-                "description",
-                MapCategory.JPOP,
-                false,
-                List.of(),
-                List.of(100L, 100L)
-        );
-
-        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
-
-        assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
-                .hasMessageContaining("중복된 삭제 문제 ID가 있습니다.");
-
-        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalse(anyLong());
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
         verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 

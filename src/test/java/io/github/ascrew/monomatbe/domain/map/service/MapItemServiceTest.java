@@ -266,6 +266,29 @@ class MapItemServiceTest {
     }
 
     @Test
+    void updateMapItem_negativeStartTime_skipsExternalCallsAndPersistence() {
+        UpdateMapItemRequest request = new UpdateMapItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=abcde123456",
+                -1,
+                30,
+                List.of("정답"),
+                "힌트",
+                15
+        );
+
+        assertThatThrownBy(() -> mapItemService.updateMapItem(1L, 100L, request, principal(10L)))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(e.getReason()).isEqualTo(ERROR_NEGATIVE_START_TIME);
+                });
+
+        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(persistenceService, never()).update(any(), any(), any(), any(), any(), any(), any(), anyInt());
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
+    }
+
+    @Test
     void updateMapItem_startTimeGreaterThanOrEqualDuration_throwsBadRequest() {
         UpdateMapItemRequest request = new UpdateMapItemRequest(
                 1,

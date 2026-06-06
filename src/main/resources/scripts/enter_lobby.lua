@@ -55,12 +55,16 @@ if redis.call('EXISTS', lobbyKey) == 0 then
 end
 
 -- 2. WAITING 상태의 로비만 입장을 허용한다.
--- REST join API는 UX용 사전 검증이고, 실제 입장 확정은 이 Lua에서 수행되므로
--- PLAYING / FINISHED 상태 로비는 여기서 최종 차단해야 한다.
+-- 단, PLAYING 상태이면서 이미 로비 참여자(이탈 후 재접속)인 경우 입장을 허용한다.
+local alreadyInLobby = redis.call('SISMEMBER', participantsKey, userIdentifier)
 local lobbyStatus = redis.call('HGET', lobbyKey, 'status')
 
 if lobbyStatus ~= 'WAITING' then
-    return "LOBBY_NOT_WAITING"
+    if lobbyStatus == 'PLAYING' and alreadyInLobby == 1 then
+        -- 허용
+    else
+        return "LOBBY_NOT_WAITING"
+    end
 end
 
 -- 3. 강퇴된 유저는 같은 로비에 재입장할 수 없다.
@@ -97,7 +101,7 @@ end
 -- 7. 이미 참여 중인 유저인지 먼저 확인한다.
 --    재접속(SESSION_REPLACED, ALREADY_JOINED)인 경우에는 인원 초과 검증을 건너뛴다.
 --    participants Set에 이미 존재하므로 SADD 결과가 0이 되어 SCARD가 증가하지 않기 때문이다.
-local alreadyInLobby = redis.call('SISMEMBER', participantsKey, userIdentifier)
+-- (위에서 이미 조회함)
 
 -- 신규 입장자일 때만 max_players를 검증한다.
 -- 이미 참여 중인 유저의 재접속은 participants 수를 증가시키지 않으므로 capacity 검증 대상이 아니다.

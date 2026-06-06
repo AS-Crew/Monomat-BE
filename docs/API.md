@@ -374,6 +374,78 @@ AND category 조건
 
 ---
 
+### 내 맵 단건 조회
+
+```http
+GET /api/maps/me/{mapId}
+Authorization: Bearer {accessToken}
+````
+
+로그인한 정식 회원이 본인 소유의 공개/비공개/공개 대기 맵을 단건 조회합니다.
+
+공개 맵 상세 조회 API(`GET /api/maps/{mapId}`)와 달리 공개 여부를 조회 조건으로 사용하지 않습니다.
+단, 삭제된 맵은 조회되지 않습니다.
+
+#### Path Variables
+
+| 필드      | 타입     | 설명         |
+| ------- | ------ | ---------- |
+| `mapId` | number | 조회할 내 맵 ID |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "id": 1,
+  "ownerId": 10,
+  "ownerNickname": "hyeon",
+  "title": "J-POP 퀴즈 대결",
+  "description": "J-POP 중심 퀴즈 맵",
+  "category": "JPOP",
+  "numOfSong": 10,
+  "totalPlayTime": 300,
+  "isPublic": false,
+  "pendingPublic": false,
+  "playCount": 0,
+  "createdAt": "2026-06-05T18:00:00",
+  "updatedAt": "2026-06-05T18:30:00"
+}
+```
+
+#### Response Fields
+
+| 필드              | 타입            | 설명                     |
+| --------------- | ------------- | ---------------------- |
+| `id`            | number        | 맵 고유 ID                |
+| `ownerId`       | number        | 맵 소유자 ID               |
+| `ownerNickname` | string        | 맵 소유자 닉네임              |
+| `title`         | string        | 맵 제목                   |
+| `description`   | string | null | 맵 설명                   |
+| `category`      | string        | 맵 카테고리                 |
+| `numOfSong`     | number        | 맵에 등록된 곡/문제 수          |
+| `totalPlayTime` | number        | 맵 전체 재생 시간             |
+| `isPublic`      | boolean       | 공개 여부                  |
+| `pendingPublic` | boolean       | 공개 의도 보존 여부            |
+| `playCount`     | number        | 맵이 실제 게임 시작에 사용된 누적 횟수 |
+| `createdAt`     | string        | 맵 생성 시각                |
+| `updatedAt`     | string        | 맵 수정 시각                |
+
+#### Error Response
+
+| HTTP Status | 상황                               |
+| ----------: | -------------------------------- |
+|         401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
+|         403 | 정식 회원이 아닌 사용자                    |
+|         403 | 본인 소유가 아닌 맵 조회                   |
+|         404 | 존재하지 않는 맵                        |
+|         404 | 삭제된 맵                            |
+
+---
+
 ### 공개 맵 상세 조회
 
 ```http

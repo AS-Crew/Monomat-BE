@@ -45,8 +45,10 @@ public class MapService {
 
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵을 생성할 수 있습니다.";
+    private static final String ERROR_MY_MAP_REGISTERED_ONLY = "정식 회원만 본인 맵을 조회할 수 있습니다.";
     private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 수정/삭제할 수 있습니다.";
+    private static final String ERROR_MAP_READ_FORBIDDEN = "본인 소유의 맵만 조회할 수 있습니다.";
     private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
@@ -70,6 +72,21 @@ public class MapService {
         this.mapCacheEvictor = mapCacheEvictor;
         this.redisTemplate = redisTemplate;
         this.jsonMapper = jsonMapper;
+    }
+
+    @Transactional(readOnly = true)
+    public MapDetailResponse getMyMap(Long mapId, CustomPrincipal principal) {
+        validateMyMapReadablePrincipal(principal);
+
+        QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
+
+        validateReadOwnership(quizMap, principal);
+
+        return toDetailResponse(quizMap);
     }
 
     // 공개된 맵 목록을 검색 조건과 함께 페이징하여 조회합니다.
@@ -360,6 +377,26 @@ public class MapService {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "지원하지 않는 category입니다: " + rawCategory
+            );
+        }
+    }
+
+    private void validateMyMapReadablePrincipal(CustomPrincipal principal) {
+        validatePrincipal(principal);
+
+        if (principal.userType() != UserType.REGISTERED) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_MY_MAP_REGISTERED_ONLY
+            );
+        }
+    }
+
+    private void validateReadOwnership(QuizMap quizMap, CustomPrincipal principal) {
+        if (!quizMap.getOwner().getId().equals(principal.userId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_MAP_READ_FORBIDDEN
             );
         }
     }

@@ -1,6 +1,8 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.event.LobbyClosedEvent;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameDisconnectEvent;
@@ -14,6 +16,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import tools.jackson.databind.json.JsonMapper;
@@ -45,6 +49,10 @@ class GameDisconnectManagerTest {
     @Mock
     private RedisPublisher redisPublisher;
     @Mock
+    private StringRedisTemplate stringRedisTemplate;
+    @Mock
+    private ValueOperations<String, String> valueOperations;
+    @Mock
     private ScheduledFuture<?> scheduledFuture;
 
     private GameDisconnectManager gameDisconnectManager;
@@ -62,6 +70,7 @@ class GameDisconnectManagerTest {
                 pubSubJsonMapper,
                 eventPublisher,
                 redisPublisher,
+                stringRedisTemplate,
                 Duration.ofSeconds(5)
         );
     }
@@ -73,6 +82,7 @@ class GameDisconnectManagerTest {
         PlayerInGameDisconnectEvent event = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
         when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         // when
@@ -82,6 +92,7 @@ class GameDisconnectManagerTest {
         verify(nicknameResolver).resolveNicknameMap(eq(java.util.List.of(userIdentifier)));
         verify(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
         verify(redisPublisher).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
+        verify(valueOperations).set(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)), anyString(), any(Duration.class));
     }
 
     @Test
@@ -91,6 +102,7 @@ class GameDisconnectManagerTest {
         PlayerInGameDisconnectEvent event = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
         when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         // 이탈 먼저 처리하여 타이머 등록
@@ -102,6 +114,7 @@ class GameDisconnectManagerTest {
         // then
         verify(scheduledFuture).cancel(false);
         verify(redisPublisher, times(2)).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
+        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
     }
 
     @Test
@@ -112,6 +125,7 @@ class GameDisconnectManagerTest {
         PlayerInGameDisconnectEvent event2 = new PlayerInGameDisconnectEvent(lobbyCode, "user2");
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of("user1", "U1", "user2", "U2"));
         when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         gameDisconnectManager.handleInGameDisconnect(event1);
@@ -122,6 +136,8 @@ class GameDisconnectManagerTest {
 
         // then
         verify(scheduledFuture, times(2)).cancel(false);
+        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, "user1")));
+        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, "user2")));
     }
 
     @Test
@@ -131,6 +147,7 @@ class GameDisconnectManagerTest {
         PlayerInGameDisconnectEvent disconnectEvent = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
         when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         doReturn(scheduledFuture).when(taskScheduler).schedule(any(Runnable.class), any(Instant.class));
 
         // 이탈 처리
@@ -143,6 +160,7 @@ class GameDisconnectManagerTest {
         // then
         verify(scheduledFuture).cancel(false);
         verify(redisPublisher, times(2)).publish(eq(io.github.ascrew.monomatbe.global.constant.StompDestinations.subscribeLobbyChat(lobbyCode)), any());
+        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
     }
 
     @Test
@@ -152,6 +170,7 @@ class GameDisconnectManagerTest {
         PlayerInGameDisconnectEvent disconnectEvent = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
         when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
         when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
 
         ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
         doReturn(scheduledFuture).when(taskScheduler).schedule(runnableCaptor.capture(), any(Instant.class));
@@ -159,8 +178,8 @@ class GameDisconnectManagerTest {
         // 이탈 처리
         gameDisconnectManager.handleInGameDisconnect(disconnectEvent);
 
-        // 복귀 처리하여 토큰 무효화
-        gameDisconnectManager.cancelDisconnectTask(lobbyCode, userIdentifier);
+        // 복귀 처리하여 토큰 무효화 (Redis에서 토큰 삭제된 상태로 시뮬레이션)
+        when(valueOperations.get(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)))).thenReturn(null);
 
         // when: 스케줄러가 보관하던 람다를 직접 실행
         Runnable scheduledTask = runnableCaptor.getValue();
@@ -168,5 +187,41 @@ class GameDisconnectManagerTest {
 
         // then: PlayerLeaveEvent가 한 번도 발행되지 않아야 함
         verify(eventPublisher, never()).publishEvent(any(PlayerLeaveEvent.class));
+    }
+
+    @Test
+    @DisplayName("이탈 유예 만료 시 Redis의 토큰이 일치하면, PlayerLeaveEvent를 먼저 발행한 후 LEAVE 메시지를 브로드캐스트한다")
+    void executePermanentLeave_withValidToken_publishesLeaveEventThenBroadcasts() throws Exception {
+        // given
+        PlayerInGameDisconnectEvent disconnectEvent = new PlayerInGameDisconnectEvent(lobbyCode, userIdentifier);
+        when(nicknameResolver.resolveNicknameMap(any())).thenReturn(Map.of(userIdentifier, nickname));
+        when(redisPublisher.publish(anyString(), any())).thenReturn(true);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        doReturn(scheduledFuture).when(taskScheduler).schedule(runnableCaptor.capture(), any(Instant.class));
+
+        // 이탈 처리
+        gameDisconnectManager.handleInGameDisconnect(disconnectEvent);
+
+        // 스케줄 당시 등록한 tokenId 캡처
+        ArgumentCaptor<String> tokenIdCaptor = ArgumentCaptor.forClass(String.class);
+        verify(valueOperations).set(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)), tokenIdCaptor.capture(), any(Duration.class));
+        String scheduledTokenId = tokenIdCaptor.getValue();
+
+        // Redis 조회 시 동일한 tokenId 반환하도록 설정
+        when(valueOperations.get(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)))).thenReturn(scheduledTokenId);
+
+        // when: 스케줄 작업 실행
+        Runnable scheduledTask = runnableCaptor.getValue();
+        scheduledTask.run();
+
+        // then: PlayerLeaveEvent 발행 검증 후 순차적으로 Redis 브로드캐스트가 이뤄졌는지 검증
+        org.mockito.InOrder inOrder = inOrder(eventPublisher, redisPublisher);
+        inOrder.verify(eventPublisher).publishEvent(any(PlayerLeaveEvent.class));
+        inOrder.verify(redisPublisher).publish(eq(StompDestinations.subscribeLobbyChat(lobbyCode)), any());
+
+        // Redis 토큰이 최종 삭제되었는지 검증
+        verify(stringRedisTemplate, times(2)).delete(eq(RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier)));
     }
 }

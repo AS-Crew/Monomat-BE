@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyPlayerNicknameResolver;
+import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.event.LobbyClosedEvent;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
@@ -35,10 +37,10 @@ public class GameDisconnectManager {
     private final JsonMapper pubSubJsonMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final RedisPublisher redisPublisher;
+    private final StringRedisTemplate stringRedisTemplate;
     private final Duration disconnectGracePeriod;
 
     private final Map<String, ScheduledFuture<?>> disconnectTasks = new ConcurrentHashMap<>();
-    private final Map<String, String> activeTokens = new ConcurrentHashMap<>();
 
     public GameDisconnectManager(
             TaskScheduler taskScheduler,
@@ -47,6 +49,7 @@ public class GameDisconnectManager {
             @Qualifier("pubSubJsonMapper") JsonMapper pubSubJsonMapper,
             ApplicationEventPublisher eventPublisher,
             RedisPublisher redisPublisher,
+            StringRedisTemplate stringRedisTemplate,
             @Value("${monomat.game.disconnect-grace-period:PT5S}") Duration disconnectGracePeriod
     ) {
         this.taskScheduler = taskScheduler;
@@ -55,6 +58,7 @@ public class GameDisconnectManager {
         this.pubSubJsonMapper = pubSubJsonMapper;
         this.eventPublisher = eventPublisher;
         this.redisPublisher = redisPublisher;
+        this.stringRedisTemplate = stringRedisTemplate;
         this.disconnectGracePeriod = disconnectGracePeriod;
     }
 
@@ -66,22 +70,23 @@ public class GameDisconnectManager {
 
         log.info("[GameDisconnectManager] 인게임 이탈 감지 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
 
-        // 기존 대기 작업이 있다면 취소 및 토큰 제거
-        activeTokens.remove(key);
+        // 1. 기존 대기 작업이 있다면 취소 및 Redis 토큰 제거
+        String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
+        stringRedisTemplate.delete(tokenKey);
         ScheduledFuture<?> existing = disconnectTasks.remove(key);
         if (existing != null) {
             existing.cancel(false);
         }
 
-        // 1. 이탈 안내 시스템 메시지 브로드캐스트
+        // 2. 이탈 안내 시스템 메시지 브로드캐스트
         String nickname = resolveNickname(userIdentifier);
         broadcastSystemMessage(lobbyCode, userIdentifier, String.format("%s님이 이탈하셨습니다. 재접속을 대기합니다.", nickname));
 
-        // 2. 고유 토큰 생성 및 등록
+        // 3. 고유 토큰 생성하여 Redis에 저장 (유예 기간 + 10초 여유를 주어 스케줄러 실행 시점까지 유효하도록 설정)
         String tokenId = java.util.UUID.randomUUID().toString();
-        activeTokens.put(key, tokenId);
+        stringRedisTemplate.opsForValue().set(tokenKey, tokenId, disconnectGracePeriod.plusSeconds(10));
 
-        // 3. 유예 기간 후 영구 퇴장 처리 스케줄링
+        // 4. 유예 기간 후 영구 퇴장 처리 스케줄링
         ScheduledFuture<?> future = taskScheduler.schedule(
                 () -> executePermanentLeave(lobbyCode, userIdentifier, tokenId),
                 Instant.now().plus(disconnectGracePeriod)
@@ -96,7 +101,11 @@ public class GameDisconnectManager {
 
     public void cancelDisconnectTask(String lobbyCode, String userIdentifier) {
         String key = getTaskKey(lobbyCode, userIdentifier);
-        activeTokens.remove(key);
+        
+        // Redis 토큰 제거
+        String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
+        stringRedisTemplate.delete(tokenKey);
+
         ScheduledFuture<?> future = disconnectTasks.remove(key);
         if (future != null) {
             future.cancel(false);
@@ -113,9 +122,12 @@ public class GameDisconnectManager {
         String lobbyCode = event.lobbyCode();
         if (lobbyCode != null) {
             log.info("[GameDisconnectManager] 로비 폭파 감지 - 해당 로비의 이탈 복귀 타이머 제거. 로비: {}", lobbyCode);
-            activeTokens.keySet().removeIf(key -> key.startsWith(lobbyCode + ":"));
             disconnectTasks.keySet().removeIf(key -> {
                 if (key.startsWith(lobbyCode + ":")) {
+                    String userIdentifier = key.substring(lobbyCode.length() + 1);
+                    String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
+                    stringRedisTemplate.delete(tokenKey);
+
                     ScheduledFuture<?> future = disconnectTasks.get(key);
                     if (future != null) {
                         future.cancel(false);
@@ -129,22 +141,26 @@ public class GameDisconnectManager {
 
     private void executePermanentLeave(String lobbyCode, String userIdentifier, String tokenId) {
         String key = getTaskKey(lobbyCode, userIdentifier);
+        String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
         
-        // 토큰이 유효한지 확인하고 원자적으로 제거
-        if (!activeTokens.remove(key, tokenId)) {
+        // Redis에서 활성 토큰을 조회하여 현재 스케줄 작업이 유효한지 검증
+        String activeToken = stringRedisTemplate.opsForValue().get(tokenKey);
+        if (activeToken == null || !activeToken.equals(tokenId)) {
             log.info("[GameDisconnectManager] 만료된 이탈 타이머 실행 무시 - 로비: {}, 식별자: {}, 토큰: {}", lobbyCode, userIdentifier, tokenId);
             return;
         }
 
+        // 토큰이 일치하면 제거
+        stringRedisTemplate.delete(tokenKey);
         disconnectTasks.remove(key);
 
         log.info("[GameDisconnectManager] 인게임 재접속 제한 시간 초과 - 영구 퇴장 처리 실행. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
 
-        // 1. 퇴장 안내 메시지 브로드캐스트 (LEAVE 타입)
-        broadcastLeaveMessage(lobbyCode, userIdentifier);
-
-        // 2. 퇴장 처리 이벤트 발행 (LobbyLeaveEventHandler가 퇴장 Lua 실행 및 방장 위임/폭파 처리 담당)
+        // 1. 퇴장 처리 이벤트 발행 (LobbyLeaveEventHandler가 퇴장 Lua 실행 및 방장 위임/폭파 처리 담당)
         eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
+
+        // 2. 퇴장 안내 메시지 브로드캐스트 (LEAVE 타입) - 퇴장 처리가 안전하게 끝난 뒤 순차 전송
+        broadcastLeaveMessage(lobbyCode, userIdentifier);
     }
 
     private void broadcastSystemMessage(String lobbyCode, String sender, String content) {

@@ -966,4 +966,15 @@ public final class RedisKeys {
     public static String gameSessionNextRoundLockKey(String lobbyCode, int roundNo) {
         return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_lock";
     }
+
+    /**
+     * 로비 내 인게임 연결 끊김 사용자의 재접속 유예 고유 토큰 키를 반환합니다.
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return "lobby:{code}:disconnect_token:{userIdentifier}"
+     */
+    public static String lobbyUserDisconnectTokenKey(String code, String userIdentifier) {
+        return LOBBY_PREFIX + code + ":disconnect_token:" + userIdentifier;
+    }
 }

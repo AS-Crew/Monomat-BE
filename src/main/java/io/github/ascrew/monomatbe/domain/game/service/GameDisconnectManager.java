@@ -15,8 +15,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -30,6 +32,18 @@ import java.util.concurrent.ScheduledFuture;
 @Slf4j
 @Component
 public class GameDisconnectManager {
+
+    private static final DefaultRedisScript<Long> COMPARE_AND_DELETE_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+            "    redis.call('del', KEYS[1]) " +
+            "    redis.call('zrem', KEYS[2], ARGV[2]) " +
+            "    return 1 " +
+            "else " +
+            "    redis.call('zrem', KEYS[2], ARGV[2]) " +
+            "    return 0 " +
+            "end",
+            Long.class
+    );
 
     private final TaskScheduler taskScheduler;
     private final LobbyPlayerNicknameResolver nicknameResolver;
@@ -70,9 +84,15 @@ public class GameDisconnectManager {
 
         log.info("[GameDisconnectManager] 인게임 이탈 감지 - 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
 
-        // 1. 기존 대기 작업이 있다면 취소 및 Redis 토큰 제거
+        // 1. 기존 대기 작업이 있다면 취소 및 Redis 토큰 제거 (ZSET에서도 삭제)
         String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
+        String oldTokenId = stringRedisTemplate.opsForValue().get(tokenKey);
+        if (oldTokenId != null) {
+            String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+            stringRedisTemplate.opsForZSet().remove(zsetKey, lobbyCode + ":" + userIdentifier + ":" + oldTokenId);
+        }
         stringRedisTemplate.delete(tokenKey);
+
         ScheduledFuture<?> existing = disconnectTasks.remove(key);
         if (existing != null) {
             existing.cancel(false);
@@ -86,7 +106,13 @@ public class GameDisconnectManager {
         String tokenId = java.util.UUID.randomUUID().toString();
         stringRedisTemplate.opsForValue().set(tokenKey, tokenId, disconnectGracePeriod.plusSeconds(10));
 
-        // 4. 유예 기간 후 영구 퇴장 처리 스케줄링
+        // 4. Redis ZSET에 유예 만료 시간 저장 (score = expireAtMillis)
+        long expireAtMillis = System.currentTimeMillis() + disconnectGracePeriod.toMillis();
+        String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+        String zsetMember = lobbyCode + ":" + userIdentifier + ":" + tokenId;
+        stringRedisTemplate.opsForZSet().add(zsetKey, zsetMember, expireAtMillis);
+
+        // 5. 유예 기간 후 영구 퇴장 처리 스케줄링 (로컬 최적화)
         ScheduledFuture<?> future = taskScheduler.schedule(
                 () -> executePermanentLeave(lobbyCode, userIdentifier, tokenId),
                 Instant.now().plus(disconnectGracePeriod)
@@ -102,18 +128,26 @@ public class GameDisconnectManager {
     public void cancelDisconnectTask(String lobbyCode, String userIdentifier) {
         String key = getTaskKey(lobbyCode, userIdentifier);
         
-        // Redis 토큰 제거
+        // Redis 토큰 조회 후 토큰 및 ZSET에서 제거
         String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
-        stringRedisTemplate.delete(tokenKey);
+        String tokenId = stringRedisTemplate.opsForValue().get(tokenKey);
+        if (tokenId != null) {
+            String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+            stringRedisTemplate.opsForZSet().remove(zsetKey, lobbyCode + ":" + userIdentifier + ":" + tokenId);
+            stringRedisTemplate.delete(tokenKey);
 
-        ScheduledFuture<?> future = disconnectTasks.remove(key);
-        if (future != null) {
-            future.cancel(false);
-            log.info("[GameDisconnectManager] 인게임 복귀 완료 - 타이머 취소. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+            log.info("[GameDisconnectManager] 인게임 복귀 완료 - Redis 토큰 및 ZSET 제거. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
 
             // 복귀 안내 시스템 메시지 브로드캐스트
             String nickname = resolveNickname(userIdentifier);
             broadcastSystemMessage(lobbyCode, userIdentifier, String.format("%s님이 복귀하셨습니다.", nickname));
+        }
+
+        // 로컬 타이머 취소 (자신에게 등록되어 있다면)
+        ScheduledFuture<?> future = disconnectTasks.remove(key);
+        if (future != null) {
+            future.cancel(false);
+            log.info("[GameDisconnectManager] 인게임 복귀 완료 - 로컬 타이머 취소. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
         }
     }
 
@@ -126,6 +160,12 @@ public class GameDisconnectManager {
                 if (key.startsWith(lobbyCode + ":")) {
                     String userIdentifier = key.substring(lobbyCode.length() + 1);
                     String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
+                    
+                    String tokenId = stringRedisTemplate.opsForValue().get(tokenKey);
+                    if (tokenId != null) {
+                        String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+                        stringRedisTemplate.opsForZSet().remove(zsetKey, lobbyCode + ":" + userIdentifier + ":" + tokenId);
+                    }
                     stringRedisTemplate.delete(tokenKey);
 
                     ScheduledFuture<?> future = disconnectTasks.get(key);
@@ -140,27 +180,73 @@ public class GameDisconnectManager {
     }
 
     private void executePermanentLeave(String lobbyCode, String userIdentifier, String tokenId) {
-        String key = getTaskKey(lobbyCode, userIdentifier);
+        String zsetMember = lobbyCode + ":" + userIdentifier + ":" + tokenId;
+        executeLeaveIfTokenMatches(lobbyCode, userIdentifier, tokenId, zsetMember);
+    }
+
+    private boolean executeLeaveIfTokenMatches(String lobbyCode, String userIdentifier, String tokenId, String zsetMember) {
         String tokenKey = RedisKeys.lobbyUserDisconnectTokenKey(lobbyCode, userIdentifier);
+        String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+
+        Long result = stringRedisTemplate.execute(
+                COMPARE_AND_DELETE_SCRIPT,
+                java.util.List.of(tokenKey, zsetKey),
+                tokenId,
+                zsetMember
+        );
+
+        if (Long.valueOf(1L).equals(result)) {
+            // 이 인스턴스가 락을 획득하고 삭제를 성공함 -> 영구 퇴장 처리 실행
+            log.info("[GameDisconnectManager] 인게임 재접속 제한 시간 초과 - 영구 퇴장 처리 실행 (Redis 검증 완료). 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
+            
+            // 로컬 스케줄 작업이 있다면 취소 및 제거
+            String key = getTaskKey(lobbyCode, userIdentifier);
+            ScheduledFuture<?> future = disconnectTasks.remove(key);
+            if (future != null) {
+                future.cancel(false);
+            }
+
+            // 1. 퇴장 처리 이벤트 발행 (LobbyLeaveEventHandler가 퇴장 Lua 실행 및 방장 위임/폭파 처리 담당)
+            eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
+
+            // 2. 퇴장 안내 메시지 브로드캐스트 (LEAVE 타입) - 퇴장 처리가 안전하게 끝난 뒤 순차 전송
+            broadcastLeaveMessage(lobbyCode, userIdentifier);
+            return true;
+        }
+        return false;
+    }
+
+    @Scheduled(fixedDelay = 1000)
+    public void processExpiredDisconnects() {
+        String zsetKey = RedisKeys.gameDisconnectPendingZsetKey();
+        long now = System.currentTimeMillis();
         
-        // Redis에서 활성 토큰을 조회하여 현재 스케줄 작업이 유효한지 검증
-        String activeToken = stringRedisTemplate.opsForValue().get(tokenKey);
-        if (activeToken == null || !activeToken.equals(tokenId)) {
-            log.info("[GameDisconnectManager] 만료된 이탈 타이머 실행 무시 - 로비: {}, 식별자: {}, 토큰: {}", lobbyCode, userIdentifier, tokenId);
+        java.util.Set<String> expiredMembers = stringRedisTemplate.opsForZSet().rangeByScore(zsetKey, 0, now);
+        if (expiredMembers == null || expiredMembers.isEmpty()) {
             return;
         }
 
-        // 토큰이 일치하면 제거
-        stringRedisTemplate.delete(tokenKey);
-        disconnectTasks.remove(key);
+        for (String member : expiredMembers) {
+            try {
+                String[] parts = member.split(":");
+                if (parts.length < 3) {
+                    stringRedisTemplate.opsForZSet().remove(zsetKey, member);
+                    continue;
+                }
+                
+                String tokenId = parts[parts.length - 1];
+                String userIdentifier = parts[parts.length - 2];
+                StringBuilder lobbyCodeBuilder = new StringBuilder(parts[0]);
+                for (int i = 1; i < parts.length - 2; i++) {
+                    lobbyCodeBuilder.append(":").append(parts[i]);
+                }
+                String lobbyCode = lobbyCodeBuilder.toString();
 
-        log.info("[GameDisconnectManager] 인게임 재접속 제한 시간 초과 - 영구 퇴장 처리 실행. 로비: {}, 식별자: {}", lobbyCode, userIdentifier);
-
-        // 1. 퇴장 처리 이벤트 발행 (LobbyLeaveEventHandler가 퇴장 Lua 실행 및 방장 위임/폭파 처리 담당)
-        eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
-
-        // 2. 퇴장 안내 메시지 브로드캐스트 (LEAVE 타입) - 퇴장 처리가 안전하게 끝난 뒤 순차 전송
-        broadcastLeaveMessage(lobbyCode, userIdentifier);
+                executeLeaveIfTokenMatches(lobbyCode, userIdentifier, tokenId, member);
+            } catch (Exception e) {
+                log.error("[GameDisconnectManager] 만료된 이탈 멤버 처리 중 오류 발생 - 멤버: {}", member, e);
+            }
+        }
     }
 
     private void broadcastSystemMessage(String lobbyCode, String sender, String content) {

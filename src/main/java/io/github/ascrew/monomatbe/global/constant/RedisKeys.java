@@ -977,4 +977,13 @@ public final class RedisKeys {
     public static String lobbyUserDisconnectTokenKey(String code, String userIdentifier) {
         return LOBBY_PREFIX + code + ":disconnect_token:" + userIdentifier;
     }
+
+    /**
+     * 로비 내 인게임 연결 끊김 사용자의 재접속 유예 대기 ZSET 키를 반환합니다.
+     *
+     * @return "game:disconnect:pending"
+     */
+    public static String gameDisconnectPendingZsetKey() {
+        return "game:disconnect:pending";
+    }
 }

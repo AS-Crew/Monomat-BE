@@ -5,6 +5,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -38,6 +39,7 @@ public class LobbyLuaScriptExecutor {
     private final RedisScript<String> kickLobbyScript;
     private final RedisScript<String> startLobbyScript;
     private final RedisScript<String> compensateLobbyMapScript;
+    private final RedisScript<String> reapLobbyScript;
 
     public LobbyLuaScriptExecutor(
             StringRedisTemplate redisTemplate,
@@ -45,7 +47,8 @@ public class LobbyLuaScriptExecutor {
             @Qualifier("createLobbyScript") RedisScript<String> createLobbyScript,
             @Qualifier("kickLobbyScript") RedisScript<String> kickLobbyScript,
             @Qualifier("startLobbyScript") RedisScript<String> startLobbyScript,
-            @Qualifier("compensateLobbyMapScript") RedisScript<String> compensateLobbyMapScript
+            @Qualifier("compensateLobbyMapScript") RedisScript<String> compensateLobbyMapScript,
+            @Qualifier("reapLobbyScript") RedisScript<String> reapLobbyScript
     ) {
         this.redisTemplate = redisTemplate;
         this.leaveLobbyScript = leaveLobbyScript;
@@ -53,6 +56,7 @@ public class LobbyLuaScriptExecutor {
         this.kickLobbyScript = kickLobbyScript;
         this.startLobbyScript = startLobbyScript;
         this.compensateLobbyMapScript = compensateLobbyMapScript;
+        this.reapLobbyScript = reapLobbyScript;
     }
 
     /**
@@ -65,6 +69,7 @@ public class LobbyLuaScriptExecutor {
      * KEYS[4] = lobby:public:latest
      * KEYS[5] = lobby:public:most_players
      * KEYS[6] = lobby:public:most_available
+     * KEYS[7] = lobby:all
      *
      * [ARGV 계약]
      * ARGV[1]  = host userIdentifier
@@ -96,7 +101,8 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.LOBBY_PUBLIC,
                 RedisKeys.LOBBY_PUBLIC_LATEST,
                 RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
-                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
+                RedisKeys.LOBBY_ALL
         );
 
         String lockTtlMs = String.valueOf(LobbyDefaults.INVITE_CODE_LOCK_TTL.toMillis());
@@ -134,6 +140,8 @@ public class LobbyLuaScriptExecutor {
      * KEYS[6] = lobby:public:latest
      * KEYS[7] = lobby:public:most_players
      * KEYS[8] = lobby:public:most_available
+     * KEYS[9] = lobby:all
+     * KEYS[10] = lobby:{code}:ready
      *
      * [ARGV 계약]
      * ARGV[1] = userIdentifier
@@ -151,7 +159,9 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.LOBBY_PUBLIC,
                 RedisKeys.LOBBY_PUBLIC_LATEST,
                 RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
-                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
+                RedisKeys.LOBBY_ALL,
+                RedisKeys.lobbyReadyKey(code)
         );
 
         return redisTemplate.execute(
@@ -159,6 +169,58 @@ public class LobbyLuaScriptExecutor {
                 keys,
                 userIdentifier,
                 code
+        );
+    }
+
+    /**
+     * reap_lobby.lua를 실행하여 빈 로비(활성 세션 0)를 원자적으로 폭파한다.
+     *
+     * [KEYS 계약]
+     * KEYS[1]  = lobby:{code}
+     * KEYS[2]  = lobby:{code}:participants
+     * KEYS[3]  = lobby:{code}:order
+     * KEYS[4]  = lobby:{code}:kicked
+     * KEYS[5]  = lobby:{code}:ready
+     * KEYS[6]  = lobby:all
+     * KEYS[7]  = lobby:public
+     * KEYS[8]  = lobby:public:latest
+     * KEYS[9]  = lobby:public:most_players
+     * KEYS[10] = lobby:public:most_available
+     *
+     * [ARGV 계약]
+     * ARGV[1] = lobbyCode
+     * ARGV[2] = graceMillis (생성 직후 보호 기간)
+     * ARGV[3] = lobbyUserSessionPrefix ("lobby:{code}:user_session:")
+     * ARGV[4] = wsConnectionPrefix ("ws:connection:")
+     * ARGV[5] = lobbyField (ws:connection Hash의 lobbyCode 필드명)
+     *
+     * @param code        대상 로비 코드
+     * @param graceMillis 생성 직후 폭파를 보류할 grace 기간(ms)
+     * @return reap_lobby.lua 반환 문자열 ("REAPED" | "ALIVE" | "TOO_YOUNG" | "STALE_INDEX")
+     */
+    public String executeReapLobby(String code, long graceMillis) {
+
+        List<String> keys = List.of(
+                RedisKeys.lobbyKey(code),
+                RedisKeys.lobbyParticipantsKey(code),
+                RedisKeys.lobbyOrderKey(code),
+                RedisKeys.lobbyKickedKey(code),
+                RedisKeys.lobbyReadyKey(code),
+                RedisKeys.LOBBY_ALL,
+                RedisKeys.LOBBY_PUBLIC,
+                RedisKeys.LOBBY_PUBLIC_LATEST,
+                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+        );
+
+        return redisTemplate.execute(
+                reapLobbyScript,
+                keys,
+                code,
+                String.valueOf(graceMillis),
+                RedisKeys.lobbyUserSessionKeyPrefix(code),
+                RedisKeys.wsConnectionKeyPrefix(),
+                WebSocketHeaders.SESSION_LOBBY_CODE
         );
     }
 

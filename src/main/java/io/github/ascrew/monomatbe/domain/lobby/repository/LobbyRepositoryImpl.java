@@ -4,6 +4,7 @@ import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
+import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
@@ -389,5 +390,22 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public List<String> getPublicLobbyCodesForCleanup(int limit) {
     return lobbyRedisQueryRepository.getPublicLobbyCodesForCleanup(limit);
+  }
+
+  @Override
+  public List<String> getAllLobbyCodesForReaping(int limit) {
+    return lobbyRedisQueryRepository.getAllLobbyCodesForReaping(limit);
+  }
+
+  @Override
+  public ReapLobbyResult reapEmptyLobby(String code, long graceMillis) {
+    try {
+      String result = lobbyLuaScriptExecutor.executeReapLobby(code, graceMillis);
+      return ReapLobbyResult.from(result);
+
+    } catch (Exception e) {
+      log.error("빈 로비 reaper Lua 실행 중 예외 발생 - code: {}", code, e);
+      return ReapLobbyResult.ERROR;
+    }
   }
 }

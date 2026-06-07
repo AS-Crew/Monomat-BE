@@ -22,6 +22,8 @@ local publicListKey = KEYS[5]                 -- 전역 공개 로비 목록 (Se
 local publicLatestIndexKey = KEYS[6]          -- 공개 로비 최신순 정렬 인덱스 (ZSET)
 local publicMostPlayersIndexKey = KEYS[7]     -- 공개 로비 현재 인원 많은 순 정렬 인덱스 (ZSET)
 local publicMostAvailableIndexKey = KEYS[8]   -- 공개 로비 빈자리 많은 순 정렬 인덱스 (ZSET)
+local lobbyAllKey = KEYS[9]                   -- 전체 로비 인덱스 (Set, 공개·비공개 포함)
+local readyKey = KEYS[10]                     -- 로비 준비 완료 명단 (Set)
 
 local userId = ARGV[1]                        -- 퇴장하려는 유저 ID
 local lobbyCode = ARGV[2]                     -- 퇴장하려는 로비 코드
@@ -32,13 +34,15 @@ local FIELD_CURRENT_PLAYERS = 'current_players'
 local FIELD_MAX_PLAYERS = 'max_players'
 local FIELD_IS_PRIVATE = 'is_private'
 
--- 공개 로비 인덱스에서 현재 로비를 제거한다.
--- 로비 폭파 또는 Hash 삭제 시 모든 공개 인덱스에서 함께 제거해야 stale index가 남지 않는다.
+-- 공개 로비 인덱스와 전체 로비 인덱스에서 현재 로비를 제거한다.
+-- 로비 폭파 또는 Hash 삭제 시 모든 인덱스에서 함께 제거해야 stale index가 남지 않는다.
+-- lobby:all은 reaper 스케줄러의 전체 로비 열거 대상이므로 폭파 시 반드시 함께 제거한다.
 local function removePublicIndexes()
     redis.call('SREM', publicListKey, lobbyCode)
     redis.call('ZREM', publicLatestIndexKey, lobbyCode)
     redis.call('ZREM', publicMostPlayersIndexKey, lobbyCode)
     redis.call('ZREM', publicMostAvailableIndexKey, lobbyCode)
+    redis.call('SREM', lobbyAllKey, lobbyCode)
 end
 
 -- current_players 캐시와 인원 기준 공개 정렬 인덱스를 갱신한다.
@@ -86,7 +90,7 @@ local remainCount = redis.call('SCARD', participantsKey)
 
 if remainCount == 0 then
     -- [Case A] 남은 인원이 없으면 로비를 폭파한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
+    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
     removePublicIndexes()
     return "DESTROYED"
 end
@@ -125,7 +129,7 @@ if currentHost == userId then
 
     -- 이론상 remainCount > 0이면 여기로 오면 안 된다.
     -- 다만 Redis 자료구조 불일치 상황에서는 안전하게 로비를 폭파하고 모든 공개 인덱스를 제거한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
+    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
     removePublicIndexes()
     return "DESTROYED"
 end

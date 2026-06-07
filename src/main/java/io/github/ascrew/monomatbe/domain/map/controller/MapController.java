@@ -1,6 +1,8 @@
 package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
@@ -91,6 +93,20 @@ public class MapController {
             @AuthenticationPrincipal CustomPrincipal principal
     ) {
         return ResponseEntity.status(HttpStatus.CREATED).body(mapService.createMap(request, principal));
+    }
+
+    @Operation(
+            summary = "맵 생성 일괄 API",
+            description = "맵 기본 정보와 문제 목록을 하나의 트랜잭션으로 생성합니다. 정식 회원(REGISTERED)만 생성 가능합니다."
+    )
+    @PostMapping("/with-items")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<CreateMapWithItemsResponse> createMapWithItems(
+            @Valid @RequestBody CreateMapWithItemsRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(mapManageService.createMapWithItems(request, principal));
     }
 
     @Operation(summary = "맵 수정", description = "맵 소유자만 수정 가능합니다.")

@@ -17,6 +17,7 @@ package io.github.ascrew.monomatbe.global.config;
 import io.github.ascrew.monomatbe.global.websocket.CustomStompErrorHandler;
 import io.github.ascrew.monomatbe.global.websocket.StompChannelInterceptor;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
@@ -34,11 +35,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final CustomStompErrorHandler customStompErrorHandler;
     private final StompChannelInterceptor stompChannelInterceptor;
 
+    // CORS와 동일한 출처 정책 사용 (monomat.cors.allowed-origins = ${CORS_ALLOWED_ORIGINS})
+    @Value("${monomat.cors.allowed-origins}")
+    private String[] allowedOrigins;
+
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry
                 .addEndpoint("/ws") //최초로 웹소켓 연결을 하기위해 url /ws 지정
-                .setAllowedOriginPatterns("*") //모든 도메인에서 접속을 허용
+                .setAllowedOriginPatterns(allowedOrigins) //허용된 프론트엔드 출처에서만 접속 허용
                 .withSockJS(); //웹소켓 연결 실패시 일반 HTTP통신으로 연결
 
         registry.setErrorHandler(customStompErrorHandler);

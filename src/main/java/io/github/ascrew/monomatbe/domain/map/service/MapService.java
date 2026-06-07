@@ -5,15 +5,14 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
-import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapPageResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.MapSummaryResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapSpecification;
-import org.springframework.data.jpa.domain.Specification;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +21,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -32,6 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 
 @Slf4j
 @Service
@@ -44,8 +45,10 @@ public class MapService {
 
     private static final String ERROR_INVALID_PRINCIPAL = "유효하지 않은 인증 정보입니다. 다시 로그인해주세요.";
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵을 생성할 수 있습니다.";
+    private static final String ERROR_MY_MAP_REGISTERED_ONLY = "정식 회원만 본인 맵을 조회할 수 있습니다.";
     private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 수정/삭제할 수 있습니다.";
+    private static final String ERROR_MAP_READ_FORBIDDEN = "본인 소유의 맵만 조회할 수 있습니다.";
     private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
@@ -71,6 +74,21 @@ public class MapService {
         this.jsonMapper = jsonMapper;
     }
 
+    @Transactional(readOnly = true)
+    public MapDetailResponse getMyMap(Long mapId, CustomPrincipal principal) {
+        validateMyMapReadablePrincipal(principal);
+
+        QuizMap quizMap = quizMapJpaRepository.findByIdAndIsDeletedFalse(mapId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        ERROR_MAP_NOT_FOUND
+                ));
+
+        validateReadOwnership(quizMap, principal);
+
+        return toDetailResponse(quizMap);
+    }
+
     // 공개된 맵 목록을 검색 조건과 함께 페이징하여 조회합니다.
     // keyword 없는 경우에만 Redis 캐싱을 적용합니다 (keyword 검색은 무한 조합으로 캐시 효율이 낮음).
     @Transactional(readOnly = true)
@@ -80,10 +98,7 @@ public class MapService {
         int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
         int normalizedSize = size == null || size <= 0 ? DEFAULT_SIZE : Math.min(size, MAX_SIZE);
         MapSortType normalizedSort = sort == null ? MapSortType.NEWEST : sort;
-
-        String normalizedKeyword = (keyword == null || keyword.isBlank())
-                ? null
-                : keyword.trim().toLowerCase();
+        String normalizedKeyword = normalizeKeyword(keyword);
 
         if (normalizedKeyword != null) {
             return queryPublicMaps(normalizedKeyword, category, normalizedPage, normalizedSize, normalizedSort);
@@ -151,22 +166,39 @@ public class MapService {
                 .build();
     }
 
-    // 로그인한 사용자의 맵 목록(공개/비공개 모두, 삭제 제외)을 페이징하여 조회합니다.
+    // 로그인한 사용자의 맵 목록(공개/비공개/공개 대기 모두, 삭제 제외)을 페이징하여 조회합니다.
     // 개인 데이터이므로 Redis 캐시를 적용하지 않습니다.
     @Transactional(readOnly = true)
     public MapPageResponse getMyMaps(Integer page, Integer size, CustomPrincipal principal) {
+        return getMyMaps(page, size, null, null, null, principal);
+    }
+
+    @Transactional(readOnly = true)
+    public MapPageResponse getMyMaps(
+            Integer page,
+            Integer size,
+            String keyword,
+            String rawCategory,
+            MapSortType sort,
+            CustomPrincipal principal
+    ) {
         validatePrincipal(principal);
 
         int normalizedPage = page == null || page < 0 ? DEFAULT_PAGE : page;
         int normalizedSize = size == null || size <= 0 ? DEFAULT_SIZE : Math.min(size, MAX_SIZE);
+        MapSortType normalizedSort = sort == null ? MapSortType.NEWEST : sort;
+        String normalizedKeyword = normalizeKeyword(keyword);
+        MapCategory category = parseCategory(rawCategory);
 
-        Specification<QuizMap> spec =
-                QuizMapSpecification.ownedByAndNotDeleted(principal.userId());
+        Specification<QuizMap> spec = Specification
+                .where(QuizMapSpecification.ownedByAndNotDeleted(principal.userId()))
+                .and(QuizMapSpecification.withKeywordIncludingCategory(normalizedKeyword))
+                .and(QuizMapSpecification.withCategory(category));
 
         Pageable pageable = PageRequest.of(
                 normalizedPage,
                 normalizedSize,
-                Sort.by(Sort.Direction.DESC, "updatedAt")
+                toSort(normalizedSort)
         );
 
         Page<QuizMap> pageResult = quizMapJpaRepository.findAll(spec, pageable);
@@ -326,6 +358,49 @@ public class MapService {
         }
     }
 
+    private String normalizeKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+
+        return keyword.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private MapCategory parseCategory(String rawCategory) {
+        if (rawCategory == null || rawCategory.isBlank()) {
+            return null;
+        }
+
+        try {
+            return MapCategory.from(rawCategory);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "지원하지 않는 category입니다: " + rawCategory
+            );
+        }
+    }
+
+    private void validateMyMapReadablePrincipal(CustomPrincipal principal) {
+        validatePrincipal(principal);
+
+        if (principal.userType() != UserType.REGISTERED) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_MY_MAP_REGISTERED_ONLY
+            );
+        }
+    }
+
+    private void validateReadOwnership(QuizMap quizMap, CustomPrincipal principal) {
+        if (!quizMap.getOwner().getId().equals(principal.userId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    ERROR_MAP_READ_FORBIDDEN
+            );
+        }
+    }
+
     private void validateOwnership(QuizMap quizMap, CustomPrincipal principal) {
         if (!quizMap.getOwner().getId().equals(principal.userId())) {
             throw new ResponseStatusException(
@@ -370,16 +445,16 @@ public class MapService {
         try {
             redisTemplate.delete(key);
         } catch (Exception e) {
-            log.warn("손상 캐시 삭제 실패 - key: {}", key, e);
+            log.warn("손상 캐시 삭제 실패 - key: {}", key);
         }
     }
 
     private Sort toSort(MapSortType sort) {
         return switch (sort) {
-            case NEWEST     -> Sort.by(Sort.Direction.DESC, "updatedAt");
-            case OLDEST     -> Sort.by(Sort.Direction.ASC,  "updatedAt");
+            case NEWEST -> Sort.by(Sort.Direction.DESC, "updatedAt");
+            case OLDEST -> Sort.by(Sort.Direction.ASC, "updatedAt");
             case MOST_SONGS -> Sort.by(Sort.Direction.DESC, "numOfSong");
-            case TITLE_ASC  -> Sort.by(Sort.Direction.ASC,  "title");
+            case TITLE_ASC -> Sort.by(Sort.Direction.ASC, "title");
         };
     }
 
@@ -395,6 +470,7 @@ public class MapService {
                 .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
                 .ownerId(quizMap.getOwner().getId())
                 .ownerNickname(quizMap.getOwner().getUsername())
+                .playCount(quizMap.getPlayCount())
                 .build();
     }
 
@@ -410,6 +486,7 @@ public class MapService {
                 .totalPlayTime(quizMap.getTotalPlayTime())
                 .isPublic(Boolean.TRUE.equals(quizMap.getIsPublic()))
                 .pendingPublic(Boolean.TRUE.equals(quizMap.getPendingPublic()))
+                .playCount(quizMap.getPlayCount())
                 .createdAt(quizMap.getCreatedAt())
                 .updatedAt(quizMap.getUpdatedAt())
                 .build();

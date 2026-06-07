@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.game.config.GameSessionProperties;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
@@ -15,7 +16,10 @@ import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.MapItemJpaRepository;
+import io.github.ascrew.monomatbe.domain.map.service.MapPlayCountService;
 import io.github.ascrew.monomatbe.global.constant.GameEventTypes;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,15 +31,18 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,24 +51,36 @@ class GameSessionCreateServiceTest {
 
     @Mock
     private GameSessionJpaRepository gameSessionJpaRepository;
+
     @Mock
     private GameSessionPlayerJpaRepository gameSessionPlayerJpaRepository;
+
     @Mock
     private MapItemJpaRepository mapItemJpaRepository;
+
     @Mock
     private LobbyRepository lobbyRepository;
+
     @Mock
     private GameParticipantResolver gameParticipantResolver;
+
     @Mock
     private StringRedisTemplate redisTemplate;
+
     @Mock
     private RedisScript<String> initGameSessionScript;
+
     @Mock
     private JsonMapper jsonMapper;
+
     @Mock
     private GameSessionCleanupService gameSessionCleanupService;
+
     @Mock
-    private io.github.ascrew.monomatbe.domain.game.config.GameSessionProperties gameSessionProperties;
+    private GameSessionProperties gameSessionProperties;
+
+    @Mock
+    private MapPlayCountService mapPlayCountService;
 
     @InjectMocks
     private GameSessionCreateService gameSessionCreateService;
@@ -88,7 +107,10 @@ class GameSessionCreateServiceTest {
                 .status(LobbyStatus.PLAYING)
                 .build();
 
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
+        QuizMap quizMap = QuizMap.builder()
+                .id(1L)
+                .numOfSong(1)
+                .build();
 
         MapItem mapItem = MapItem.builder()
                 .map(quizMap)
@@ -103,15 +125,20 @@ class GameSessionCreateServiceTest {
                 .hint("힌트")
                 .build();
 
-        User user = User.builder().id(1L).username("uId").userType(UserType.REGISTERED).build();
+        User user = User.builder()
+                .id(1L)
+                .username("uId")
+                .userType(UserType.REGISTERED)
+                .build();
 
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
                 .thenReturn(List.of(mapItem));
+        when(gameSessionProperties.getRedisTtlSeconds()).thenReturn(7200L);
         when(lobbyRepository.getParticipantIdentifiers("ABC1234"))
                 .thenReturn(List.of("uId"));
         when(gameParticipantResolver.resolveUsers(List.of("uId")))
                 .thenReturn(List.of(user));
-        
+
         try {
             when(jsonMapper.readValue(eq("[\"정답\"]"), any(tools.jackson.core.type.TypeReference.class)))
                     .thenReturn(List.of("정답"));
@@ -120,7 +147,7 @@ class GameSessionCreateServiceTest {
         } catch (Exception e) {
             // ignore for mock
         }
-        
+
         when(redisTemplate.execute(
                 eq(initGameSessionScript),
                 any(List.class),
@@ -136,31 +163,28 @@ class GameSessionCreateServiceTest {
         RoundStartDto result = gameSessionCreateService.createGameSession(lobby, quizMap);
 
         // then
-        // 1. DB Session 생성 확인
         ArgumentCaptor<GameSession> sessionCaptor = ArgumentCaptor.forClass(GameSession.class);
         verify(gameSessionJpaRepository).save(sessionCaptor.capture());
         GameSession savedSession = sessionCaptor.getValue();
         assertThat(savedSession.getCurrentRoundNo()).isEqualTo(1);
         assertThat(savedSession.getTotalQuestionCount()).isEqualTo(1);
 
-        // 2. DB Player 생성 확인
         ArgumentCaptor<List<GameSessionPlayer>> playersCaptor = ArgumentCaptor.forClass(List.class);
         verify(gameSessionPlayerJpaRepository).saveAll(playersCaptor.capture());
         List<GameSessionPlayer> savedPlayers = playersCaptor.getValue();
         assertThat(savedPlayers).hasSize(1);
         assertThat(savedPlayers.get(0).getUser()).isEqualTo(user);
 
-        // 3. Payload 필드 검증 (정답 및 민감정보 미포함, 신규 필드 포함)
         assertThat(result.type()).isEqualTo(GameEventTypes.ROUND_READY);
         assertThat(result.videoId()).isEqualTo("vId");
         assertThat(result.youtubeUrl()).isEqualTo("https://youtube.com/vId");
         assertThat(result.startTime()).isEqualTo(10);
-        assertThat(result.endTime()).isEqualTo(40); // startTime(10) + timeLimitSeconds(30)
+        assertThat(result.endTime()).isEqualTo(40);
         assertThat(result.timeLimitSeconds()).isEqualTo(30);
         assertThat(result.roundNo()).isEqualTo(1);
         assertThat(result.serverStartedAt()).isGreaterThan(0L);
 
-        // title, artist, answer 같은 필드가 DTO에 아예 존재하지 않음을 코드 구조상(record 정의) 보장됨.
+        verify(mapPlayCountService).countOnce("ABC1234", 1L);
     }
 
     @Test
@@ -174,12 +198,25 @@ class GameSessionCreateServiceTest {
                 .timeLimitSeconds(30)
                 .status(LobbyStatus.PLAYING)
                 .build();
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
-        MapItem mapItem = MapItem.builder().map(quizMap).orderNum(1).videoId("vId").build();
 
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L)).thenReturn(List.of(mapItem));
-        when(lobbyRepository.getParticipantIdentifiers("ABC1234")).thenReturn(List.of("uId"));
-        when(gameParticipantResolver.resolveUsers(List.of("uId"))).thenReturn(List.of(User.builder().id(1L).build()));
+        QuizMap quizMap = QuizMap.builder()
+                .id(1L)
+                .numOfSong(1)
+                .build();
+
+        MapItem mapItem = MapItem.builder()
+                .map(quizMap)
+                .orderNum(1)
+                .videoId("vId")
+                .build();
+
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
+                .thenReturn(List.of(mapItem));
+        when(gameSessionProperties.getRedisTtlSeconds()).thenReturn(7200L);
+        when(lobbyRepository.getParticipantIdentifiers("ABC1234"))
+                .thenReturn(List.of("uId"));
+        when(gameParticipantResolver.resolveUsers(List.of("uId")))
+                .thenReturn(List.of(User.builder().id(1L).build()));
 
         when(redisTemplate.execute(
                 eq(initGameSessionScript),
@@ -196,6 +233,8 @@ class GameSessionCreateServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameSessionCreateService.createGameSession(lobby, quizMap))
                 .isInstanceOf(GameSessionAlreadyExistsException.class)
                 .hasMessage("게임 세션이 이미 존재합니다.");
+
+        verify(mapPlayCountService, never()).countOnce(anyString(), any());
     }
 
     @Test
@@ -203,19 +242,34 @@ class GameSessionCreateServiceTest {
     void createGameSession_blocksWhenActiveSessionNotStale() {
         // given
         GameLobby lobby = GameLobby.builder()
-                .inviteCode("ABC1234").mapId(1L).questionCount(1).timeLimitSeconds(30)
-                .status(LobbyStatus.PLAYING).build();
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
-        MapItem mapItem = MapItem.builder().map(quizMap).orderNum(1).videoId("vId").build();
+                .inviteCode("ABC1234")
+                .mapId(1L)
+                .questionCount(1)
+                .timeLimitSeconds(30)
+                .status(LobbyStatus.PLAYING)
+                .build();
 
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L)).thenReturn(List.of(mapItem));
+        QuizMap quizMap = QuizMap.builder()
+                .id(1L)
+                .numOfSong(1)
+                .build();
 
-        // 1분 전에 시작된 세션 + 임계값 30분 → 정체 아님 → 차단
+        MapItem mapItem = MapItem.builder()
+                .map(quizMap)
+                .orderNum(1)
+                .videoId("vId")
+                .build();
+
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
+                .thenReturn(List.of(mapItem));
+
         GameSession active = GameSession.builder()
-                .startedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1)).build();
-        when(gameSessionProperties.getStaleThreshold()).thenReturn(java.time.Duration.ofMinutes(30));
+                .startedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1))
+                .build();
+
+        when(gameSessionProperties.getStaleThreshold()).thenReturn(Duration.ofMinutes(30));
         when(gameSessionJpaRepository.findActiveSessionByLobbyCode("ABC1234"))
-                .thenReturn(java.util.Optional.of(active));
+                .thenReturn(Optional.of(active));
 
         // when & then
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> gameSessionCreateService.createGameSession(lobby, quizMap))
@@ -223,6 +277,7 @@ class GameSessionCreateServiceTest {
                 .hasMessage("이미 진행 중인 게임 세션이 있습니다.");
 
         assertThat(active.getStatus()).isNotEqualTo(GameSessionStatus.FINISHED);
+        verify(mapPlayCountService, never()).countOnce(anyString(), any());
     }
 
     @Test
@@ -230,43 +285,81 @@ class GameSessionCreateServiceTest {
     void createGameSession_recoversStaleActiveSession() {
         // given
         GameLobby lobby = GameLobby.builder()
-                .inviteCode("ABC1234").mapId(1L).questionCount(1).timeLimitSeconds(30)
-                .status(LobbyStatus.PLAYING).build();
-        QuizMap quizMap = QuizMap.builder().id(1L).numOfSong(1).build();
+                .inviteCode("ABC1234")
+                .mapId(1L)
+                .questionCount(1)
+                .timeLimitSeconds(30)
+                .status(LobbyStatus.PLAYING)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(1L)
+                .numOfSong(1)
+                .build();
+
         MapItem mapItem = MapItem.builder()
-                .map(quizMap).orderNum(1).videoId("vId").youtubeUrl("https://youtube.com/vId")
-                .startTime(10).endTime(20).title("t").artist("a").answers("[\"정답\"]").build();
-        User user = User.builder().id(1L).username("uId").userType(UserType.REGISTERED).build();
+                .map(quizMap)
+                .orderNum(1)
+                .videoId("vId")
+                .youtubeUrl("https://youtube.com/vId")
+                .startTime(10)
+                .endTime(20)
+                .title("t")
+                .artist("a")
+                .answers("[\"정답\"]")
+                .build();
 
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L)).thenReturn(List.of(mapItem));
+        User user = User.builder()
+                .id(1L)
+                .username("uId")
+                .userType(UserType.REGISTERED)
+                .build();
 
-        // 2시간 전에 시작된 세션 + 임계값 30분 → 정체 → 복구
+        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
+                .thenReturn(List.of(mapItem));
+
         GameSession stale = GameSession.builder()
-                .startedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2)).build();
-        when(gameSessionProperties.getStaleThreshold()).thenReturn(java.time.Duration.ofMinutes(30));
-        when(gameSessionJpaRepository.findActiveSessionByLobbyCode("ABC1234"))
-                .thenReturn(java.util.Optional.of(stale));
+                .startedAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(2))
+                .build();
 
-        when(lobbyRepository.getParticipantIdentifiers("ABC1234")).thenReturn(List.of("uId"));
-        when(gameParticipantResolver.resolveUsers(List.of("uId"))).thenReturn(List.of(user));
+        when(gameSessionProperties.getStaleThreshold()).thenReturn(Duration.ofMinutes(30));
+        when(gameSessionProperties.getRedisTtlSeconds()).thenReturn(7200L);
+        when(gameSessionJpaRepository.findActiveSessionByLobbyCode("ABC1234"))
+                .thenReturn(Optional.of(stale));
+
+        when(lobbyRepository.getParticipantIdentifiers("ABC1234"))
+                .thenReturn(List.of("uId"));
+        when(gameParticipantResolver.resolveUsers(List.of("uId")))
+                .thenReturn(List.of(user));
+
         try {
             when(jsonMapper.readValue(eq("[\"정답\"]"), any(tools.jackson.core.type.TypeReference.class)))
                     .thenReturn(List.of("정답"));
-            when(jsonMapper.writeValueAsString(any())).thenReturn("[\"정답\"]");
+            when(jsonMapper.writeValueAsString(any()))
+                    .thenReturn("[\"정답\"]");
         } catch (Exception e) {
             // ignore for mock
         }
-        when(redisTemplate.execute(eq(initGameSessionScript), any(List.class),
-                anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn("OK");
+
+        when(redisTemplate.execute(
+                eq(initGameSessionScript),
+                any(List.class),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString()
+        )).thenReturn("OK");
 
         // when
         RoundStartDto result = gameSessionCreateService.createGameSession(lobby, quizMap);
 
-        // then - 정체 세션은 FINISHED 처리되고 Redis 잔존 키 정리(deleteNow)가 호출되며, 새 게임 생성이 진행된다.
+        // then
         assertThat(stale.getStatus()).isEqualTo(GameSessionStatus.FINISHED);
         verify(gameSessionCleanupService).deleteNow("ABC1234");
         verify(gameSessionJpaRepository).save(any(GameSession.class));
+        verify(mapPlayCountService).countOnce("ABC1234", 1L);
         assertThat(result.roundNo()).isEqualTo(1);
     }
 }

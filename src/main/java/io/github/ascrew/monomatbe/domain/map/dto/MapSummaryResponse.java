@@ -14,6 +14,7 @@ public record MapSummaryResponse(
         boolean isPublic,
         boolean pendingPublic,
         Long ownerId,
-        String ownerNickname
+        String ownerNickname,
+        Long playCount
 ) {
 }

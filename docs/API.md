@@ -224,6 +224,397 @@ FE는 `204 No Content` 수신 후 다음 처리를 수행해야 합니다.
 
 ---
 
+## 맵 (Map)
+
+맵 API는 공개 맵 목록 조회, 내 맵 목록 조회, 내 맵 단건 조회, 공개 맵 상세 조회를 제공합니다.
+
+`playCount`는 해당 맵이 실제 게임 시작에 사용된 누적 횟수입니다.  
+로비 생성이나 맵 선택만으로는 증가하지 않으며, 선택된 맵으로 게임 세션 생성이 확정된 경우에만 증가합니다.
+
+### 공개 맵 목록 조회
+
+```http
+GET /api/maps?page=0&size=20&keyword=KPOP&category=KPOP&sort=NEWEST
+```
+
+공개 상태인 맵 목록을 페이징하여 조회합니다.
+
+#### Query Parameters
+
+| 필드 | 타입 | 필수 | 기본값 | 설명 |
+| --- | --- | ---: | ---: | --- |
+| `page` | number | X | 0 | 0-based 페이지 번호 |
+| `size` | number | X | 20 | 페이지 크기. 최대 100 |
+| `keyword` | string | X | null | 제목/설명 검색 키워드 |
+| `category` | string | X | null | 맵 카테고리 |
+| `sort` | string | X | `NEWEST` | 정렬 기준 |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "content": [
+    {
+      "mapId": 1,
+      "title": "K-POP 랜덤 퀴즈",
+      "description": "인기 K-POP 문제 모음",
+      "category": "K-POP",
+      "numOfSong": 10,
+      "totalPlayTime": 300,
+      "isPublic": true,
+      "pendingPublic": false,
+      "ownerId": 10,
+      "ownerNickname": "owner",
+      "playCount": 42
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 1,
+  "totalPages": 1,
+  "hasNext": false
+}
+```
+
+#### Response Fields - Map Summary
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `mapId` | number | 맵 고유 ID |
+| `title` | string | 맵 제목 |
+| `description` | string \| null | 맵 설명 |
+| `category` | string | 맵 카테고리 |
+| `numOfSong` | number | 맵에 등록된 곡/문제 수 |
+| `totalPlayTime` | number | 맵 전체 재생 시간(초). 플레이 횟수가 아님 |
+| `isPublic` | boolean | 공개 여부 |
+| `pendingPublic` | boolean | 공개 의도 보존 여부 |
+| `ownerId` | number | 맵 소유자 ID |
+| `ownerNickname` | string | 맵 소유자 닉네임 |
+| `playCount` | number | 맵이 실제 게임 시작에 사용된 누적 횟수 |
+
+---
+
+### 내 맵 목록 조회
+
+```http
+GET /api/maps/me?page=0&size=20&keyword=ost&category=OST&sort=NEWEST
+Authorization: Bearer {accessToken}
+```
+
+#### Query Parameters
+
+| 이름 | 타입 | 필수 | 기본값 | 설명 |
+| --- | --- | --- | --- | --- |
+| page | number | N | 0 | 페이지 번호 |
+| size | number | N | 20 | 페이지 크기 |
+| keyword | string | N | - | 내 맵 제목 검색어. 카테고리 값으로 해석 가능한 경우 카테고리도 검색 대상에 포함 |
+| category | string | N | - | 명시적 카테고리 필터 |
+| sort | string | N | NEWEST | 정렬 기준 |
+
+#### category 지원 값
+
+| 입력 예시 | 처리 결과 |
+| --- | --- |
+| K-POP, KPOP, kpop | K-POP |
+| J-POP, JPOP, jpop | J-POP |
+| POP, pop | POP |
+| OST, ost | OST |
+| 애니, ANIME, anime | 애니 |
+
+#### sort 지원 값
+
+| 값 | 설명 |
+| --- | --- |
+| NEWEST | 최신순 |
+| OLDEST | 오래된순 |
+| MOST_SONGS | 곡 수 많은 순 |
+| TITLE_ASC | 제목 오름차순 |
+
+#### 검색 조건
+
+```txt
+ownerId = 로그인 사용자 ID
+AND isDeleted = false
+AND keyword 조건
+AND category 조건
+```
+
+`keyword`와 `category`가 함께 들어오면 AND 조건으로 동작합니다.
+
+#### Response
+
+```json
+{
+  "content": [
+    {
+      "mapId": 1,
+      "title": "OST 모음",
+      "description": "내가 만든 OST 퀴즈",
+      "category": "OST",
+      "numOfSong": 10,
+      "totalPlayTime": 300,
+      "isPublic": false,
+      "pendingPublic": true,
+      "ownerId": 10,
+      "ownerNickname": "hyeon",
+      "playCount": 12
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 1,
+  "totalPages": 1,
+  "hasNext": false
+}
+```
+
+---
+
+### 내 맵 단건 조회
+
+```http
+GET /api/maps/me/{mapId}
+Authorization: Bearer {accessToken}
+```
+
+로그인한 정식 회원이 본인 소유의 공개/비공개/공개 대기 맵을 단건 조회합니다.
+
+공개 맵 상세 조회 API(`GET /api/maps/{mapId}`)와 달리 공개 여부를 조회 조건으로 사용하지 않습니다.
+단, 삭제된 맵은 조회되지 않습니다.
+
+#### Path Variables
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `mapId` | number | 조회할 내 맵 ID |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "id": 1,
+  "ownerId": 10,
+  "ownerNickname": "hyeon",
+  "title": "J-POP 퀴즈 대결",
+  "description": "J-POP 중심 퀴즈 맵",
+  "category": "J-POP",
+  "numOfSong": 10,
+  "totalPlayTime": 300,
+  "isPublic": false,
+  "pendingPublic": false,
+  "playCount": 0,
+  "createdAt": "2026-06-05T18:00:00",
+  "updatedAt": "2026-06-05T18:30:00"
+}
+```
+
+#### Response Fields
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | number | 맵 고유 ID |
+| `ownerId` | number | 맵 소유자 ID |
+| `ownerNickname` | string | 맵 소유자 닉네임 |
+| `title` | string | 맵 제목 |
+| `description` | string \| null | 맵 설명 |
+| `category` | string | 맵 카테고리 |
+| `numOfSong` | number | 맵에 등록된 곡/문제 수 |
+| `totalPlayTime` | number | 맵 전체 재생 시간 |
+| `isPublic` | boolean | 공개 여부 |
+| `pendingPublic` | boolean | 공개 의도 보존 여부 |
+| `playCount` | number | 맵이 실제 게임 시작에 사용된 누적 횟수 |
+| `createdAt` | string | 맵 생성 시각 |
+| `updatedAt` | string | 맵 수정 시각 |
+
+#### Error Response
+
+| HTTP Status | 상황 |
+| ---: | --- |
+| 401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
+| 403 | 정식 회원이 아닌 사용자 |
+| 403 | 본인 소유가 아닌 맵 조회 |
+| 404 | 존재하지 않는 맵 |
+| 404 | 삭제된 맵 |
+
+---
+
+### 맵 관리 일괄 저장
+
+맵 기본 정보와 문제 목록의 생성/수정/삭제/순서 변경을 하나의 트랜잭션으로 처리합니다.
+
+```http
+PUT /api/maps/{mapId}/manage
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+````
+
+#### Request
+
+> `items`는 변경된 문제 목록이 아니라 저장 후 활성 상태로 남아야 하는 전체 문제 목록입니다.
+> 기존 활성 문제는 `items[].id` 또는 `deletedItemIds` 중 하나에 반드시 포함되어야 합니다.
+> 신규 문제는 `id: null`로 전달합니다.
+> `items[].id`와 `deletedItemIds`는 중복될 수 없습니다.
+
+```json
+{
+  "title": "J-POP 퀴즈",
+  "description": "J-POP 중심 퀴즈 맵",
+  "category": "J-POP",
+  "isPublic": false,
+  "items": [
+    {
+      "id": 10,
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=example",
+      "startTime": 30,
+      "endTime": 60,
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15
+    },
+    {
+      "id": null,
+      "orderNum": 2,
+      "youtubeUrl": "https://www.youtube.com/watch?v=example2",
+      "startTime": 0,
+      "endTime": 30,
+      "answers": ["omg"],
+      "hint": "ㅇㅇㅈ",
+      "hintTime": 15
+    }
+  ],
+  "deletedItemIds": [11, 12]
+}
+```
+
+#### Response
+
+```json
+{
+  "map": {
+    "id": 1,
+    "ownerId": 1,
+    "ownerNickname": "nickname",
+    "title": "J-POP 퀴즈",
+    "description": "J-POP 중심 퀴즈 맵",
+    "category": "J-POP",
+    "numOfSong": 2,
+    "totalPlayTime": 60,
+    "isPublic": false,
+    "pendingPublic": false,
+    "playCount": 0,
+    "createdAt": "2026-06-06T12:00:00",
+    "updatedAt": "2026-06-06T12:10:00"
+  },
+  "items": [
+    {
+      "id": 10,
+      "mapId": 1,
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=example",
+      "videoId": "example",
+      "startTime": 30,
+      "endTime": 60,
+      "title": "YouTube title",
+      "artist": "YouTube author",
+      "thumbnailUrl": "https://...",
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15,
+      "createdAt": "2026-06-06T12:00:00",
+      "updatedAt": "2026-06-06T12:10:00"
+    }
+  ]
+}
+```
+
+#### Error
+
+| Status | Case              |
+| ------ | ----------------- |
+| 401    | 미인증               |
+| 403    | 정식 회원 아님          |
+| 403    | 본인 소유 맵 아님        |
+| 404    | 존재하지 않거나 삭제된 맵    |
+| 400    | 요청 값 검증 실패        |
+| 400    | YouTube URL 검증 실패 |
+| 409    | 공개 검증 실패          |
+| 409    | 순서 중복/동시성 충돌      |
+
+---
+
+### 공개 맵 상세 조회
+
+```http
+GET /api/maps/{mapId}
+```
+
+공개 상태인 맵의 상세 정보를 조회합니다.
+
+#### Path Variables
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `mapId` | number | 조회할 맵 ID |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "id": 1,
+  "ownerId": 10,
+  "ownerNickname": "owner",
+  "title": "K-POP 랜덤 퀴즈",
+  "description": "인기 K-POP 문제 모음",
+  "category": "K-POP",
+  "numOfSong": 10,
+  "totalPlayTime": 300,
+  "isPublic": true,
+  "pendingPublic": false,
+  "playCount": 42,
+  "createdAt": "2026-06-05T18:00:00",
+  "updatedAt": "2026-06-05T18:30:00"
+}
+```
+
+#### Response Fields
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | number | 맵 고유 ID |
+| `ownerId` | number | 맵 소유자 ID |
+| `ownerNickname` | string | 맵 소유자 닉네임 |
+| `title` | string | 맵 제목 |
+| `description` | string \| null | 맵 설명 |
+| `category` | string | 맵 카테고리 |
+| `numOfSong` | number | 맵에 등록된 곡/문제 수 |
+| `totalPlayTime` | number | 맵 전체 재생 시간(초). 플레이 횟수가 아님 |
+| `isPublic` | boolean | 공개 여부 |
+| `pendingPublic` | boolean | 공개 의도 보존 여부 |
+| `playCount` | number | 맵이 실제 게임 시작에 사용된 누적 횟수 |
+| `createdAt` | string | 맵 생성 시각. ISO-8601 LocalDateTime 형식 |
+| `updatedAt` | string | 맵 수정 시각. ISO-8601 LocalDateTime 형식 |
+
+#### Error Response
+
+| HTTP Status | 상황 |
+| ---: | --- |
+| 404 | 공개 맵을 찾을 수 없음 |
+
+---
+
 ## 로비 (Lobby)
 
 ### 로비 생성
@@ -361,6 +752,9 @@ Authorization: Bearer {accessToken}
 
 게임 도중 접속이 일시 중단(새로고침, 모바일 환경 백그라운드 전환 등)된 사용자가 현재 진행 중인 게임 세션 및 라운드 상태를 복구할 수 있도록 동영상 메타데이터 및 상태를 조회합니다.
 
+> [!NOTE]
+> 인게임 진행 중 플레이어가 이탈(WebSocket 연결 끊김)하면 **5초 동안 재접속 유예 기간(Grace Period)**이 부여됩니다. 이 유예 기간 내에 WebSocket을 통해 다시 로비를 구독하면 복귀 메시지가 브로드캐스트되고 게임에 정상 참여할 수 있으며, 5초를 초과하면 영구 퇴장 처리됩니다. 강퇴된 사용자는 재접속이 완전히 차단되어 403 Forbidden을 반환합니다.
+
 #### Success Response
 
 ```http
@@ -465,4 +859,3 @@ Content-Type: application/json
 | 403 | `강퇴된 로비의 게임 상태는 조회할 수 없습니다.` | 해당 로비에서 강퇴된 사용자가 조회를 시도함 |
 | 404 | `존재하지 않는 로비입니다.` | 존재하지 않는 로비 초대 코드 입력 |
 | 404 | `진행 중인 게임 세션이 없습니다.` | 해당 로비에 매핑된 활성화 상태의 게임 세션이 없음 |
-

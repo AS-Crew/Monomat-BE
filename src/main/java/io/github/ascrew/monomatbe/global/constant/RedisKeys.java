@@ -45,6 +45,9 @@ public final class RedisKeys {
     /** 로비별 최근 채팅 메시지 List 키 접미사 */
     private static final String RECENT_CHAT_MESSAGES_SUFFIX = ":chats:recent";
 
+    /** 로비별 맵 플레이 횟수 집계 완료 키 접미사 */
+    private static final String MAP_PLAY_COUNTED_SUFFIX = ":map-play-counted";
+
     /** 채팅 발신자 프로필 캐시 키 접두사 */
     private static final String CHAT_SENDER_PROFILE_PREFIX = "chat:sender-profile:";
 
@@ -360,6 +363,30 @@ public final class RedisKeys {
      */
     public static String lobbyRecentChatMessagesKey(String code) {
         return LOBBY_PREFIX + code + RECENT_CHAT_MESSAGES_SUFFIX;
+    }
+
+    /**
+     * 로비별 맵 플레이 횟수 집계 완료 키를 반환한다.
+     *
+     * 저장 구조:
+     * - Key   : lobby:{code}:map-play-counted
+     * - Type  : String
+     * - Value : mapId
+     * - TTL   : GameSessionProperties.redisTtl 설정값과 동일하게 유지한다.
+     *
+     * [사용 목적]
+     * 동일 로비에서 중복 시작 요청, 재시도, WebSocket 재연결 등으로
+     * 같은 맵의 playCount가 중복 증가하지 않도록 SETNX 기준 키로 사용한다.
+     *
+     * [주의]
+     * 이 키의 TTL은 게임 세션 Redis 키 TTL과 동일해야 한다.
+     * TTL 정책은 {@code monomat.game.session.redis-ttl} 설정을 기준으로 관리한다.
+     *
+     * @param code 로비 초대 코드
+     * @return 로비별 맵 플레이 횟수 집계 완료 Redis key
+     */
+    public static String lobbyMapPlayCountedKey(String code) {
+        return LOBBY_PREFIX + code + MAP_PLAY_COUNTED_SUFFIX;
     }
 
     /**
@@ -971,5 +998,25 @@ public final class RedisKeys {
      */
     public static String gameSessionNextRoundLockKey(String lobbyCode, int roundNo) {
         return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":next_lock";
+    }
+
+    /**
+     * 로비 내 인게임 연결 끊김 사용자의 재접속 유예 고유 토큰 키를 반환합니다.
+     *
+     * @param code 로비 초대 코드
+     * @param userIdentifier 사용자 식별자
+     * @return "lobby:{code}:disconnect_token:{userIdentifier}"
+     */
+    public static String lobbyUserDisconnectTokenKey(String code, String userIdentifier) {
+        return LOBBY_PREFIX + code + ":disconnect_token:" + userIdentifier;
+    }
+
+    /**
+     * 로비 내 인게임 연결 끊김 사용자의 재접속 유예 대기 ZSET 키를 반환합니다.
+     *
+     * @return "game:disconnect:pending"
+     */
+    public static String gameDisconnectPendingZsetKey() {
+        return "game:disconnect:pending";
     }
 }

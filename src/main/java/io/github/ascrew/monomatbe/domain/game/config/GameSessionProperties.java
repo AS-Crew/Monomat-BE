@@ -8,11 +8,12 @@ import org.springframework.validation.annotation.Validated;
 import java.time.Duration;
 
 /**
- * 게임 세션 정책 설정.
+ * 게임 세션 정책 설정
  *
  * 새 게임 시작 시 동일 로비에 미종료(active) 세션이 남아 있으면 기본적으로 차단하되,
  * 비정상 종료 등으로 정체된 세션은 복구(강제 종료 후 재시작 허용)해야 한다.
- * 정체 판별 임계 기간을 설정값으로 관리한다.
+ *
+ * active 세션 stale 판별 임계 기간과 Redis 게임 세션 TTL을 설정값으로 관리한다.
  */
 @Validated
 @Component
@@ -20,7 +21,7 @@ import java.time.Duration;
 public class GameSessionProperties {
 
     /**
-     * active 세션을 stale(정체)로 간주하는 임계 기간.
+     * active 세션을 stale(정체)로 간주하는 임계 기간
      *
      * {@code started_at}으로부터 이 기간이 지난 미종료 세션은 비정상 종료로 정체된 것으로 보고
      * 새 게임 시작 시 복구 대상으로 삼는다. 정상 게임 1판 최대 진행 시간보다 충분히 길게 둔다.
@@ -28,11 +29,38 @@ public class GameSessionProperties {
     @NotNull
     private Duration staleThreshold = Duration.ofMinutes(30);
 
+    /**
+     * 게임 세션 관련 Redis 키 TTL
+     *
+     * [적용 대상]
+     * - game:session:{code}
+     * - game:session:{code}:rounds
+     * - game:session:{code}:players
+     * - game:session:{code}:round:{roundNo}:data
+     * - lobby:{code}:map-play-counted
+     *
+     * 게임 세션 본체와 맵 플레이 횟수 중복 집계 방지 키의 수명을 동일하게 유지한다.
+     */
+    @NotNull
+    private Duration redisTtl = Duration.ofHours(2);
+
     public Duration getStaleThreshold() {
         return staleThreshold;
     }
 
     public void setStaleThreshold(Duration staleThreshold) {
         this.staleThreshold = staleThreshold;
+    }
+
+    public Duration getRedisTtl() {
+        return redisTtl;
+    }
+
+    public void setRedisTtl(Duration redisTtl) {
+        this.redisTtl = redisTtl;
+    }
+
+    public long getRedisTtlSeconds() {
+        return redisTtl.toSeconds();
     }
 }

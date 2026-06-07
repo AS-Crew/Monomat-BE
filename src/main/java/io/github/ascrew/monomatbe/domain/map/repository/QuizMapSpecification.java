@@ -4,7 +4,11 @@ import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import org.springframework.data.jpa.domain.Specification;
 
+import java.util.Locale;
+
 public class QuizMapSpecification {
+
+    private static final char LIKE_ESCAPE = '\\';
 
     private QuizMapSpecification() {}
 
@@ -29,9 +33,41 @@ public class QuizMapSpecification {
         if (keyword == null || keyword.isBlank()) {
             return (root, query, cb) -> null;
         }
-        String pattern = "%" + keyword.toLowerCase() + "%";
+
+        String pattern = toContainsLikePattern(keyword);
         return (root, query, cb) ->
-                cb.like(cb.lower(root.get("title")), pattern);
+                cb.like(cb.lower(root.get("title")), pattern, LIKE_ESCAPE);
+    }
+
+    /**
+     * title LIKE %keyword% OR category = parsedKeywordCategory
+     *
+     * <p>내 맵 목록 검색에서 사용한다.
+     * keyword가 "J-POP", "jpop", "애니", "ANIME" 등 카테고리로 해석 가능하면
+     * 제목 검색과 카테고리 검색을 함께 수행한다.
+     *
+     * <p>공개 맵 목록의 기존 검색 결과 변경을 피하기 위해 기존 withKeyword()는 유지한다.
+     */
+    public static Specification<QuizMap> withKeywordIncludingCategory(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return (root, query, cb) -> null;
+        }
+
+        String pattern = toContainsLikePattern(keyword);
+        MapCategory keywordCategory = tryParseCategory(keyword);
+
+        return (root, query, cb) -> {
+            var titlePredicate = cb.like(cb.lower(root.get("title")), pattern, LIKE_ESCAPE);
+
+            if (keywordCategory == null) {
+                return titlePredicate;
+            }
+
+            return cb.or(
+                    titlePredicate,
+                    cb.equal(root.get("category"), keywordCategory)
+            );
+        };
     }
 
     /** category = ? (null → no-op) */
@@ -39,6 +75,26 @@ public class QuizMapSpecification {
         if (category == null) {
             return (root, query, cb) -> null;
         }
+
         return (root, query, cb) -> cb.equal(root.get("category"), category);
+    }
+
+    private static String toContainsLikePattern(String keyword) {
+        return "%" + escapeLike(keyword.trim().toLowerCase(Locale.ROOT)) + "%";
+    }
+
+    private static String escapeLike(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+
+    private static MapCategory tryParseCategory(String rawCategory) {
+        try {
+            return MapCategory.from(rawCategory);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

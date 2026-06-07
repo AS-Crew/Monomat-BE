@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.map.dto.CreateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.UpdateMapRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import io.github.ascrew.monomatbe.domain.map.entity.MapSortType;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -31,6 +32,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import org.mockito.ArgumentCaptor;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -105,6 +107,7 @@ class MapServiceTest {
                     .pendingPublic(input.getPendingPublic())
                     .numOfSong(0)
                     .totalPlayTime(0)
+                    .playCount(0L)
                     .build();
         });
 
@@ -117,6 +120,7 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("new map");
+        assertThat(response.playCount()).isEqualTo(0L);
         // 생성 시 아이템이 0이므로 공개 의도는 pendingPublic 으로 보존되고 isPublic 은 false 로 저장된다.
         assertThat(response.isPublic()).isFalse();
         assertThat(response.pendingPublic()).isTrue();
@@ -170,6 +174,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(200L)).thenReturn(Optional.of(quizMap));
@@ -201,6 +206,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(400L)).thenReturn(Optional.of(quizMap));
@@ -238,6 +244,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(1)
                 .totalPlayTime(30)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(500L)).thenReturn(Optional.of(quizMap));
@@ -253,6 +260,7 @@ class MapServiceTest {
         assertThat(quizMap.getPendingPublic()).isFalse();
         assertThat(response.isPublic()).isTrue();
         assertThat(response.pendingPublic()).isFalse();
+        assertThat(response.playCount()).isEqualTo(0L);
     }
 
     @Test
@@ -274,6 +282,7 @@ class MapServiceTest {
                 .pendingPublic(true)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(600L)).thenReturn(Optional.of(quizMap));
@@ -309,6 +318,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(1)
                 .totalPlayTime(30)
+                .playCount(21L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(700L)).thenReturn(Optional.of(quizMap));
@@ -322,6 +332,7 @@ class MapServiceTest {
         assertThat(quizMap.getIsPublic()).isTrue();
         assertThat(response.title()).isEqualTo("new title");
         assertThat(response.isPublic()).isTrue();
+        assertThat(response.playCount()).isEqualTo(21L);
     }
 
     @Test
@@ -345,6 +356,7 @@ class MapServiceTest {
                 .pendingPublic(false)
                 .numOfSong(1)
                 .totalPlayTime(30)
+                .playCount(33L)
                 .build();
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(800L)).thenReturn(Optional.of(quizMap));
@@ -360,10 +372,11 @@ class MapServiceTest {
         verify(publicationValidator, never()).requirePublishable(any());
         assertThat(response.title()).isEqualTo("fixed title");
         assertThat(response.isPublic()).isTrue();
+        assertThat(response.playCount()).isEqualTo(33L);
     }
 
     @Test
-    void getMyMaps_includesDescriptionInSummary() {
+    void getMyMaps_includesDescriptionAndPlayCountInSummary() {
         User owner = User.builder()
                 .id(10L)
                 .username("owner")
@@ -379,6 +392,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(3)
                 .totalPlayTime(600)
+                .playCount(12L)
                 .isPublic(false)
                 .pendingPublic(false)
                 .build();
@@ -395,6 +409,119 @@ class MapServiceTest {
         assertThat(response.content().get(0).description()).isEqualTo("내 맵 설명");
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+        assertThat(response.content().get(0).playCount()).isEqualTo(12L);
+    }
+
+    @Test
+    void getMyMaps_withKeywordCategoryAndSort_queriesRepositoryWithConditions() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(100L)
+                .owner(owner)
+                .title("OST 모음")
+                .description("내 맵 설명")
+                .category(MapCategory.OST)
+                .numOfSong(3)
+                .totalPlayTime(600)
+                .playCount(12L)
+                .isPublic(false)
+                .pendingPublic(true)
+                .build();
+
+        when(quizMapJpaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(quizMap)));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        var response = mapService.getMyMaps(
+                0,
+                20,
+                "ost",
+                "OST",
+                MapSortType.TITLE_ASC,
+                principal
+        );
+
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).mapId()).isEqualTo(100L);
+        assertThat(response.content().get(0).category()).isEqualTo(MapCategory.OST);
+        assertThat(response.content().get(0).pendingPublic()).isTrue();
+        assertThat(response.content().get(0).playCount()).isEqualTo(12L);
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(quizMapJpaRepository).findAll(any(Specification.class), pageableCaptor.capture());
+
+        Pageable pageable = pageableCaptor.getValue();
+        assertThat(pageable.getPageNumber()).isZero();
+        assertThat(pageable.getPageSize()).isEqualTo(20);
+        assertThat(pageable.getSort().getOrderFor("title")).isNotNull();
+        assertThat(pageable.getSort().getOrderFor("title").isAscending()).isTrue();
+    }
+
+    @Test
+    void getMyMaps_acceptsFlexibleCategoryValue() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(101L)
+                .owner(owner)
+                .title("애니 노래")
+                .description("애니 맵")
+                .category(MapCategory.ANIME)
+                .numOfSong(5)
+                .totalPlayTime(800)
+                .playCount(3L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(quizMap)));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        var response = mapService.getMyMaps(
+                0,
+                20,
+                "애니",
+                "anime",
+                MapSortType.NEWEST,
+                principal
+        );
+
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).category()).isEqualTo(MapCategory.ANIME);
+        assertThat(response.content().get(0).title()).isEqualTo("애니 노래");
+    }
+
+    @Test
+    void getMyMaps_invalidCategory_throws400AndDoesNotQueryRepository() {
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapService.getMyMaps(
+                0,
+                20,
+                null,
+                "INVALID_CATEGORY",
+                MapSortType.NEWEST,
+                principal
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("지원하지 않는 category입니다");
+
+        verify(quizMapJpaRepository, never()).findAll(any(Specification.class), any(Pageable.class));
     }
 
     @Test
@@ -414,6 +541,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(0)
                 .totalPlayTime(0)
+                .playCount(0L)
                 .isPublic(false)
                 .pendingPublic(false)
                 .build();
@@ -429,10 +557,11 @@ class MapServiceTest {
         assertThat(response.content().get(0).description()).isNull();
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+        assertThat(response.content().get(0).playCount()).isEqualTo(0L);
     }
 
     @Test
-    void getPublicMaps_includesDescriptionInSummary() {
+    void getPublicMaps_includesDescriptionAndPlayCountInSummary() {
         User owner = User.builder()
                 .id(10L)
                 .username("owner")
@@ -448,6 +577,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(5)
                 .totalPlayTime(900)
+                .playCount(34L)
                 .isPublic(true)
                 .pendingPublic(false)
                 .build();
@@ -463,10 +593,11 @@ class MapServiceTest {
         assertThat(response.content().get(0).description()).isEqualTo("공개 맵 설명");
         assertThat(response.content().get(0).ownerId()).isEqualTo(10L);
         assertThat(response.content().get(0).ownerNickname()).isEqualTo("owner");
+        assertThat(response.content().get(0).playCount()).isEqualTo(34L);
     }
 
     @Test
-    void getPublicMap_includesOwnerNicknameInDetail() {
+    void getPublicMap_includesOwnerNicknameAndPlayCountInDetail() {
         User owner = User.builder()
                 .id(10L)
                 .username("owner")
@@ -482,6 +613,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(5)
                 .totalPlayTime(900)
+                .playCount(56L)
                 .isPublic(true)
                 .pendingPublic(false)
                 .build();
@@ -496,10 +628,11 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("상세 맵");
+        assertThat(response.playCount()).isEqualTo(56L);
     }
-    
+
     @Test
-    void getPublicMap_cacheHit_returnsOwnerNickname() {
+    void getPublicMap_cacheHit_returnsOwnerNicknameAndPlayCount() {
         MapDetailResponse cachedResponse = MapDetailResponse.builder()
                 .id(300L)
                 .ownerId(10L)
@@ -509,6 +642,7 @@ class MapServiceTest {
                 .category(MapCategory.KPOP)
                 .numOfSong(5)
                 .totalPlayTime(900)
+                .playCount(78L)
                 .isPublic(true)
                 .pendingPublic(false)
                 .build();
@@ -522,7 +656,180 @@ class MapServiceTest {
         assertThat(response.ownerId()).isEqualTo(10L);
         assertThat(response.ownerNickname()).isEqualTo("owner");
         assertThat(response.title()).isEqualTo("상세 맵");
+        assertThat(response.playCount()).isEqualTo(78L);
 
         verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalseAndIsPublicTrue(any());
+    }
+
+    @Test
+    void getMyMap_privateMapOwner_returnsMapDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(100L)
+                .owner(owner)
+                .title("내 비공개 맵")
+                .description("관리 페이지에서 조회할 맵")
+                .category(MapCategory.JPOP)
+                .numOfSong(10)
+                .totalPlayTime(300)
+                .playCount(5L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(100L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        MapDetailResponse response = mapService.getMyMap(100L, principal);
+
+        assertThat(response.id()).isEqualTo(100L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.ownerNickname()).isEqualTo("owner");
+        assertThat(response.title()).isEqualTo("내 비공개 맵");
+        assertThat(response.description()).isEqualTo("관리 페이지에서 조회할 맵");
+        assertThat(response.category()).isEqualTo(MapCategory.JPOP);
+        assertThat(response.numOfSong()).isEqualTo(10);
+        assertThat(response.totalPlayTime()).isEqualTo(300);
+        assertThat(response.playCount()).isEqualTo(5L);
+        assertThat(response.isPublic()).isFalse();
+        assertThat(response.pendingPublic()).isFalse();
+    }
+
+    @Test
+    void getMyMap_pendingPublicMapOwner_returnsMapDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(101L)
+                .owner(owner)
+                .title("공개 대기 맵")
+                .description("아이템 추가 후 공개될 맵")
+                .category(MapCategory.KPOP)
+                .numOfSong(0)
+                .totalPlayTime(0)
+                .playCount(0L)
+                .isPublic(false)
+                .pendingPublic(true)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(101L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        MapDetailResponse response = mapService.getMyMap(101L, principal);
+
+        assertThat(response.id()).isEqualTo(101L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.isPublic()).isFalse();
+        assertThat(response.pendingPublic()).isTrue();
+        assertThat(response.playCount()).isEqualTo(0L);
+    }
+
+    @Test
+    void getMyMap_publicMapOwner_returnsMapDetail() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(102L)
+                .owner(owner)
+                .title("내 공개 맵")
+                .description("공개된 내 맵")
+                .category(MapCategory.POP)
+                .numOfSong(7)
+                .totalPlayTime(210)
+                .playCount(13L)
+                .isPublic(true)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(102L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        MapDetailResponse response = mapService.getMyMap(102L, principal);
+
+        assertThat(response.id()).isEqualTo(102L);
+        assertThat(response.ownerId()).isEqualTo(10L);
+        assertThat(response.isPublic()).isTrue();
+        assertThat(response.pendingPublic()).isFalse();
+        assertThat(response.playCount()).isEqualTo(13L);
+    }
+
+    @Test
+    void getMyMap_guestUser_throws403AndDoesNotQueryRepository() {
+        CustomPrincipal guest = new CustomPrincipal(10L, "guest-10", UserType.GUEST);
+
+        assertThatThrownBy(() -> mapService.getMyMap(100L, guest))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
+                .hasMessageContaining("정식 회원만 본인 맵을 조회할 수 있습니다.");
+
+        verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalse(any());
+    }
+
+    @Test
+    void getMyMap_notFound_throws404() {
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(999L))
+                .thenReturn(Optional.empty());
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapService.getMyMap(999L, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND))
+                .hasMessageContaining("맵을 찾을 수 없습니다.");
+    }
+
+    @Test
+    void getMyMap_notOwner_throws403() {
+        User owner = User.builder()
+                .id(10L)
+                .username("owner")
+                .userType(UserType.REGISTERED)
+                .status(UserStatus.ACTIVE)
+                .build();
+
+        QuizMap quizMap = QuizMap.builder()
+                .id(100L)
+                .owner(owner)
+                .title("타인 맵")
+                .description("타인 소유")
+                .category(MapCategory.OST)
+                .numOfSong(3)
+                .totalPlayTime(90)
+                .playCount(1L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .build();
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(100L))
+                .thenReturn(Optional.of(quizMap));
+
+        CustomPrincipal anotherUser = new CustomPrincipal(11L, "u-11", UserType.REGISTERED);
+
+        assertThatThrownBy(() -> mapService.getMyMap(100L, anotherUser))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
+                .hasMessageContaining("본인 소유의 맵만 조회할 수 있습니다.");
     }
 }

@@ -21,6 +21,7 @@ import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import io.github.ascrew.monomatbe.global.redis.RedisPublisher;
 import io.github.ascrew.monomatbe.global.websocket.dto.ChatMessageDto;
+import io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameReconnectEvent;
 import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -235,8 +236,13 @@ public class WebSocketEventListener {
         log.info("WebSocket 연결 해제 - 식별자: {}, 로비: {}", userIdentifier, lobbyCode);
 
         if (lobbyCode != null) {
-            eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
-            publishLeaveMessage(lobbyCode, userIdentifier);
+            String lobbyStatus = (String) stringRedisTemplate.opsForHash().get(RedisKeys.lobbyKey(lobbyCode), RedisKeys.FIELD_STATUS);
+            if ("PLAYING".equals(lobbyStatus)) {
+                eventPublisher.publishEvent(new io.github.ascrew.monomatbe.global.websocket.event.PlayerInGameDisconnectEvent(lobbyCode, userIdentifier));
+            } else {
+                eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
+                publishLeaveMessage(lobbyCode, userIdentifier);
+            }
         }
 
         deleteDisconnectKeys(userIdentifier, wsSessionId, lobbyCode);
@@ -291,6 +297,7 @@ public class WebSocketEventListener {
             log.info("로비 입장 후처리 완료 - 로비: {}, 식별자: {}, wsSessionId: {}",
                     lobbyCode, userIdentifier, wsSessionId);
 
+            eventPublisher.publishEvent(new PlayerInGameReconnectEvent(lobbyCode, userIdentifier));
             publishEnterMessage(lobbyCode, userIdentifier);
             notifyLobbyInfoRefresh(lobbyCode);
             return;
@@ -299,6 +306,7 @@ public class WebSocketEventListener {
         if (ENTER_RESULT_ALREADY_JOINED.equals(result)) {
             log.info("로비 중복 구독 후처리 - ENTER 메시지 생략. 로비: {}, 식별자: {}, wsSessionId: {}",
                     lobbyCode, userIdentifier, wsSessionId);
+            eventPublisher.publishEvent(new PlayerInGameReconnectEvent(lobbyCode, userIdentifier));
             return;
         }
 
@@ -307,6 +315,7 @@ public class WebSocketEventListener {
 
             log.info("로비 세션 교체 후처리 - 로비: {}, 식별자: {}, previousWsSessionId: {}, currentWsSessionId: {}",
                     lobbyCode, userIdentifier, previousWsSessionId, wsSessionId);
+            eventPublisher.publishEvent(new PlayerInGameReconnectEvent(lobbyCode, userIdentifier));
             return;
         }
 

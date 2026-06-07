@@ -560,20 +560,6 @@ public final class RedisKeys {
     }
 
     /**
-     * 사용자 온라인 상태 키의 prefix를 반환한다.
-     *
-     * [사용 목적]
-     * reap_lobby.lua가 참여자 식별자별 온라인 상태 키(user_status:{id})를
-     * 스크립트 내부에서 동적으로 구성하므로, prefix를 ARGV로 전달하기 위해 사용한다.
-     * 하드코딩을 피하고 키 포맷을 RedisKeys 한 곳에서 관리하기 위함이다.
-     *
-     * @return "user_status:"
-     */
-    public static String userStatusKeyPrefix() {
-        return USER_STATUS_PREFIX;
-    }
-
-    /**
      * 사용자 온라인 상태를 구성하는 WebSocket 세션 Set 키를 반환한다.
      *
      * 저장 구조:
@@ -602,6 +588,20 @@ public final class RedisKeys {
      */
     public static String wsConnectionKey(String wsSessionId) {
         return WS_CONNECTION_PREFIX + wsSessionId;
+    }
+
+    /**
+     * WebSocket 세션 매핑 Hash 키의 prefix를 반환합니다.
+     *
+     * [사용 목적]
+     * reap_lobby.lua가 참여자별 ws:connection:{wsSessionId} 키를 스크립트 내부에서
+     * 동적으로 구성해 해당 세션이 실제로 이 로비에 매핑돼 있는지 검증하므로,
+     * prefix를 ARGV로 전달하기 위해 사용합니다.
+     *
+     * @return "ws:connection:"
+     */
+    public static String wsConnectionKeyPrefix() {
+        return WS_CONNECTION_PREFIX;
     }
 
     /**
@@ -676,6 +676,21 @@ public final class RedisKeys {
      */
     public static String lobbyUserSessionKey(String code, String userIdentifier) {
         return LOBBY_PREFIX + code + USER_SESSION_SUFFIX + userIdentifier;
+    }
+
+    /**
+     * 로비 내 사용자별 현재 유효 WebSocket 세션 키의 prefix를 반환합니다.
+     *
+     * [사용 목적]
+     * reap_lobby.lua가 참여자별 lobby:{code}:user_session:{userIdentifier} 키를
+     * 스크립트 내부에서 동적으로 구성해, 전역 온라인 여부가 아니라
+     * "이 로비에 대해 아직 유효한 세션이 있는가"를 판정하기 위해 prefix를 ARGV로 전달합니다.
+     *
+     * @param code 로비 초대 코드
+     * @return "lobby:{code}:user_session:"
+     */
+    public static String lobbyUserSessionKeyPrefix(String code) {
+        return LOBBY_PREFIX + code + USER_SESSION_SUFFIX;
     }
 
     /**

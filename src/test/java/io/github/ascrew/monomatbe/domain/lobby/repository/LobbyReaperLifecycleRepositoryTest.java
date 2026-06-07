@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 빈 로비 reaper(reap_lobby.lua + reapEmptyLobby) 통합 테스트.
  *
  * 이슈 #167: 비정상 종료/생성 직후 미구독으로 발생하는 유령/빈 로비가
- * grace 경과 후 활성 세션 0이면 폭파되는지, 온라인 참여자가 있거나 grace 미경과면
- * 보존되는지를 실제 Redis에 대해 검증한다.
+ * grace 경과 후 "이 로비에 대한 유효 세션 0"이면 폭파되는지, 이 로비에 유효 세션을 가진
+ * 참여자가 있거나 grace 미경과면 보존되는지를 실제 Redis에 대해 검증한다.
+ *
+ * [생존 판정 기준]
+ * 전역 user_status가 아니라 로비별 세션 키 lobby:{code}:user_session:{id}와
+ * 그 세션의 ws:connection:{wsSessionId}.lobbyCode 교차 검증을 사용한다.
  */
 @SpringBootTest(properties = {
         "spring.flyway.enabled=false",
@@ -29,10 +34,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LobbyReaperLifecycleRepositoryTest {
 
     private static final String LOBBY_CODE = "REAP94";
+    private static final String OTHER_LOBBY_CODE = "OTHER1";
     private static final long GRACE_MS = 60_000L;
 
     private static final String HOST_ID = "11111111-1111-1111-1111-111111111111";
     private static final String SECOND_USER_ID = "22222222-2222-2222-2222-222222222222";
+
+    private static final String WS_HOST = "ws-host-1";
+    private static final String WS_SECOND = "ws-second-1";
+    private static final String WS_STALE = "ws-stale-1";
 
     @Autowired
     private LobbyRepository lobbyRepository;
@@ -61,9 +71,9 @@ class LobbyReaperLifecycleRepositoryTest {
     }
 
     @Test
-    @DisplayName("참여자가 있어도 전원 오프라인(user_status 없음)이고 grace가 지났으면 폭파한다 (버그②)")
-    void reapsLobbyWhenAllParticipantsOffline() {
-        // given: 참여자는 있으나 user_status 키가 없는(=오프라인) 10분 전 생성 로비
+    @DisplayName("참여자가 있어도 이 로비 유효 세션이 없고 grace가 지났으면 폭파한다 (버그②)")
+    void reapsLobbyWhenNoValidSessionForThisLobby() {
+        // given: 참여자는 있으나 로비별 세션 키가 없는(=유효 세션 없음) 10분 전 생성 로비
         givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
         addPublicIndexes(LOBBY_CODE, 2, 2);
 
@@ -76,11 +86,36 @@ class LobbyReaperLifecycleRepositoryTest {
     }
 
     @Test
-    @DisplayName("참여자 중 한 명이라도 온라인(user_status 존재)이면 보존한다")
-    void keepsLobbyWhenAnyParticipantOnline() {
-        // given: 참여자 2명 중 1명 온라인
+    @DisplayName("유령 참여자가 다른 로비에 재접속해 전역 온라인이어도, 이 로비 세션이 다른 로비를 가리키면 폭파한다")
+    void reapsWhenGhostParticipantReconnectedToAnotherLobby() {
+        // given: SECOND_USER_ID가 A(LOBBY_CODE)에 유령으로 남은 뒤 B(OTHER)에 재접속한 상황.
+        // - 전역 user_status는 존재(어딘가 온라인)
+        // - A의 로비 세션 키는 남아 있으나, 그 세션의 ws:connection은 B를 가리킴
         givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
+        addPublicIndexes(LOBBY_CODE, 2, 2);
+
         redisTemplate.opsForValue().set(RedisKeys.userStatusKey(SECOND_USER_ID), "ONLINE");
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID), WS_STALE);
+        redisTemplate.opsForHash().put(
+                RedisKeys.wsConnectionKey(WS_STALE),
+                WebSocketHeaders.SESSION_LOBBY_CODE,
+                OTHER_LOBBY_CODE
+        );
+
+        // when
+        ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);
+
+        // then: 전역 온라인이지만 A에 대한 유효 세션이 아니므로 폭파되어야 한다.
+        assertThat(result).isEqualTo(ReapLobbyResult.REAPED);
+        assertLobbyFullyRemoved();
+    }
+
+    @Test
+    @DisplayName("참여자 중 한 명이라도 이 로비에 대한 유효 세션을 가지면 보존한다")
+    void keepsLobbyWhenAnyParticipantHasValidSession() {
+        // given: 참여자 2명 중 1명이 이 로비에 대한 유효 세션 보유
+        givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
+        markValidSessionForLobby(LOBBY_CODE, SECOND_USER_ID, WS_SECOND);
 
         // when
         ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);
@@ -89,8 +124,6 @@ class LobbyReaperLifecycleRepositoryTest {
         assertThat(result).isEqualTo(ReapLobbyResult.ALIVE);
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
-
-        redisTemplate.delete(RedisKeys.userStatusKey(SECOND_USER_ID));
     }
 
     @Test
@@ -127,6 +160,20 @@ class LobbyReaperLifecycleRepositoryTest {
 
     private long agedCreatedAt() {
         return System.currentTimeMillis() - (10 * 60_000L);
+    }
+
+    /**
+     * 참여자가 해당 로비에 대한 유효 WebSocket 세션을 가진 상태를 만든다.
+     * - lobby:{code}:user_session:{user} = wsSessionId
+     * - ws:connection:{wsSessionId}.lobbyCode = code
+     */
+    private void markValidSessionForLobby(String code, String userId, String wsSessionId) {
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(code, userId), wsSessionId);
+        redisTemplate.opsForHash().put(
+                RedisKeys.wsConnectionKey(wsSessionId),
+                WebSocketHeaders.SESSION_LOBBY_CODE,
+                code
+        );
     }
 
     private void assertLobbyFullyRemoved() {
@@ -186,11 +233,15 @@ class LobbyReaperLifecycleRepositoryTest {
                 RedisKeys.lobbyParticipantsKey(lobbyCode),
                 RedisKeys.lobbyOrderKey(lobbyCode),
                 RedisKeys.lobbyKickedKey(lobbyCode),
-                RedisKeys.lobbyReadyKey(lobbyCode)
+                RedisKeys.lobbyReadyKey(lobbyCode),
+                RedisKeys.lobbyUserSessionKey(lobbyCode, HOST_ID),
+                RedisKeys.lobbyUserSessionKey(lobbyCode, SECOND_USER_ID),
+                RedisKeys.userStatusKey(HOST_ID),
+                RedisKeys.userStatusKey(SECOND_USER_ID),
+                RedisKeys.wsConnectionKey(WS_HOST),
+                RedisKeys.wsConnectionKey(WS_SECOND),
+                RedisKeys.wsConnectionKey(WS_STALE)
         ));
-
-        redisTemplate.delete(RedisKeys.userStatusKey(HOST_ID));
-        redisTemplate.delete(RedisKeys.userStatusKey(SECOND_USER_ID));
 
         redisTemplate.opsForSet().remove(RedisKeys.LOBBY_ALL, lobbyCode);
         redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, lobbyCode);

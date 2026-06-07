@@ -5,6 +5,7 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbyMapMetadata;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
+import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -189,7 +190,9 @@ public class LobbyLuaScriptExecutor {
      * [ARGV 계약]
      * ARGV[1] = lobbyCode
      * ARGV[2] = graceMillis (생성 직후 보호 기간)
-     * ARGV[3] = userStatusPrefix ("user_status:")
+     * ARGV[3] = lobbyUserSessionPrefix ("lobby:{code}:user_session:")
+     * ARGV[4] = wsConnectionPrefix ("ws:connection:")
+     * ARGV[5] = lobbyField (ws:connection Hash의 lobbyCode 필드명)
      *
      * @param code        대상 로비 코드
      * @param graceMillis 생성 직후 폭파를 보류할 grace 기간(ms)
@@ -215,7 +218,9 @@ public class LobbyLuaScriptExecutor {
                 keys,
                 code,
                 String.valueOf(graceMillis),
-                RedisKeys.userStatusKeyPrefix()
+                RedisKeys.lobbyUserSessionKeyPrefix(code),
+                RedisKeys.wsConnectionKeyPrefix(),
+                WebSocketHeaders.SESSION_LOBBY_CODE
         );
     }
 

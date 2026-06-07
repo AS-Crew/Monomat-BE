@@ -15,14 +15,18 @@
 -- leave_lobby.lua의 DESTROYED 경로와 동일하게 폭파한다.
 --
 -- [원자성]
--- 온라인 판정(SMEMBERS + user_status EXISTS)과 폭파(DEL + 인덱스 정리)를 한 스크립트
+-- 생존 판정(SMEMBERS + 로비별 세션 키 확인)과 폭파(DEL + 인덱스 정리)를 한 스크립트
 -- 안에서 수행하므로, 스캔과 폭파 사이에 다른 유저가 입장(enter_lobby.lua)하는
 -- race condition(TOCTOU)이 발생하지 않는다. 입장이 폭파보다 먼저면 ALIVE로 보호되고,
 -- 폭파가 먼저면 입장은 LOBBY_NOT_FOUND로 실패한다.
 --
+-- [생존 판정 기준]
+-- 전역 온라인 상태(user_status)가 아니라, 참여자가 "이 로비에 대해" 유효한 WebSocket
+-- 세션을 가지는지로 판정한다. (lobby:{code}:user_session:{id} -> ws:connection 교차 검증)
+--
 -- [반환값]
--- "REAPED"      : 빈 로비를 폭파했다 (0명 또는 전원 오프라인).
--- "ALIVE"       : 온라인 참여자가 1명 이상 존재하여 보존했다.
+-- "REAPED"      : 빈 로비를 폭파했다 (0명 또는 이 로비 유효 세션 보유자 없음).
+-- "ALIVE"       : 이 로비에 유효 세션을 가진 참여자가 1명 이상 존재하여 보존했다.
 -- "TOO_YOUNG"   : 생성 후 grace 기간이 지나지 않아 보존했다 (구독 대기 중 보호).
 -- "STALE_INDEX" : Hash가 이미 없는 stale 인덱스를 정리했다 (self-heal).
 -- ============================================================================
@@ -40,7 +44,9 @@ local publicMostAvailableIndexKey = KEYS[10]  -- lobby:public:most_available (ZS
 
 local lobbyCode = ARGV[1]                      -- 대상 로비 코드
 local graceMillis = tonumber(ARGV[2])          -- 생성 직후 보호 기간(ms)
-local userStatusPrefix = ARGV[3]               -- 온라인 상태 키 prefix ("user_status:")
+local lobbyUserSessionPrefix = ARGV[3]         -- 로비별 현재 세션 키 prefix ("lobby:{code}:user_session:")
+local wsConnectionPrefix = ARGV[4]             -- WebSocket 세션 매핑 Hash 키 prefix ("ws:connection:")
+local lobbyField = ARGV[5]                      -- ws:connection Hash의 lobbyCode 필드명
 
 local FIELD_CREATED_AT_EPOCH_MILLIS = 'created_at_epoch_millis'
 
@@ -75,15 +81,29 @@ if createdAt ~= nil and graceMillis ~= nil and graceMillis > 0 then
     end
 end
 
--- 3. 참여자 중 한 명이라도 온라인이면 보존한다.
---    온라인 판정 = user_status:{userIdentifier} 키 존재 여부.
---    (CONNECT 시 set, 마지막 세션 종료 시 삭제, 누락 시 TTL로 자연 만료)
+-- 3. 참여자 중 한 명이라도 "이 로비에 대한 유효 세션"을 가지면 보존한다.
+--    [전역 user_status를 쓰지 않는 이유]
+--    user_status:{userIdentifier}는 "이 유저가 어딘가 온라인"일 뿐 "이 로비에 연결됨"이 아니다.
+--    A 로비에서 유령으로 남은 유저가 B 로비에 접속하면 user_status가 다시 존재하므로
+--    A 로비 reaper가 유령을 온라인으로 오판해 ALIVE를 반환하는 버그가 생긴다.
+--
+--    [로비별 세션 키 기준 판정]
+--    enter_lobby.lua가 관리하는 로비별 현재 세션 키 lobby:{code}:user_session:{userIdentifier}로
+--    wsSessionId를 얻고, 그 세션의 ws:connection:{wsSessionId} Hash가 실제로 이 로비를
+--    가리키는지(lobbyField == lobbyCode)까지 확인한다. 비정상 종료로 세션이 끊기면 이 키들은
+--    TTL로 만료되므로 stale 세션은 ALIVE로 오판되지 않는다.
 --    단일 노드 Redis(standalone)이므로 멤버 값으로 키를 동적 구성해도 안전하다.
 local participants = redis.call('SMEMBERS', participantsKey)
 
 for i = 1, #participants do
-    if redis.call('EXISTS', userStatusPrefix .. participants[i]) == 1 then
-        return "ALIVE"
+    local wsSessionId = redis.call('GET', lobbyUserSessionPrefix .. participants[i])
+
+    if wsSessionId ~= false then
+        local wsLobbyCode = redis.call('HGET', wsConnectionPrefix .. wsSessionId, lobbyField)
+
+        if wsLobbyCode == lobbyCode then
+            return "ALIVE"
+        end
     end
 end
 

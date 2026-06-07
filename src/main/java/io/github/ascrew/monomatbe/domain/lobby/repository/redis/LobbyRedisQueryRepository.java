@@ -313,6 +313,46 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
+     * 빈 로비 reaper용으로 lobby:all Set에서 임의의 로비 코드 후보를 조회한다.
+     *
+     * [사용 목적]
+     * reaper 스케줄러가 공개·비공개를 포함한 전체 로비를 제한된 개수만큼 검사하기 위해 사용한다.
+     *
+     * [SRANDMEMBER(distinctRandomMembers) 사용 이유]
+     * SSCAN을 매 실행마다 cursor 0부터 새로 시작하면 항상 앞쪽 구간만 보게 되어
+     * 뒤쪽 stale 로비가 정리되지 않고 누적될 수 있다(cursor를 영속하지 않으면 재개 불가).
+     * reaper는 정렬이 불필요하고, 유령 로비는 폭파될 때까지 후보 풀에 남으므로
+     * 매 실행 임의 표본을 뽑으면 확률적으로 전체가 수렴 정리된다.
+     * 동일 API를 {@link #addPublicSetCleanupCandidates}에서도 사용한다.
+     *
+     * @param limit 조회할 최대 code 수
+     * @return reaper 검사 후보 로비 코드 목록
+     */
+    public List<String> getAllLobbyCodesForReaping(int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+
+        Set<String> codes = redisTemplate.opsForSet()
+                .distinctRandomMembers(RedisKeys.LOBBY_ALL, limit);
+
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> candidates = new ArrayList<>(codes.size());
+
+        for (String code : codes) {
+            if (code == null || code.isBlank()) {
+                continue;
+            }
+            candidates.add(code);
+        }
+
+        return candidates;
+    }
+
+    /**
      * lobby:public Set에서 cleanup 후보를 수집한다.
      *
      * [정책]

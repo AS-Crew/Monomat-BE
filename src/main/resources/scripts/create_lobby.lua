@@ -19,6 +19,7 @@ local publicListKey         = KEYS[3]   -- lobby:public
 local publicLatestIndexKey  = KEYS[4]   -- lobby:public:latest
 local publicMostPlayersIndexKey   = KEYS[5]   -- lobby:public:most_players
 local publicMostAvailableIndexKey   = KEYS[6] -- lobby:public:most_available
+local lobbyAllKey           = KEYS[7]   -- lobby:all (공개·비공개 전체 로비 인덱스)
 
 local userIdentifier  = ARGV[1]   -- 방장 식별자 (SETNX 선점자)
 local lockTtlMs       = ARGV[2]   -- 락 TTL (밀리초)
@@ -86,6 +87,11 @@ redis.call('HSET', lobbyKey,
     FIELD_QUESTION_COUNT,          questionCount,
     FIELD_TIME_LIMIT_SECONDS,      timeLimitSeconds
 )
+
+-- 2-1. 전체 로비 인덱스(lobby:all)에 등록한다.
+--      공개/비공개 무관하게 모든 로비를 담아, 빈 로비 reaper 스케줄러가
+--      비공개 로비까지 포함해 전체 로비를 열거할 수 있게 한다.
+redis.call('SADD', lobbyAllKey, inviteCode)
 
 -- 3. 맵이 선택된 경우에만 맵 메타 정보 저장
 if mapId ~= "" then

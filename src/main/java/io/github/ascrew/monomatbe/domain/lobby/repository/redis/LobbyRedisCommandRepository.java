@@ -97,6 +97,7 @@ public class LobbyRedisCommandRepository {
         try {
             redisTemplate.delete(keysToDelete);
             redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
+            redisTemplate.opsForSet().remove(RedisKeys.LOBBY_ALL, inviteCode);
 
             log.info("Redis 보상 삭제 완료 - code: {}, keys: {}", inviteCode, keysToDelete);
             return true;
@@ -229,7 +230,11 @@ public class LobbyRedisCommandRepository {
      *
      * [필요 이유]
      * 참여자가 로비를 나가면 더 이상 준비 상태에 포함되면 안 된다.
-     * 로비가 폭파된 경우에는 ready Set 전체를 삭제한다.
+     *
+     * [Destroyed를 다루지 않는 이유]
+     * 로비 폭파 시 ready Set 전체 삭제는 leave_lobby.lua가 다른 로비 키와 함께 원자적으로
+     * 수행한다(DEL ... readyKey). 따라서 여기서는 폭파되지 않은 Left/Delegated 경로에서만
+     * 퇴장 유저를 ready Set에서 제거한다.
      *
      * [주의]
      * leave_lobby.lua의 원자 처리 이후 보조 정리로 수행한다.
@@ -247,11 +252,6 @@ public class LobbyRedisCommandRepository {
         String readyKey = RedisKeys.lobbyReadyKey(code);
 
         try {
-            if (leaveResult instanceof LeaveLobbyResult.Destroyed) {
-                redisTemplate.delete(readyKey);
-                return;
-            }
-
             if (leaveResult instanceof LeaveLobbyResult.Left
                     || leaveResult instanceof LeaveLobbyResult.Delegated) {
                 redisTemplate.opsForSet().remove(readyKey, userId);

@@ -38,6 +38,24 @@ public class RedisScriptConfig {
     }
 
     /**
+     * 빈 로비 폭파(reaper) Lua 스크립트
+     *
+     * [처리 내용]
+     * - 단일 로비의 "활성 세션 0" 여부 원자 판정
+     * - Hash 없는 stale 인덱스 self-heal (STALE_INDEX)
+     * - 생성 직후 grace 기간 보호 (TOO_YOUNG)
+     * - 온라인 참여자 존재 시 보존 (ALIVE)
+     * - 0명/전원 오프라인 시 로비 키 + 공개/전체 인덱스 폭파 (REAPED)
+     */
+    @Bean
+    public RedisScript<String> reapLobbyScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/reap_lobby.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
+
+    /**
      * 로비 입장 처리 Lua 스크립트
      *
      * [처리 내용]

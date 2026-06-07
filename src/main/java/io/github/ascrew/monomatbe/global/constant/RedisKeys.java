@@ -130,6 +130,25 @@ public final class RedisKeys {
     public static final String LOBBY_PUBLIC = "lobby:public";
 
     /**
+     * 공개·비공개를 포함한 전체 로비 코드 목록을 담는 전역 Set 키.
+     *
+     * [사용 목적]
+     * lobby:public은 공개 로비만 담으므로, 비정상 종료로 유령 참여자만 남거나
+     * 생성 직후 아무도 구독하지 않은 빈 로비(공개/비공개 모두)를 주기적으로 찾아
+     * 폭파(reaper)하려면 전체 로비를 열거할 수 있어야 한다.
+     *
+     * [생명주기]
+     * - create_lobby.lua : 로비 생성 시 SADD (공개/비공개 무관)
+     * - leave_lobby.lua / reap_lobby.lua : 로비 폭파 시 SREM
+     * - deleteFromRedis : 보상/롤백 삭제 시 SREM
+     *
+     * [정합성]
+     * reap_lobby.lua는 Hash가 없는 stale 엔트리를 만나면 스스로 SREM 하므로,
+     * 일부 SREM이 누락돼도 인덱스는 점진적으로 정합화된다.
+     */
+    public static final String LOBBY_ALL = "lobby:all";
+
+    /**
      * 공개 로비 최신순 정렬 인덱스 ZSET 키
      *
      * 저장 구조 :
@@ -572,6 +591,20 @@ public final class RedisKeys {
     }
 
     /**
+     * WebSocket 세션 매핑 Hash 키의 prefix를 반환합니다.
+     *
+     * [사용 목적]
+     * reap_lobby.lua가 참여자별 ws:connection:{wsSessionId} 키를 스크립트 내부에서
+     * 동적으로 구성해 해당 세션이 실제로 이 로비에 매핑돼 있는지 검증하므로,
+     * prefix를 ARGV로 전달하기 위해 사용합니다.
+     *
+     * @return "ws:connection:"
+     */
+    public static String wsConnectionKeyPrefix() {
+        return WS_CONNECTION_PREFIX;
+    }
+
+    /**
      * 게스트 세션 정보를 저장하는 Redis Hash 키를 반환합니다.
      *
      * @param guestToken 게스트 UUID 토큰
@@ -643,6 +676,21 @@ public final class RedisKeys {
      */
     public static String lobbyUserSessionKey(String code, String userIdentifier) {
         return LOBBY_PREFIX + code + USER_SESSION_SUFFIX + userIdentifier;
+    }
+
+    /**
+     * 로비 내 사용자별 현재 유효 WebSocket 세션 키의 prefix를 반환합니다.
+     *
+     * [사용 목적]
+     * reap_lobby.lua가 참여자별 lobby:{code}:user_session:{userIdentifier} 키를
+     * 스크립트 내부에서 동적으로 구성해, 전역 온라인 여부가 아니라
+     * "이 로비에 대해 아직 유효한 세션이 있는가"를 판정하기 위해 prefix를 ARGV로 전달합니다.
+     *
+     * @param code 로비 초대 코드
+     * @return "lobby:{code}:user_session:"
+     */
+    public static String lobbyUserSessionKeyPrefix(String code) {
+        return LOBBY_PREFIX + code + USER_SESSION_SUFFIX;
     }
 
     /**

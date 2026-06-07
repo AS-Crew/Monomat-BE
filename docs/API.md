@@ -615,6 +615,124 @@ HTTP/1.1 200 OK
 
 ---
 
+### 맵 생성 일괄 API
+
+맵 기본 정보와 문제 목록을 하나의 트랜잭션으로 생성합니다.  
+정식 회원만 사용할 수 있으며, 문제 중 하나라도 검증 또는 저장에 실패하면 맵 생성까지 전체 rollback됩니다.
+
+- Method: `POST`
+- URL: `/api/maps/with-items`
+- Auth: Required
+- Permission: `REGISTERED`
+
+#### Request Body
+
+```json
+{
+  "title": "J-POP 퀴즈",
+  "description": "J-POP 중심 퀴즈 맵",
+  "category": "J-POP",
+  "isPublic": false,
+  "items": [
+    {
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=video1",
+      "startTime": 30,
+      "endTime": 60,
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15
+    },
+    {
+      "orderNum": 2,
+      "youtubeUrl": "https://www.youtube.com/watch?v=video2",
+      "startTime": 0,
+      "endTime": 30,
+      "answers": ["omg"],
+      "hint": "ㅇㅇㅈ",
+      "hintTime": 15
+    }
+  ]
+}
+````
+
+#### Request Fields
+
+| 필드                   |       타입 | 필수 | 설명                             |
+| -------------------- | -------: | -: | ------------------------------ |
+| `title`              |   string |  O | 맵 제목                           |
+| `description`        |   string |  X | 맵 설명                           |
+| `category`           |   string |  O | 맵 카테고리                         |
+| `isPublic`           |  boolean |  O | 공개 요청 여부                       |
+| `items`              |    array |  O | 생성할 문제 목록                      |
+| `items[].orderNum`   |   number |  O | 문제 순서. 1부터 items 개수까지 중복 없이 지정 |
+| `items[].youtubeUrl` |   string |  O | YouTube URL                    |
+| `items[].startTime`  |   number |  O | 재생 시작 시간, 초 단위                 |
+| `items[].endTime`    |   number |  O | 재생 종료 시간, 초 단위                 |
+| `items[].answers`    | string[] |  O | 정답 목록                          |
+| `items[].hint`       |   string |  O | 힌트                             |
+| `items[].hintTime`   |   number |  X | 힌트 공개 시간. null이면 기본값 15초 적용    |
+
+#### Response 201 Created
+
+```json
+{
+  "map": {
+    "id": 1,
+    "ownerId": 10,
+    "ownerNickname": "owner",
+    "title": "J-POP 퀴즈",
+    "description": "J-POP 중심 퀴즈 맵",
+    "category": "J-POP",
+    "numOfSong": 2,
+    "totalPlayTime": 60,
+    "isPublic": false,
+    "pendingPublic": false,
+    "playCount": 0,
+    "createdAt": "2026-06-07T12:00:00",
+    "updatedAt": "2026-06-07T12:00:00"
+  },
+  "items": [
+    {
+      "id": 10,
+      "mapId": 1,
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=video1",
+      "videoId": "video1",
+      "startTime": 30,
+      "endTime": 60,
+      "title": "YouTube title 1",
+      "artist": "YouTube author 1",
+      "thumbnailUrl": "https://thumbnail/1",
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15,
+      "createdAt": "2026-06-07T12:00:00",
+      "updatedAt": "2026-06-07T12:00:00"
+    }
+  ]
+}
+```
+
+#### Error Responses
+
+|                       상태 코드 | 상황                                                 |
+| --------------------------: | -------------------------------------------------- |
+|           `400 Bad Request` | 요청 값 검증 실패, 중복 orderNum, orderNum 순서 불연속, 재생 구간 오류 |
+|          `401 Unauthorized` | 미인증                                                |
+|             `403 Forbidden` | 게스트 또는 정식 회원이 아닌 사용자                               |
+|              `409 Conflict` | 맵 최대 문제 수 초과, DB 저장 충돌                             |
+| `500 Internal Server Error` | 예상하지 못한 서버 오류                                      |
+
+#### Transaction Policy
+
+* 맵 기본 정보와 문제 목록은 하나의 트랜잭션으로 저장됩니다.
+* 아이템 중 하나라도 검증 또는 저장에 실패하면 `map`, `map_item` 모두 rollback됩니다.
+* YouTube URL/oEmbed 검증 정책은 기존 문제 생성 API와 동일합니다.
+* 생성 완료 후 `numOfSong`, `totalPlayTime`이 생성된 items 기준으로 반영됩니다.
+
+---
+
 ## 로비 (Lobby)
 
 ### 로비 생성

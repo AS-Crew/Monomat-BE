@@ -1,8 +1,12 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
+import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapItemResponse;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
@@ -112,16 +116,16 @@ public class MapManageTransactionService {
             List<MapItem> latestItems = new ArrayList<>();
 
             for (PreparedManageItem preparedItem : preparedItems) {
-                ManageMapItemRequest itemRequest = preparedItem.request();
+                MapItemPrepareSource source = preparedItem.source();
 
-                if (itemRequest.id() == null) {
+                if (source.id() == null) {
                     MapItem saved = mapItemJpaRepository.save(MapItem.builder()
                             .map(quizMap)
-                            .orderNum(itemRequest.orderNum())
-                            .youtubeUrl(itemRequest.youtubeUrl().trim())
+                            .orderNum(source.orderNum())
+                            .youtubeUrl(source.youtubeUrl().trim())
                             .videoId(preparedItem.metadata().videoId())
-                            .startTime(itemRequest.startTime())
-                            .endTime(itemRequest.endTime())
+                            .startTime(source.startTime())
+                            .endTime(source.endTime())
                             .title(preparedItem.metadata().title())
                             .artist(preparedItem.metadata().artist())
                             .thumbnailUrl(preparedItem.metadata().thumbnailUrl())
@@ -134,17 +138,17 @@ public class MapManageTransactionService {
                     continue;
                 }
 
-                MapItem mapItem = activeItemById.get(itemRequest.id());
+                MapItem mapItem = activeItemById.get(source.id());
                 if (mapItem == null) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_ITEM_ID);
                 }
 
                 mapItem.update(
-                        itemRequest.orderNum(),
-                        itemRequest.youtubeUrl().trim(),
+                        source.orderNum(),
+                        source.youtubeUrl().trim(),
                         preparedItem.metadata().videoId(),
-                        itemRequest.startTime(),
-                        itemRequest.endTime(),
+                        source.startTime(),
+                        source.endTime(),
                         preparedItem.metadata().title(),
                         preparedItem.metadata().artist(),
                         preparedItem.metadata().thumbnailUrl(),
@@ -174,6 +178,98 @@ public class MapManageTransactionService {
         }
     }
 
+    @Transactional
+    public CreateMapWithItemsResponse createMapWithItemsInTransaction(
+            User owner,
+            CreateMapWithItemsRequest request,
+            List<PreparedManageItem> preparedItems
+    ) {
+        validateCreatePreparedItems(request, preparedItems);
+
+        QuizMap quizMap = quizMapJpaRepository.save(QuizMap.builder()
+                .owner(owner)
+                .title(request.title())
+                .description(request.description())
+                .category(request.category())
+                .numOfSong(0)
+                .totalPlayTime(0)
+                .playCount(0L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .isDeleted(false)
+                .build());
+
+        List<MapItem> savedItems = new ArrayList<>();
+
+        try {
+            for (PreparedManageItem preparedItem : preparedItems) {
+                MapItemPrepareSource source = preparedItem.source();
+
+                MapItem savedItem = mapItemJpaRepository.save(MapItem.builder()
+                        .map(quizMap)
+                        .orderNum(source.orderNum())
+                        .youtubeUrl(source.youtubeUrl().trim())
+                        .videoId(preparedItem.metadata().videoId())
+                        .startTime(source.startTime())
+                        .endTime(source.endTime())
+                        .title(preparedItem.metadata().title())
+                        .artist(preparedItem.metadata().artist())
+                        .thumbnailUrl(preparedItem.metadata().thumbnailUrl())
+                        .answers(preparedItem.answersJson())
+                        .hint(preparedItem.hint())
+                        .hintTime(preparedItem.hintTime())
+                        .isDeleted(false)
+                        .build());
+
+                savedItems.add(savedItem);
+            }
+
+            recalculateMapMetadata(quizMap, preparedItems);
+            applyPublicationChange(quizMap, request.isPublic());
+
+            mapItemJpaRepository.flush();
+
+            savedItems.sort(Comparator.comparing(MapItem::getOrderNum));
+
+            registerCacheEvictionAfterCommit(quizMap.getId());
+
+            return CreateMapWithItemsResponse.builder()
+                    .map(toMapDetailResponse(quizMap))
+                    .items(savedItems.stream().map(this::toMapItemResponse).toList())
+                    .build();
+        } catch (DataIntegrityViolationException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_DUPLICATE_ACTIVE_ORDER, e);
+        }
+    }
+
+    private void validateCreatePreparedItems(
+            CreateMapWithItemsRequest request,
+            List<PreparedManageItem> preparedItems
+    ) {
+        if (preparedItems == null || request.items().size() != preparedItems.size()) {
+            throw new IllegalStateException(ERROR_INVALID_PREPARED_ITEMS);
+        }
+
+        for (int i = 0; i < request.items().size(); i++) {
+            if (!toPrepareSource(request.items().get(i)).equals(preparedItems.get(i).source())) {
+                throw new IllegalStateException(ERROR_INVALID_PREPARED_ITEMS);
+            }
+        }
+    }
+
+    private MapItemPrepareSource toPrepareSource(CreateMapWithItemsItemRequest item) {
+        return new MapItemPrepareSource(
+                null,
+                item.orderNum(),
+                item.youtubeUrl(),
+                item.startTime(),
+                item.endTime(),
+                item.answers(),
+                item.hint(),
+                item.hintTime()
+        );
+    }
+
     private void validatePreparedItems(
             List<ManageMapItemRequest> requestItems,
             List<PreparedManageItem> preparedItems
@@ -183,10 +279,23 @@ public class MapManageTransactionService {
         }
 
         for (int i = 0; i < requestItems.size(); i++) {
-            if (!requestItems.get(i).equals(preparedItems.get(i).request())) {
+            if (!toPrepareSource(requestItems.get(i)).equals(preparedItems.get(i).source())) {
                 throw new IllegalStateException(ERROR_INVALID_PREPARED_ITEMS);
             }
         }
+    }
+
+    private MapItemPrepareSource toPrepareSource(ManageMapItemRequest item) {
+        return new MapItemPrepareSource(
+                item.id(),
+                item.orderNum(),
+                item.youtubeUrl(),
+                item.startTime(),
+                item.endTime(),
+                item.answers(),
+                item.hint(),
+                item.hintTime()
+        );
     }
 
     private QuizMap getOwnedMapForWriteOrThrow(Long mapId, Long ownerId) {
@@ -248,7 +357,7 @@ public class MapManageTransactionService {
     private void recalculateMapMetadata(QuizMap quizMap, List<PreparedManageItem> preparedItems) {
         int numOfSong = preparedItems.size();
         int totalPlayTime = preparedItems.stream()
-                .map(PreparedManageItem::request)
+                .map(PreparedManageItem::source)
                 .mapToInt(item -> item.endTime() - item.startTime())
                 .sum();
 

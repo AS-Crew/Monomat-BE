@@ -1,7 +1,12 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.auth.entity.User;
+import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.map.MapItemPolicy;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
@@ -44,19 +49,23 @@ public class MapManageService {
     private static final String ERROR_NO_VALID_ANSWER = "정답은 최소 1개 이상이어야 합니다.";
     private static final String ERROR_MAP_ITEM_LIMIT_EXCEEDED =
             "한 맵에 등록할 수 있는 문제는 최대 " + MapItemPolicy.MAX_ITEMS_PER_MAP + "개입니다.";
+    private static final String ERROR_USER_NOT_FOUND = "사용자를 찾을 수 없습니다.";
 
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final YoutubeValidationService youtubeValidationService;
     private final MapManageTransactionService mapManageTransactionService;
+    private final UserRepository userRepository;
     private final JsonMapper jsonMapper;
 
     public MapManageService(
             QuizMapJpaRepository quizMapJpaRepository,
+            UserRepository userRepository,
             YoutubeValidationService youtubeValidationService,
             MapManageTransactionService mapManageTransactionService,
             @Qualifier("pubSubJsonMapper") JsonMapper jsonMapper
     ) {
         this.quizMapJpaRepository = quizMapJpaRepository;
+        this.userRepository = userRepository;
         this.youtubeValidationService = youtubeValidationService;
         this.mapManageTransactionService = mapManageTransactionService;
         this.jsonMapper = jsonMapper;
@@ -83,6 +92,52 @@ public class MapManageService {
                 principal,
                 preparedItems
         );
+    }
+
+    public CreateMapWithItemsResponse createMapWithItems(
+            CreateMapWithItemsRequest request,
+            CustomPrincipal principal
+    ) {
+        validateRegisteredPrincipal(principal);
+        validateCreateRequest(request);
+
+        User owner = userRepository.findById(principal.userId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, ERROR_USER_NOT_FOUND));
+
+        List<PreparedManageItem> preparedItems = prepareItemSources(request.items()
+                .stream()
+                .map(this::toPrepareSource)
+                .toList());
+
+        return mapManageTransactionService.createMapWithItemsInTransaction(
+                owner,
+                request,
+                preparedItems
+        );
+    }
+
+    private void validateCreateRequest(CreateMapWithItemsRequest request) {
+        if (request.items().size() > MapItemPolicy.MAX_ITEMS_PER_MAP) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, ERROR_MAP_ITEM_LIMIT_EXCEEDED);
+        }
+
+        validateCreateOrderNumbers(request.items());
+    }
+
+    private void validateCreateOrderNumbers(List<CreateMapWithItemsItemRequest> items) {
+        Set<Integer> orderNumbers = new HashSet<>();
+
+        for (CreateMapWithItemsItemRequest item : items) {
+            if (!orderNumbers.add(item.orderNum())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_DUPLICATE_ORDER);
+            }
+        }
+
+        for (int orderNum = 1; orderNum <= items.size(); orderNum++) {
+            if (!orderNumbers.contains(orderNum)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_ORDER_SEQUENCE);
+            }
+        }
     }
 
     private void validateRegisteredPrincipal(CustomPrincipal principal) {
@@ -158,20 +213,52 @@ public class MapManageService {
     }
 
     private List<PreparedManageItem> prepareItems(List<ManageMapItemRequest> items) {
+        return prepareItemSources(items.stream()
+                .map(this::toPrepareSource)
+                .toList());
+    }
+
+    private MapItemPrepareSource toPrepareSource(ManageMapItemRequest item) {
+        return new MapItemPrepareSource(
+                item.id(),
+                item.orderNum(),
+                item.youtubeUrl(),
+                item.startTime(),
+                item.endTime(),
+                item.answers(),
+                item.hint(),
+                item.hintTime()
+        );
+    }
+
+    private MapItemPrepareSource toPrepareSource(CreateMapWithItemsItemRequest item) {
+        return new MapItemPrepareSource(
+                null,
+                item.orderNum(),
+                item.youtubeUrl(),
+                item.startTime(),
+                item.endTime(),
+                item.answers(),
+                item.hint(),
+                item.hintTime()
+        );
+    }
+
+    private List<PreparedManageItem> prepareItemSources(List<MapItemPrepareSource> sources) {
         List<PreparedManageItem> preparedItems = new ArrayList<>();
 
-        for (ManageMapItemRequest item : items) {
-            validateBasicTimeRange(item.startTime(), item.endTime());
+        for (MapItemPrepareSource source : sources) {
+            validateBasicTimeRange(source.startTime(), source.endTime());
 
-            YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(item.youtubeUrl());
-            validateTimeRangeWithinDuration(item.startTime(), item.endTime(), metadata.durationSeconds());
+            YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(source.youtubeUrl());
+            validateTimeRangeWithinDuration(source.startTime(), source.endTime(), metadata.durationSeconds());
 
             preparedItems.add(new PreparedManageItem(
-                    item,
+                    source,
                     metadata,
-                    serializeAnswers(item.answers()),
-                    item.hint().trim(),
-                    item.hintTime() == null ? DEFAULT_HINT_TIME : item.hintTime()
+                    serializeAnswers(source.answers()),
+                    source.hint().trim(),
+                    source.hintTime() == null ? DEFAULT_HINT_TIME : source.hintTime()
             ));
         }
 

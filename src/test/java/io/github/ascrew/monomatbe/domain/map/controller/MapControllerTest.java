@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapItemResponse;
@@ -22,6 +23,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -123,6 +125,186 @@ class MapControllerTest {
 
         verify(mapService).getMyMap(100L, principal);
         verify(mapService, never()).getPublicMap(anyLong());
+    }
+
+    @Test
+    void createMapWithItems_withValidRequest_returns201() throws Exception {
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+        SecurityContextHolder.getContext().setAuthentication(authenticationToken(principal));
+
+        MapDetailResponse mapResponse = MapDetailResponse.builder()
+                .id(1L)
+                .ownerId(10L)
+                .ownerNickname("owner")
+                .title("J-POP 퀴즈")
+                .description("J-POP 중심 퀴즈 맵")
+                .category(MapCategory.JPOP)
+                .numOfSong(2)
+                .totalPlayTime(60)
+                .isPublic(false)
+                .pendingPublic(false)
+                .playCount(0L)
+                .createdAt(LocalDateTime.of(2026, 6, 7, 12, 0))
+                .updatedAt(LocalDateTime.of(2026, 6, 7, 12, 0))
+                .build();
+
+        MapItemResponse firstItemResponse = MapItemResponse.builder()
+                .id(10L)
+                .mapId(1L)
+                .orderNum(1)
+                .youtubeUrl("https://www.youtube.com/watch?v=video1")
+                .videoId("video1")
+                .startTime(30)
+                .endTime(60)
+                .title("YouTube title 1")
+                .artist("YouTube author 1")
+                .thumbnailUrl("https://thumbnail/1")
+                .answers(List.of("ditto"))
+                .hint("ㄷㅌ")
+                .hintTime(15)
+                .createdAt(LocalDateTime.of(2026, 6, 7, 12, 0))
+                .updatedAt(LocalDateTime.of(2026, 6, 7, 12, 0))
+                .build();
+
+        MapItemResponse secondItemResponse = MapItemResponse.builder()
+                .id(11L)
+                .mapId(1L)
+                .orderNum(2)
+                .youtubeUrl("https://www.youtube.com/watch?v=video2")
+                .videoId("video2")
+                .startTime(0)
+                .endTime(30)
+                .title("YouTube title 2")
+                .artist("YouTube author 2")
+                .thumbnailUrl("https://thumbnail/2")
+                .answers(List.of("omg"))
+                .hint("ㅇㅇㅈ")
+                .hintTime(15)
+                .createdAt(LocalDateTime.of(2026, 6, 7, 12, 0))
+                .updatedAt(LocalDateTime.of(2026, 6, 7, 12, 0))
+                .build();
+
+        CreateMapWithItemsResponse response = CreateMapWithItemsResponse.builder()
+                .map(mapResponse)
+                .items(List.of(firstItemResponse, secondItemResponse))
+                .build();
+
+        when(mapManageService.createMapWithItems(any(), eq(principal))).thenReturn(response);
+
+        mockMvc.perform(post("/api/maps/with-items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "J-POP 퀴즈",
+                              "description": "J-POP 중심 퀴즈 맵",
+                              "category": "J-POP",
+                              "isPublic": false,
+                              "items": [
+                                {
+                                  "orderNum": 1,
+                                  "youtubeUrl": "https://www.youtube.com/watch?v=video1",
+                                  "startTime": 30,
+                                  "endTime": 60,
+                                  "answers": ["ditto"],
+                                  "hint": "ㄷㅌ",
+                                  "hintTime": 15
+                                },
+                                {
+                                  "orderNum": 2,
+                                  "youtubeUrl": "https://www.youtube.com/watch?v=video2",
+                                  "startTime": 0,
+                                  "endTime": 30,
+                                  "answers": ["omg"],
+                                  "hint": "ㅇㅇㅈ",
+                                  "hintTime": 15
+                                }
+                              ]
+                            }
+                            """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.map.id").value(1L))
+                .andExpect(jsonPath("$.map.ownerId").value(10L))
+                .andExpect(jsonPath("$.map.ownerNickname").value("owner"))
+                .andExpect(jsonPath("$.map.title").value("J-POP 퀴즈"))
+                .andExpect(jsonPath("$.map.description").value("J-POP 중심 퀴즈 맵"))
+                .andExpect(jsonPath("$.map.category").value("J-POP"))
+                .andExpect(jsonPath("$.map.numOfSong").value(2))
+                .andExpect(jsonPath("$.map.totalPlayTime").value(60))
+                .andExpect(jsonPath("$.map.isPublic").value(false))
+                .andExpect(jsonPath("$.map.pendingPublic").value(false))
+                .andExpect(jsonPath("$.map.playCount").value(0))
+                .andExpect(jsonPath("$.items[0].id").value(10L))
+                .andExpect(jsonPath("$.items[0].mapId").value(1L))
+                .andExpect(jsonPath("$.items[0].orderNum").value(1))
+                .andExpect(jsonPath("$.items[0].videoId").value("video1"))
+                .andExpect(jsonPath("$.items[0].answers[0]").value("ditto"))
+                .andExpect(jsonPath("$.items[0].hint").value("ㄷㅌ"))
+                .andExpect(jsonPath("$.items[1].id").value(11L))
+                .andExpect(jsonPath("$.items[1].mapId").value(1L))
+                .andExpect(jsonPath("$.items[1].orderNum").value(2))
+                .andExpect(jsonPath("$.items[1].videoId").value("video2"))
+                .andExpect(jsonPath("$.items[1].answers[0]").value("omg"))
+                .andExpect(jsonPath("$.items[1].hint").value("ㅇㅇㅈ"));
+
+        verify(mapManageService).createMapWithItems(any(), eq(principal));
+    }
+
+    @Test
+    void createMapWithItems_invalidRequest_returns400() throws Exception {
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+        SecurityContextHolder.getContext().setAuthentication(authenticationToken(principal));
+
+        mockMvc.perform(post("/api/maps/with-items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "",
+                              "description": "J-POP 중심 퀴즈 맵",
+                              "category": "J-POP",
+                              "isPublic": false,
+                              "items": []
+                            }
+                            """))
+                .andExpect(status().isBadRequest());
+
+        verify(mapManageService, never()).createMapWithItems(any(), any());
+    }
+
+    @Test
+    void createMapWithItems_serviceForbidden_returns403() throws Exception {
+        CustomPrincipal principal = new CustomPrincipal(20L, "u-20", UserType.GUEST);
+        SecurityContextHolder.getContext().setAuthentication(authenticationToken(principal));
+
+        when(mapManageService.createMapWithItems(any(), eq(principal)))
+                .thenThrow(new ResponseStatusException(
+                        HttpStatus.FORBIDDEN,
+                        "정식 회원만 맵을 관리할 수 있습니다."
+                ));
+
+        mockMvc.perform(post("/api/maps/with-items")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "J-POP 퀴즈",
+                              "description": "J-POP 중심 퀴즈 맵",
+                              "category": "J-POP",
+                              "isPublic": false,
+                              "items": [
+                                {
+                                  "orderNum": 1,
+                                  "youtubeUrl": "https://www.youtube.com/watch?v=video1",
+                                  "startTime": 30,
+                                  "endTime": 60,
+                                  "answers": ["ditto"],
+                                  "hint": "ㄷㅌ",
+                                  "hintTime": 15
+                                }
+                              ]
+                            }
+                            """))
+                .andExpect(status().isForbidden());
+
+        verify(mapManageService).createMapWithItems(any(), eq(principal));
     }
 
     @Test

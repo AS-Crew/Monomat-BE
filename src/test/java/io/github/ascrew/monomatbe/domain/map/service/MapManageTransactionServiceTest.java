@@ -5,6 +5,9 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsItemRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsResponse;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.MapItem;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
@@ -16,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import static org.mockito.Mockito.times;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -125,19 +129,15 @@ class MapManageTransactionServiceTest {
         );
 
         List<PreparedManageItem> preparedItems = List.of(
-                new PreparedManageItem(
+                preparedItem(
                         updateItemRequest,
                         new YoutubeMetadata("new1", "YouTube title 1", "YouTube author 1", "https://thumbnail/1", null),
-                        "[\"ditto\"]",
-                        "ㄷㅌ",
-                        15
+                        "[\"ditto\"]"
                 ),
-                new PreparedManageItem(
+                preparedItem(
                         createItemRequest,
                         new YoutubeMetadata("new2", "YouTube title 2", "YouTube author 2", "https://thumbnail/2", null),
-                        "[\"omg\"]",
-                        "ㅇㅇㅈ",
-                        15
+                        "[\"omg\"]"
                 )
         );
 
@@ -223,12 +223,10 @@ class MapManageTransactionServiceTest {
                 1L,
                 request,
                 principal,
-                List.of(new PreparedManageItem(
+                List.of(preparedItem(
                         itemRequest,
                         new YoutubeMetadata("new", "title", "artist", "thumbnail", null),
-                        "[\"new\"]",
-                        "n",
-                        15
+                        "[\"new\"]"
                 ))
         ))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
@@ -264,12 +262,10 @@ class MapManageTransactionServiceTest {
                 List.of()
         );
 
-        List<PreparedManageItem> preparedItems = List.of(new PreparedManageItem(
+        List<PreparedManageItem> preparedItems = List.of(preparedItem(
                 itemRequest,
                 new YoutubeMetadata("new", "title", "artist", "thumbnail", null),
-                "[\"answer\"]",
-                "hint",
-                15
+                "[\"answer\"]"
         ));
 
         when(quizMapJpaRepository.findOwnedByIdAndIsDeletedFalseForUpdate(1L, 10L))
@@ -372,12 +368,10 @@ class MapManageTransactionServiceTest {
                 1L,
                 request,
                 principal,
-                List.of(new PreparedManageItem(
+                List.of(preparedItem(
                         preparedRequestItem,
                         new YoutubeMetadata("prepared", "title", "artist", "thumbnail", null),
-                        "[\"answer\"]",
-                        "hint",
-                        15
+                        "[\"answer\"]"
                 ))
         ))
                 .isInstanceOf(IllegalStateException.class)
@@ -385,6 +379,302 @@ class MapManageTransactionServiceTest {
 
         verify(quizMapJpaRepository, never()).findOwnedByIdAndIsDeletedFalseForUpdate(anyLong(), anyLong());
         verify(mapItemJpaRepository, never()).setTemporaryOrderNums(anyLong());
+    }
+
+    @Test
+    void createMapWithItemsInTransaction_success_createsMapAndItemsAtomically() {
+        User owner = registeredUser(10L, "owner");
+
+        CreateMapWithItemsItemRequest firstItemRequest = new CreateMapWithItemsItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=video1",
+                30,
+                60,
+                List.of("ditto"),
+                "ㄷㅌ",
+                15
+        );
+        CreateMapWithItemsItemRequest secondItemRequest = new CreateMapWithItemsItemRequest(
+                2,
+                "https://www.youtube.com/watch?v=video2",
+                0,
+                30,
+                List.of("omg"),
+                "ㅇㅇㅈ",
+                15
+        );
+
+        CreateMapWithItemsRequest request = new CreateMapWithItemsRequest(
+                "J-POP 퀴즈",
+                "J-POP 중심 퀴즈 맵",
+                MapCategory.JPOP,
+                false,
+                List.of(firstItemRequest, secondItemRequest)
+        );
+
+        QuizMap savedMap = QuizMap.builder()
+                .id(1L)
+                .owner(owner)
+                .title("J-POP 퀴즈")
+                .description("J-POP 중심 퀴즈 맵")
+                .category(MapCategory.JPOP)
+                .numOfSong(0)
+                .totalPlayTime(0)
+                .playCount(0L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .isDeleted(false)
+                .build();
+
+        MapItem savedFirstItem = MapItem.builder()
+                .id(10L)
+                .map(savedMap)
+                .orderNum(1)
+                .youtubeUrl("https://www.youtube.com/watch?v=video1")
+                .videoId("video1")
+                .startTime(30)
+                .endTime(60)
+                .title("YouTube title 1")
+                .artist("YouTube author 1")
+                .thumbnailUrl("https://thumbnail/1")
+                .answers("[\"ditto\"]")
+                .hint("ㄷㅌ")
+                .hintTime(15)
+                .isDeleted(false)
+                .build();
+
+        MapItem savedSecondItem = MapItem.builder()
+                .id(11L)
+                .map(savedMap)
+                .orderNum(2)
+                .youtubeUrl("https://www.youtube.com/watch?v=video2")
+                .videoId("video2")
+                .startTime(0)
+                .endTime(30)
+                .title("YouTube title 2")
+                .artist("YouTube author 2")
+                .thumbnailUrl("https://thumbnail/2")
+                .answers("[\"omg\"]")
+                .hint("ㅇㅇㅈ")
+                .hintTime(15)
+                .isDeleted(false)
+                .build();
+
+        List<PreparedManageItem> preparedItems = List.of(
+                preparedItem(
+                        firstItemRequest,
+                        new YoutubeMetadata("video1", "YouTube title 1", "YouTube author 1", "https://thumbnail/1", null),
+                        "[\"ditto\"]"
+                ),
+                preparedItem(
+                        secondItemRequest,
+                        new YoutubeMetadata("video2", "YouTube title 2", "YouTube author 2", "https://thumbnail/2", null),
+                        "[\"omg\"]"
+                )
+        );
+
+        when(quizMapJpaRepository.save(any(QuizMap.class))).thenReturn(savedMap);
+        when(mapItemJpaRepository.save(any(MapItem.class)))
+                .thenReturn(savedFirstItem)
+                .thenReturn(savedSecondItem);
+        when(jsonMapper.readValue(eq("[\"ditto\"]"), any(TypeReference.class))).thenReturn(List.of("ditto"));
+        when(jsonMapper.readValue(eq("[\"omg\"]"), any(TypeReference.class))).thenReturn(List.of("omg"));
+
+        CreateMapWithItemsResponse response = mapManageTransactionService.createMapWithItemsInTransaction(
+                owner,
+                request,
+                preparedItems
+        );
+
+        assertThat(response.map().id()).isEqualTo(1L);
+        assertThat(response.map().ownerId()).isEqualTo(10L);
+        assertThat(response.map().ownerNickname()).isEqualTo("owner");
+        assertThat(response.map().title()).isEqualTo("J-POP 퀴즈");
+        assertThat(response.map().description()).isEqualTo("J-POP 중심 퀴즈 맵");
+        assertThat(response.map().category()).isEqualTo(MapCategory.JPOP);
+        assertThat(response.map().numOfSong()).isEqualTo(2);
+        assertThat(response.map().totalPlayTime()).isEqualTo(60);
+        assertThat(response.map().isPublic()).isFalse();
+        assertThat(response.map().pendingPublic()).isFalse();
+        assertThat(response.map().playCount()).isEqualTo(0L);
+
+        assertThat(response.items()).hasSize(2);
+        assertThat(response.items().get(0).id()).isEqualTo(10L);
+        assertThat(response.items().get(0).mapId()).isEqualTo(1L);
+        assertThat(response.items().get(0).orderNum()).isEqualTo(1);
+        assertThat(response.items().get(0).videoId()).isEqualTo("video1");
+        assertThat(response.items().get(0).answers()).containsExactly("ditto");
+
+        assertThat(response.items().get(1).id()).isEqualTo(11L);
+        assertThat(response.items().get(1).mapId()).isEqualTo(1L);
+        assertThat(response.items().get(1).orderNum()).isEqualTo(2);
+        assertThat(response.items().get(1).videoId()).isEqualTo("video2");
+        assertThat(response.items().get(1).answers()).containsExactly("omg");
+
+        assertThat(savedMap.getNumOfSong()).isEqualTo(2);
+        assertThat(savedMap.getTotalPlayTime()).isEqualTo(60);
+
+        verify(quizMapJpaRepository).save(any(QuizMap.class));
+        verify(mapItemJpaRepository, times(2)).save(any(MapItem.class));
+        verify(mapItemJpaRepository).flush();
+        verify(mapCacheEvictor).evictPublicMapCaches(1L);
+    }
+
+    @Test
+    void createMapWithItemsInTransaction_itemSaveFails_returns409AndDoesNotEvictCache() {
+        User owner = registeredUser(10L, "owner");
+
+        CreateMapWithItemsItemRequest firstItemRequest = new CreateMapWithItemsItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=video1",
+                30,
+                60,
+                List.of("ditto"),
+                "ㄷㅌ",
+                15
+        );
+        CreateMapWithItemsItemRequest secondItemRequest = new CreateMapWithItemsItemRequest(
+                2,
+                "https://www.youtube.com/watch?v=video2",
+                0,
+                30,
+                List.of("omg"),
+                "ㅇㅇㅈ",
+                15
+        );
+
+        CreateMapWithItemsRequest request = new CreateMapWithItemsRequest(
+                "J-POP 퀴즈",
+                "J-POP 중심 퀴즈 맵",
+                MapCategory.JPOP,
+                false,
+                List.of(firstItemRequest, secondItemRequest)
+        );
+
+        QuizMap savedMap = QuizMap.builder()
+                .id(1L)
+                .owner(owner)
+                .title("J-POP 퀴즈")
+                .description("J-POP 중심 퀴즈 맵")
+                .category(MapCategory.JPOP)
+                .numOfSong(0)
+                .totalPlayTime(0)
+                .playCount(0L)
+                .isPublic(false)
+                .pendingPublic(false)
+                .isDeleted(false)
+                .build();
+
+        MapItem savedFirstItem = MapItem.builder()
+                .id(10L)
+                .map(savedMap)
+                .orderNum(1)
+                .youtubeUrl("https://www.youtube.com/watch?v=video1")
+                .videoId("video1")
+                .startTime(30)
+                .endTime(60)
+                .title("YouTube title 1")
+                .artist("YouTube author 1")
+                .thumbnailUrl("https://thumbnail/1")
+                .answers("[\"ditto\"]")
+                .hint("ㄷㅌ")
+                .hintTime(15)
+                .isDeleted(false)
+                .build();
+
+        List<PreparedManageItem> preparedItems = List.of(
+                preparedItem(
+                        firstItemRequest,
+                        new YoutubeMetadata("video1", "YouTube title 1", "YouTube author 1", "https://thumbnail/1", null),
+                        "[\"ditto\"]"
+                ),
+                preparedItem(
+                        secondItemRequest,
+                        new YoutubeMetadata("video2", "YouTube title 2", "YouTube author 2", "https://thumbnail/2", null),
+                        "[\"omg\"]"
+                )
+        );
+
+        when(quizMapJpaRepository.save(any(QuizMap.class))).thenReturn(savedMap);
+        when(mapItemJpaRepository.save(any(MapItem.class)))
+                .thenReturn(savedFirstItem)
+                .thenThrow(new DataIntegrityViolationException("item save failed"));
+
+        assertThatThrownBy(() -> mapManageTransactionService.createMapWithItemsInTransaction(
+                owner,
+                request,
+                preparedItems
+        ))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("이미 사용 중인 문제 순서입니다.");
+
+        verify(quizMapJpaRepository).save(any(QuizMap.class));
+        verify(mapItemJpaRepository, times(2)).save(any(MapItem.class));
+        verify(mapItemJpaRepository, never()).flush();
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(anyLong());
+    }
+
+    @Test
+    void createMapWithItemsInTransaction_preparedItemsSizeMismatch_throwsIllegalStateException() {
+        CreateMapWithItemsItemRequest itemRequest = new CreateMapWithItemsItemRequest(
+                1,
+                "https://www.youtube.com/watch?v=video1",
+                30,
+                60,
+                List.of("ditto"),
+                "ㄷㅌ",
+                15
+        );
+
+        CreateMapWithItemsRequest request = new CreateMapWithItemsRequest(
+                "J-POP 퀴즈",
+                "J-POP 중심 퀴즈 맵",
+                MapCategory.JPOP,
+                false,
+                List.of(itemRequest)
+        );
+
+        User owner = registeredUser(10L, "owner");
+
+        assertThatThrownBy(() -> mapManageTransactionService.createMapWithItemsInTransaction(
+                owner,
+                request,
+                List.of()
+        ))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("맵 관리 일괄 저장 준비 데이터가 요청 데이터와 일치하지 않습니다.");
+
+        verify(quizMapJpaRepository, never()).save(any(QuizMap.class));
+        verify(mapItemJpaRepository, never()).save(any(MapItem.class));
+        verify(mapCacheEvictor, never()).evictPublicMapCaches(anyLong());
+    }
+
+    private PreparedManageItem preparedItem(
+            ManageMapItemRequest item,
+            YoutubeMetadata metadata,
+            String answersJson
+    ) {
+        return new PreparedManageItem(
+                toPrepareSource(item),
+                metadata,
+                answersJson,
+                item.hint(),
+                item.hintTime()
+        );
+    }
+
+    private MapItemPrepareSource toPrepareSource(ManageMapItemRequest item) {
+        return new MapItemPrepareSource(
+                item.id(),
+                item.orderNum(),
+                item.youtubeUrl(),
+                item.startTime(),
+                item.endTime(),
+                item.answers(),
+                item.hint(),
+                item.hintTime()
+        );
     }
 
     private User registeredUser(Long id, String username) {
@@ -457,5 +747,32 @@ class MapManageTransactionServiceTest {
                 .hintTime(15)
                 .isDeleted(false)
                 .build();
+    }
+
+    private PreparedManageItem preparedItem(
+            CreateMapWithItemsItemRequest item,
+            YoutubeMetadata metadata,
+            String answersJson
+    ) {
+        return new PreparedManageItem(
+                toPrepareSource(item),
+                metadata,
+                answersJson,
+                item.hint(),
+                item.hintTime()
+        );
+    }
+
+    private MapItemPrepareSource toPrepareSource(CreateMapWithItemsItemRequest item) {
+        return new MapItemPrepareSource(
+                null,
+                item.orderNum(),
+                item.youtubeUrl(),
+                item.startTime(),
+                item.endTime(),
+                item.answers(),
+                item.hint(),
+                item.hintTime()
+        );
     }
 }

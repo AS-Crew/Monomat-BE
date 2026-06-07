@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.map.service;
 
+import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
@@ -7,6 +8,8 @@ import io.github.ascrew.monomatbe.domain.map.dto.ManageMapItemRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapRequest;
 import io.github.ascrew.monomatbe.domain.map.dto.ManageMapResponse;
 import io.github.ascrew.monomatbe.domain.map.dto.MapDetailResponse;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsItemRequest;
+import io.github.ascrew.monomatbe.domain.map.dto.CreateMapWithItemsRequest;
 import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
@@ -49,6 +52,9 @@ class MapManageServiceTest {
     private MapManageTransactionService mapManageTransactionService;
 
     @Mock
+    private UserRepository userRepository;
+
+    @Mock
     private JsonMapper jsonMapper;
 
     private MapManageService mapManageService;
@@ -57,6 +63,7 @@ class MapManageServiceTest {
     void setUp() {
         mapManageService = new MapManageService(
                 quizMapJpaRepository,
+                userRepository,
                 youtubeValidationService,
                 mapManageTransactionService,
                 jsonMapper
@@ -269,6 +276,36 @@ class MapManageServiceTest {
         verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
+
+    @Test
+    void createMapWithItems_withoutPrincipal_returns401() {
+        CreateMapWithItemsRequest request = createMapWithItemsRequest();
+
+        assertThatThrownBy(() -> mapManageService.createMapWithItems(request, null))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED))
+                .hasMessageContaining("유효하지 않은 인증 정보입니다.");
+
+        verify(userRepository, never()).findById(anyLong());
+        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(mapManageTransactionService, never()).createMapWithItemsInTransaction(any(), any(), any());
+    }
+
+    @Test
+    void createMapWithItems_withGuestPrincipal_returns403() {
+        CreateMapWithItemsRequest request = createMapWithItemsRequest();
+        CustomPrincipal principal = new CustomPrincipal(10L, "guest-10", UserType.GUEST);
+
+        assertThatThrownBy(() -> mapManageService.createMapWithItems(request, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN))
+                .hasMessageContaining("정식 회원만 맵을 관리할 수 있습니다.");
+
+        verify(userRepository, never()).findById(anyLong());
+        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(mapManageTransactionService, never()).createMapWithItemsInTransaction(any(), any(), any());
+    }
+
     private ManageMapRequest validEmptyRequest() {
         return new ManageMapRequest(
                 "title",
@@ -303,5 +340,23 @@ class MapManageServiceTest {
                 .pendingPublic(false)
                 .isDeleted(false)
                 .build();
+    }
+
+    private CreateMapWithItemsRequest createMapWithItemsRequest() {
+        return new CreateMapWithItemsRequest(
+                "J-POP 퀴즈",
+                "J-POP 중심 퀴즈 맵",
+                MapCategory.JPOP,
+                false,
+                List.of(new CreateMapWithItemsItemRequest(
+                        1,
+                        "https://www.youtube.com/watch?v=video1",
+                        30,
+                        60,
+                        List.of("ditto"),
+                        "ㄷㅌ",
+                        15
+                ))
+        );
     }
 }

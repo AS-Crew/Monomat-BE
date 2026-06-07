@@ -48,6 +48,7 @@ public class LobbyReaperScheduler {
     private final LobbyRepository lobbyRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
+    private final LobbyReaperMetric lobbyReaperMetric;
 
     /**
      * 생성 직후 폭파를 보류할 grace 기간(ms).
@@ -62,11 +63,13 @@ public class LobbyReaperScheduler {
             LobbyRepository lobbyRepository,
             ApplicationEventPublisher eventPublisher,
             LobbyRealtimeNotifier lobbyRealtimeNotifier,
+            LobbyReaperMetric lobbyReaperMetric,
             @Value("${monomat.lobby.reaper.grace-ms:120000}") long graceMillis
     ) {
         this.lobbyRepository = lobbyRepository;
         this.eventPublisher = eventPublisher;
         this.lobbyRealtimeNotifier = lobbyRealtimeNotifier;
+        this.lobbyReaperMetric = lobbyReaperMetric;
         this.graceMillis = graceMillis;
     }
 
@@ -86,6 +89,7 @@ public class LobbyReaperScheduler {
             return;
         }
 
+        int scannedCount = 0;
         int reapedCount = 0;
 
         for (String lobbyCode : candidateLobbyCodes) {
@@ -93,40 +97,49 @@ public class LobbyReaperScheduler {
                 continue;
             }
 
+            scannedCount++;
             ReapLobbyResult result = lobbyRepository.reapEmptyLobby(lobbyCode, graceMillis);
 
-            if (result == ReapLobbyResult.REAPED) {
-                handleReaped(lobbyCode);
-                reapedCount++;
+            switch (result) {
+                case REAPED -> {
+                    /*
+                     * 로비별 LobbyClosedEvent는 game 도메인이 orphan 게임 세션 키를
+                     * 정리하도록 위임하는 신호이므로 폭파된 로비마다 발행한다.
+                     * (공개 목록 refresh는 배치 종료 후 1회만 보낸다.)
+                     */
+                    eventPublisher.publishEvent(new LobbyClosedEvent(lobbyCode));
+                    lobbyReaperMetric.incrementReaped();
+                    reapedCount++;
+                }
+                case ERROR -> {
+                    log.warn("빈 로비 reaper 처리 실패 - lobbyCode: {}", lobbyCode);
+                    lobbyReaperMetric.incrementError();
+                }
+                case ALIVE, TOO_YOUNG, STALE_INDEX -> {
+                    // 정상 비폭파 결과 - 별도 처리 없음
+                }
             }
         }
 
+        lobbyReaperMetric.incrementScanned(scannedCount);
+
         if (reapedCount > 0) {
+            /*
+             * 한 배치에서 N개를 폭파해도 "목록 다시 조회" 신호는 동일하므로,
+             * FE의 중복 refetch를 막기 위해 배치 종료 후 1회만 브로드캐스트한다.
+             * 브로드캐스트 실패가 폭파 처리에 영향을 주지 않도록 try-catch로 격리한다.
+             */
+            try {
+                lobbyRealtimeNotifier.notifyLobbyListRefresh();
+            } catch (Exception e) {
+                log.warn("빈 로비 reaper 목록 갱신 알림 실패 - reaped: {}", reapedCount, e);
+            }
+
             log.warn(
                     "빈 로비 reaper 배치 폭파 완료 - scanned: {}, reaped: {}",
-                    candidateLobbyCodes.size(),
+                    scannedCount,
                     reapedCount
             );
-        }
-    }
-
-    /**
-     * 폭파된 로비에 대한 후처리를 수행한다.
-     *
-     * leave_lobby.lua의 DESTROYED 경로(LobbyLeaveEventHandler)와 동일하게:
-     * - LobbyClosedEvent를 발행해 game 도메인이 orphan 게임 세션 키를 정리하게 한다.
-     * - 공개 로비 목록 refresh 신호를 브로드캐스트한다.
-     *
-     * 브로드캐스트 실패가 세션 정리 이벤트 발행을 막지 않도록 정리 이벤트를 먼저 발행하고,
-     * 브로드캐스트는 try-catch로 격리한다.
-     */
-    private void handleReaped(String lobbyCode) {
-        eventPublisher.publishEvent(new LobbyClosedEvent(lobbyCode));
-
-        try {
-            lobbyRealtimeNotifier.notifyLobbyListRefresh();
-        } catch (Exception e) {
-            log.warn("빈 로비 reaper 목록 갱신 알림 실패 - 로비: {}", lobbyCode, e);
         }
     }
 }

@@ -313,16 +313,17 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
-     * 빈 로비 reaper용으로 lobby:all Set의 일부 로비 코드를 조회한다.
+     * 빈 로비 reaper용으로 lobby:all Set에서 임의의 로비 코드 후보를 조회한다.
      *
      * [사용 목적]
-     * reaper 스케줄러가 공개·비공개를 포함한 전체 로비를 제한된 개수만큼 점진적으로
-     * 순회하며 "활성 세션 0" 여부를 검사하기 위해 사용한다.
+     * reaper 스케줄러가 공개·비공개를 포함한 전체 로비를 제한된 개수만큼 검사하기 위해 사용한다.
      *
-     * [SSCAN 사용 이유]
-     * Set은 순서가 없으므로 SSCAN으로 전체를 점진적으로 훑어 특정 구간에 치우치지 않게 한다.
-     * ScanOptions.count()는 정확한 개수가 아니라 Redis에 전달하는 hint이므로,
-     * 최종 후보 개수는 limit으로 한 번 더 제어한다.
+     * [SRANDMEMBER(distinctRandomMembers) 사용 이유]
+     * SSCAN을 매 실행마다 cursor 0부터 새로 시작하면 항상 앞쪽 구간만 보게 되어
+     * 뒤쪽 stale 로비가 정리되지 않고 누적될 수 있다(cursor를 영속하지 않으면 재개 불가).
+     * reaper는 정렬이 불필요하고, 유령 로비는 폭파될 때까지 후보 풀에 남으므로
+     * 매 실행 임의 표본을 뽑으면 확률적으로 전체가 수렴 정리된다.
+     * 동일 API를 {@link #addPublicSetCleanupCandidates}에서도 사용한다.
      *
      * @param limit 조회할 최대 code 수
      * @return reaper 검사 후보 로비 코드 목록
@@ -332,27 +333,20 @@ public class LobbyRedisQueryRepository {
             return List.of();
         }
 
-        List<String> candidates = new ArrayList<>();
+        Set<String> codes = redisTemplate.opsForSet()
+                .distinctRandomMembers(RedisKeys.LOBBY_ALL, limit);
 
-        ScanOptions scanOptions = ScanOptions.scanOptions()
-                .count(limit)
-                .build();
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
 
-        try (Cursor<String> cursor =
-                     redisTemplate.opsForSet().scan(RedisKeys.LOBBY_ALL, scanOptions)) {
+        List<String> candidates = new ArrayList<>(codes.size());
 
-            while (cursor.hasNext() && candidates.size() < limit) {
-                String code = cursor.next();
-
-                if (code == null || code.isBlank()) {
-                    continue;
-                }
-
-                candidates.add(code);
+        for (String code : codes) {
+            if (code == null || code.isBlank()) {
+                continue;
             }
-
-        } catch (Exception e) {
-            log.warn("전체 로비(lobby:all) reaper 후보 스캔 실패", e);
+            candidates.add(code);
         }
 
         return candidates;

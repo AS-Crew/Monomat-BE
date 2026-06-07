@@ -23,6 +23,7 @@ local publicLatestIndexKey = KEYS[6]          -- 공개 로비 최신순 정렬 
 local publicMostPlayersIndexKey = KEYS[7]     -- 공개 로비 현재 인원 많은 순 정렬 인덱스 (ZSET)
 local publicMostAvailableIndexKey = KEYS[8]   -- 공개 로비 빈자리 많은 순 정렬 인덱스 (ZSET)
 local lobbyAllKey = KEYS[9]                   -- 전체 로비 인덱스 (Set, 공개·비공개 포함)
+local readyKey = KEYS[10]                     -- 로비 준비 완료 명단 (Set)
 
 local userId = ARGV[1]                        -- 퇴장하려는 유저 ID
 local lobbyCode = ARGV[2]                     -- 퇴장하려는 로비 코드
@@ -89,7 +90,7 @@ local remainCount = redis.call('SCARD', participantsKey)
 
 if remainCount == 0 then
     -- [Case A] 남은 인원이 없으면 로비를 폭파한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
+    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
     removePublicIndexes()
     return "DESTROYED"
 end
@@ -128,7 +129,7 @@ if currentHost == userId then
 
     -- 이론상 remainCount > 0이면 여기로 오면 안 된다.
     -- 다만 Redis 자료구조 불일치 상황에서는 안전하게 로비를 폭파하고 모든 공개 인덱스를 제거한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey)
+    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
     removePublicIndexes()
     return "DESTROYED"
 end

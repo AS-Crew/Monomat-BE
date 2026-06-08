@@ -967,6 +967,77 @@ class LobbyQueryServiceTest {
         );
     }
 
+    @Test
+    @DisplayName("로비 상세 조회 시 participants Set에 방장이 없으면 방장을 보정하고 hostNickname을 포함한다")
+    void getLobbyDetail_addsMissingHostAndIncludesHostNickname() {
+        // given
+        String code = "ABC123";
+        String hostIdentifier = "host-user-identifier";
+        String participantIdentifier = "participant-user-identifier";
+
+        JoinLobbyResponse lobbyInfo = new JoinLobbyResponse(
+                code,
+                "테스트 로비",
+                hostIdentifier,
+                8,
+                1,
+                LobbyStatus.WAITING.name(),
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        when(lobbyRepository.findByInviteCode(code))
+                .thenReturn(Optional.of(lobbyInfo));
+
+        when(lobbyRepository.getParticipantIdentifiers(code))
+                .thenReturn(List.of(participantIdentifier));
+
+        when(lobbyRepository.getReadyParticipantIdentifiers(code))
+                .thenReturn(Set.of(participantIdentifier));
+
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostIdentifier, participantIdentifier)))
+                .thenReturn(Map.of(
+                        hostIdentifier, "방장닉네임",
+                        participantIdentifier, "참가자닉네임"
+                ));
+
+        when(gameLobbyJpaRepository.findByInviteCode(code))
+                .thenReturn(Optional.empty());
+
+        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
+                .thenReturn(false);
+
+        CustomPrincipal principal = new CustomPrincipal(
+                1L,
+                hostIdentifier,
+                UserType.REGISTERED
+        );
+
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
+
+        // then
+        assertThat(response.hostNickname()).isEqualTo("방장닉네임");
+
+        assertThat(response.players())
+                .extracting(
+                        LobbyPlayerResponse::userIdentifier,
+                        LobbyPlayerResponse::nickname,
+                        LobbyPlayerResponse::host,
+                        LobbyPlayerResponse::ready
+                )
+                .containsExactly(
+                        tuple(hostIdentifier, "방장닉네임", true, false),
+                        tuple(participantIdentifier, "참가자닉네임", false, true)
+                );
+
+        verify(lobbyPlayerNicknameResolver)
+                .resolveNicknameMap(List.of(hostIdentifier, participantIdentifier));
+    }
+
     /**
      * 공개/비공개 여부를 직접 지정할 수 있는 테스트용 로비 DTO를 생성한다.
      *

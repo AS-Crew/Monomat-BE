@@ -3,6 +3,7 @@ package io.github.ascrew.monomatbe.global.websocket;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
+import io.github.ascrew.monomatbe.global.websocket.event.PlayerLeaveEvent;
 import io.github.ascrew.monomatbe.global.websocket.error.StompErrorCode;
 import io.github.ascrew.monomatbe.global.websocket.error.StompErrorException;
 import lombok.extern.slf4j.Slf4j;
@@ -10,6 +11,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -68,6 +70,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final WebSocketMetric webSocketMetric;
     private final RedisScript<String> enterLobbyScript;
     private final LobbyEnterResultMapper lobbyEnterResultMapper = new LobbyEnterResultMapper();
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 사용자 온라인 상태 TTL
@@ -102,12 +105,14 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             StringRedisTemplate stringRedisTemplate,
             WebSocketMetric webSocketMetric,
             @Qualifier("enterLobbyScript") RedisScript<String> enterLobbyScript,
-            @Value("${monomat.websocket.user-status.ttl:PT2H}") Duration userStatusTtl
+            @Value("${monomat.websocket.user-status.ttl:PT2H}") Duration userStatusTtl,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.webSocketMetric = webSocketMetric;
         this.enterLobbyScript = enterLobbyScript;
         this.userStatusTtl = userStatusTtl;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -125,7 +130,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         switch (command) {
             case CONNECT -> handleConnect(accessor, sessionAttributes);
             case SUBSCRIBE, SEND, UNSUBSCRIBE -> validateSession(accessor, sessionAttributes);
-            case DISCONNECT -> handleDisconnect(sessionAttributes);
+            case DISCONNECT -> handleDisconnect(accessor, sessionAttributes);
             default -> {
                 // 별도 처리 불필요
             }
@@ -426,12 +431,45 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         }
     }
 
-    private void handleDisconnect(Map<String, Object> sessionAttributes) {
+    private void handleDisconnect(
+            StompHeaderAccessor accessor,
+            Map<String, Object> sessionAttributes
+    ) {
         String userIdentifier = sessionAttributes != null
                 ? (String) sessionAttributes.get(WebSocketHeaders.USER_IDENTIFIER)
                 : WebSocketHeaders.UNKNOWN_IDENTIFIER;
 
-        log.info("STOMP DISCONNECT: {}", userIdentifier);
+        String lobbyCode = sessionAttributes != null
+                ? (String) sessionAttributes.get(WebSocketHeaders.ROOM_ID)
+                : null;
+
+        String wsSessionId = accessor.getSessionId();
+
+        log.info(
+                "STOMP DISCONNECT - userIdentifier: {}, lobbyCode: {}, wsSessionId: {}",
+                userIdentifier,
+                lobbyCode,
+                wsSessionId
+        );
+
+        if (isUnknownOrBlank(userIdentifier) || isBlank(lobbyCode)) {
+            cleanupWsConnection(wsSessionId);
+            return;
+        }
+
+        if (!isCurrentLobbySession(lobbyCode, userIdentifier, wsSessionId)) {
+            log.info(
+                    "최신 로비 세션이 아니므로 퇴장 이벤트 생략 - lobbyCode: {}, userIdentifier: {}, wsSessionId: {}",
+                    lobbyCode,
+                    userIdentifier,
+                    wsSessionId
+            );
+            cleanupWsConnection(wsSessionId);
+            return;
+        }
+
+        eventPublisher.publishEvent(new PlayerLeaveEvent(lobbyCode, userIdentifier));
+        cleanupWsConnection(wsSessionId);
     }
 
     private String sanitizeForLog(String value) {
@@ -485,5 +523,29 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         public String getName() {
             return name;
         }
+    }
+
+    private boolean isCurrentLobbySession(
+            String lobbyCode,
+            String userIdentifier,
+            String wsSessionId
+    ) {
+        if (isBlank(wsSessionId)) {
+            return false;
+        }
+
+        String currentWsSessionId = stringRedisTemplate.opsForValue()
+                .get(RedisKeys.lobbyUserSessionKey(lobbyCode, userIdentifier));
+
+        return wsSessionId.equals(currentWsSessionId);
+    }
+
+    private boolean isUnknownOrBlank(String userIdentifier) {
+        return isBlank(userIdentifier)
+                || WebSocketHeaders.UNKNOWN_IDENTIFIER.equals(userIdentifier);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

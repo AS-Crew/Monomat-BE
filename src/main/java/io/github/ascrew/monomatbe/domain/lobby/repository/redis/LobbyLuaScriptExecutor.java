@@ -142,6 +142,8 @@ public class LobbyLuaScriptExecutor {
      * KEYS[8] = lobby:public:most_available
      * KEYS[9] = lobby:all
      * KEYS[10] = lobby:{code}:ready
+     * KEYS[11] = lobby:{code}:user_session:{userIdentifier}
+     * KEYS[12] = lobby:{code}:user_session_seq:{userIdentifier}
      *
      * [ARGV 계약]
      * ARGV[1] = userIdentifier
@@ -161,7 +163,9 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
                 RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
                 RedisKeys.LOBBY_ALL,
-                RedisKeys.lobbyReadyKey(code)
+                RedisKeys.lobbyReadyKey(code),
+                RedisKeys.lobbyUserSessionKey(code, userIdentifier),
+                RedisKeys.lobbyUserSessionSequenceKey(code, userIdentifier)
         );
 
         return redisTemplate.execute(

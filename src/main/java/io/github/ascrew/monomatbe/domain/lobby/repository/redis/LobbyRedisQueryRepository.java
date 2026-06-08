@@ -153,6 +153,7 @@ public class LobbyRedisQueryRepository {
      * [조회 전략]
      * - lobby:{code}:order List를 우선 사용하여 FE 표시 순서를 안정적으로 유지한다.
      * - participants Set을 함께 조회하여 이미 퇴장했지만 order에 남은 값은 제거한다.
+     * - order List에 동일 userIdentifier가 중복으로 남아 있어도 응답에서는 한 번만 반환한다.
      * - order List에는 없지만 participants Set에는 존재하는 비정상 데이터는 응답 누락 방지를 위해 뒤에 보정한다.
      *
      * @param code 로비 초대 코드
@@ -173,11 +174,15 @@ public class LobbyRedisQueryRepository {
             return new ArrayList<>(participantSet);
         }
 
-        List<String> result = new ArrayList<>();
+        Set<String> orderedUniqueParticipants = new LinkedHashSet<>();
 
         for (String userIdentifier : orderedParticipants) {
+            if (userIdentifier == null || userIdentifier.isBlank()) {
+                continue;
+            }
+
             if (participantSet.contains(userIdentifier)) {
-                result.add(userIdentifier);
+                orderedUniqueParticipants.add(userIdentifier);
             }
         }
 
@@ -186,12 +191,14 @@ public class LobbyRedisQueryRepository {
          * participants Set에만 존재하는 사용자를 뒤에 추가한다.
          */
         for (String userIdentifier : participantSet) {
-            if (!result.contains(userIdentifier)) {
-                result.add(userIdentifier);
+            if (userIdentifier == null || userIdentifier.isBlank()) {
+                continue;
             }
+
+            orderedUniqueParticipants.add(userIdentifier);
         }
 
-        return result;
+        return new ArrayList<>(orderedUniqueParticipants);
     }
 
     /**

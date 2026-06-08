@@ -23,7 +23,9 @@ local publicLatestIndexKey = KEYS[6]          -- 공개 로비 최신순 정렬 
 local publicMostPlayersIndexKey = KEYS[7]     -- 공개 로비 현재 인원 많은 순 정렬 인덱스 (ZSET)
 local publicMostAvailableIndexKey = KEYS[8]   -- 공개 로비 빈자리 많은 순 정렬 인덱스 (ZSET)
 local lobbyAllKey = KEYS[9]                   -- 전체 로비 인덱스 (Set, 공개·비공개 포함)
-local readyKey = KEYS[10]                     -- 로비 준비 완료 명단 (Set)
+local readyKey = KEYS[10]                   -- 로비 준비 완료 명단 (Set)
+local lobbyUserSessionKey = KEYS[11]          -- lobby:{code}:user_session:{userIdentifier}
+local lobbyUserSessionSeqKey = KEYS[12]       -- lobby:{code}:user_session_seq:{userIdentifier}
 
 local userId = ARGV[1]                        -- 퇴장하려는 유저 ID
 local lobbyCode = ARGV[2]                     -- 퇴장하려는 로비 코드
@@ -83,14 +85,26 @@ end
 
 -- 1. 참여자 명단(Set)과 입장 순서(List)에서 해당 유저를 제거한다.
 redis.call('SREM', participantsKey, userId)
-redis.call('LREM', orderKey, 1, userId)
+-- 이미 중복된 order 데이터가 있는 상태에서도 퇴장 시 완전히 정리한다.
+redis.call('LREM', orderKey, 0, userId)
+redis.call('SREM', readyKey, userId)
+redis.call('DEL', lobbyUserSessionKey, lobbyUserSessionSeqKey)
 
 -- 2. 유저 제거 후 남은 인원수를 확인한다.
 local remainCount = redis.call('SCARD', participantsKey)
 
 if remainCount == 0 then
     -- [Case A] 남은 인원이 없으면 로비를 폭파한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
+    redis.call(
+        'DEL',
+        lobbyKey,
+        participantsKey,
+        orderKey,
+        kickedKey,
+        readyKey,
+        lobbyUserSessionKey,
+        lobbyUserSessionSeqKey
+    )
     removePublicIndexes()
     return "DESTROYED"
 end

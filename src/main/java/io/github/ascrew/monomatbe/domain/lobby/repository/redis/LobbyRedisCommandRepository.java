@@ -416,7 +416,11 @@ public class LobbyRedisCommandRepository {
                     RedisKeys.FIELD_MAP_TITLE,
                     RedisKeys.FIELD_MAP_CATEGORY
             );
-            redisTemplate.opsForHash().put(lobbyKey, RedisKeys.FIELD_QUESTION_COUNT, String.valueOf(questionCount));
+            redisTemplate.opsForHash().put(
+                    lobbyKey,
+                    RedisKeys.FIELD_QUESTION_COUNT,
+                    String.valueOf(questionCount)
+            );
         }
     }
 

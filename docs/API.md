@@ -454,7 +454,7 @@ HTTP/1.1 200 OK
 PUT /api/maps/{mapId}/manage
 Authorization: Bearer {accessToken}
 Content-Type: application/json
-````
+```
 
 #### Request
 
@@ -904,11 +904,11 @@ HTTP/1.1 200 OK
 | `maxPlayers`               | number        | 최대 참여 인원                                          |
 | `currentPlayers`           | number        | 현재 참여 인원                                          |
 | `status`                   | string        | 로비 상태. `WAITING`, `PLAYING`, `FINISHED`           |
-| `mapId`                    | number | null | 선택된 맵 ID. 맵 미선택 시 `null`                          |
-| `mapTitle`                 | string | null | 선택된 맵 제목. 맵 미선택 시 `null`                          |
-| `mapCategory`              | string | null | 선택된 맵 카테고리. 맵 미선택 시 `null`                        |
-| `questionCount`            | number | null | 진행할 문제 수/라운드 수                                    |
-| `timeLimitSeconds`         | number | null | 라운드당 제한 시간(초)                                     |
+| `mapId`                    | number \| null | 선택된 맵 ID. 맵 미선택 시 `null` |
+| `mapTitle`                 | string \| null | 선택된 맵 제목. 맵 미선택 시 `null` |
+| `mapCategory`              | string \| null | 선택된 맵 카테고리. 맵 미선택 시 `null` |
+| `questionCount`            | number \| null | 진행할 문제 수/라운드 수 |
+| `timeLimitSeconds`         | number \| null | 라운드당 제한 시간(초) |
 | `players`                  | array         | 로비 참가자 목록                                         |
 | `players[].userIdentifier` | string        | 참가자 식별자. Redis/WebSocket 식별용 값이며 화면 표시용으로 사용하지 않음 |
 | `players[].nickname`       | string        | 참가자 표시 닉네임                                        |

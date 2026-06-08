@@ -1039,6 +1039,95 @@ class LobbyQueryServiceTest {
     }
 
     /**
+     * 로비 상세 조회 테스트용 기본 로비 정보를 생성한다.
+     *
+     * [의도]
+     * 로비 상세 테스트마다 JoinLobbyResponse 생성자가 반복되면,
+     * 필드 추가 또는 기본 정책 변경 시 여러 테스트를 동시에 수정해야 한다.
+     * 따라서 상세 조회 테스트에서 공통으로 사용하는 기본값을 fixture로 모은다.
+     */
+    private JoinLobbyResponse lobbyDetailInfo(
+            String code,
+            String hostIdentifier,
+            int currentPlayers
+    ) {
+        return lobbyDetailInfo(
+                code,
+                hostIdentifier,
+                currentPlayers,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    /**
+     * 맵 정보와 룰 정보를 직접 지정할 수 있는 로비 상세 조회 테스트용 로비 정보를 생성한다.
+     *
+     * [사용 목적]
+     * 정상 응답 케이스에서는 mapId, mapTitle, mapCategory, questionCount, timeLimitSeconds를 명시하고,
+     * fallback 또는 방장 보정 케이스에서는 null 기본값을 사용한다.
+     */
+    private JoinLobbyResponse lobbyDetailInfo(
+            String code,
+            String hostIdentifier,
+            int currentPlayers,
+            Long mapId,
+            String mapTitle,
+            String mapCategory,
+            Integer questionCount,
+            Integer timeLimitSeconds
+    ) {
+        return new JoinLobbyResponse(
+                code,
+                "테스트 로비",
+                hostIdentifier,
+                8,
+                currentPlayers,
+                LobbyStatus.WAITING.name(),
+                mapId,
+                mapTitle,
+                mapCategory,
+                questionCount,
+                timeLimitSeconds
+        );
+    }
+
+    /**
+     * 로비 상세 조회 테스트에서 공통으로 필요한 Repository/Policy stub을 설정한다.
+     */
+    private void stubLobbyDetailBase(
+            String code,
+            JoinLobbyResponse lobbyInfo
+    ) {
+        when(lobbyRepository.findByInviteCode(code))
+                .thenReturn(Optional.of(lobbyInfo));
+
+        when(gameLobbyJpaRepository.findByInviteCode(code))
+                .thenReturn(Optional.empty());
+
+        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
+                .thenReturn(false);
+    }
+
+    /**
+     * 로비 상세 조회 테스트용 인증 주체를 생성한다.
+     *
+     * [전제]
+     * 로비 상세 조회 테스트는 대부분 방장 권한으로 조회하므로,
+     * userIdentifier만 바꿔 사용할 수 있게 한다.
+     */
+    private CustomPrincipal registeredPrincipal(String userIdentifier) {
+        return new CustomPrincipal(
+                1L,
+                userIdentifier,
+                UserType.REGISTERED
+        );
+    }
+
+    /**
      * 공개/비공개 여부를 직접 지정할 수 있는 테스트용 로비 DTO를 생성한다.
      *
      * [사용 목적]

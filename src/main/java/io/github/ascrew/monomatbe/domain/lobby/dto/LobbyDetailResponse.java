@@ -11,9 +11,10 @@ import java.util.List;
  *
  * [포함 정보]
  * - 로비 기본 정보
+ * - 방장 식별자 및 표시 닉네임
  * - 선택된 맵 정보
  * - 룰 정보 (questionCount, timeLimitSeconds)
- * - 참여자별 ready 상태
+ * - 참여자별 nickname / ready / host 상태
  * - 현재 게임 시작 버튼 활성화 가능 여부 (canStart)
  */
 @Builder
@@ -21,6 +22,7 @@ public record LobbyDetailResponse(
         String inviteCode,
         String title,
         String hostId,
+        String hostNickname,
         int maxPlayers,
         int currentPlayers,
         String status,

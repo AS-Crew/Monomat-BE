@@ -508,8 +508,8 @@ class LobbyQueryServiceTest {
     }
 
     @Test
-    @DisplayName("로비 상세 조회 응답의 참여자 목록에 닉네임을 포함한다")
-    void getLobbyDetail_includesPlayerNicknames() {
+    @DisplayName("로비 상세 조회 응답의 참여자 목록과 최상위 방장 정보에 닉네임을 포함한다")
+    void getLobbyDetail_includesPlayerNicknamesAndHostNickname() {
         // given
         String code = "ABC123";
         String hostIdentifier = "host-user-identifier";
@@ -560,6 +560,8 @@ class LobbyQueryServiceTest {
         LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
 
         // then
+        assertThat(response.hostNickname()).isEqualTo("방장닉네임");
+
         assertThat(response.players())
                 .extracting(LobbyPlayerResponse::nickname)
                 .containsExactly("방장닉네임", "참여자닉네임");
@@ -578,8 +580,8 @@ class LobbyQueryServiceTest {
     }
 
     @Test
-    @DisplayName("로비 상세 조회 응답에서 닉네임을 찾지 못하면 fallback 닉네임을 사용한다")
-    void getLobbyDetail_usesFallbackNicknameWhenNicknameIsMissing() {
+    @DisplayName("로비 상세 조회 응답에서 참가자 닉네임을 찾지 못하면 fallback 닉네임을 사용한다")
+    void getLobbyDetail_usesFallbackNicknameWhenParticipantNicknameIsMissing() {
         // given
         String code = "ABC123";
         String hostIdentifier = "host-user-identifier";
@@ -632,9 +634,81 @@ class LobbyQueryServiceTest {
         LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
 
         // then
+        assertThat(response.hostNickname()).isEqualTo("방장닉네임");
+
         assertThat(response.players())
                 .extracting(LobbyPlayerResponse::nickname)
                 .containsExactly("방장닉네임", "Unknown-partic");
+    }
+
+    @Test
+    @DisplayName("로비 상세 조회 응답에서 방장 닉네임을 찾지 못하면 fallback 닉네임을 hostNickname으로 내려준다")
+    void getLobbyDetail_usesFallbackHostNicknameWhenHostNicknameIsMissing() {
+        // given
+        String code = "ABC123";
+        String hostIdentifier = "missing-host-identifier";
+        String participantIdentifier = "participant-user-identifier";
+
+        JoinLobbyResponse lobbyInfo = new JoinLobbyResponse(
+                code,
+                "테스트 로비",
+                hostIdentifier,
+                8,
+                2,
+                LobbyStatus.WAITING.name(),
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        when(lobbyRepository.findByInviteCode(code))
+                .thenReturn(Optional.of(lobbyInfo));
+
+        when(lobbyRepository.getParticipantIdentifiers(code))
+                .thenReturn(List.of(hostIdentifier, participantIdentifier));
+
+        when(lobbyRepository.getReadyParticipantIdentifiers(code))
+                .thenReturn(Set.of(participantIdentifier));
+
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostIdentifier, participantIdentifier)))
+                .thenReturn(Map.of(
+                        participantIdentifier, "참여자닉네임"
+                ));
+
+        when(lobbyPlayerNicknameResolver.fallbackNickname(hostIdentifier))
+                .thenReturn("Unknown-host12");
+
+        when(gameLobbyJpaRepository.findByInviteCode(code))
+                .thenReturn(Optional.empty());
+
+        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
+                .thenReturn(false);
+
+        CustomPrincipal principal = new CustomPrincipal(
+                1L,
+                hostIdentifier,
+                UserType.REGISTERED
+        );
+
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
+
+        // then
+        assertThat(response.hostNickname()).isEqualTo("Unknown-host12");
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::nickname)
+                .containsExactly("Unknown-host12", "참여자닉네임");
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::host)
+                .containsExactly(true, false);
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::ready)
+                .containsExactly(false, true);
     }
 
     @Test

@@ -826,6 +826,237 @@ HTTP/1.1 201 Created
 | 404 | 사용자 또는 선택한 맵을 찾을 수 없음 |
 | 500 | Redis 저장 후 DB 스냅샷 저장 실패 등 로비 생성 실패 |
 
+### 로비 상세 조회
+
+```http
+GET /api/lobbies/{inviteCode}
+Authorization: Bearer {accessToken}
+````
+
+로비 대기실 화면에 필요한 로비 기본 정보, 선택된 맵 정보, 룰 정보, 참가자 목록, 시작 가능 여부를 조회합니다.
+
+참가자 목록은 Redis에 저장된 로비 참여자 상태를 기준으로 구성하며, 각 참가자의 `userIdentifier`에 대응하는 사용자 닉네임을 함께 반환합니다.
+
+#### WebSocket 연동 정책
+
+로비 참가, 퇴장, 준비 상태 변경 등으로 로비 상태가 변경되면 서버는 기존 WebSocket refresh 이벤트를 전송합니다.
+
+FE는 refresh 이벤트를 수신하면 이 API를 다시 호출하여 최신 로비 상세 정보를 동기화합니다.
+
+```text
+WebSocket refresh 이벤트 수신
+→ GET /api/lobbies/{inviteCode} 재조회
+→ 최신 players[].nickname / ready / host 상태 반영
+```
+
+#### Path Variables
+
+| 필드           | 타입     | 설명       |
+| ------------ | ------ | -------- |
+| `inviteCode` | string | 로비 초대 코드 |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "inviteCode": "ABC123",
+  "title": "로비 제목",
+  "hostId": "host-user-identifier",
+  "hostNickname": "방장닉네임",
+  "maxPlayers": 4,
+  "currentPlayers": 2,
+  "status": "WAITING",
+  "mapId": 1,
+  "mapTitle": "K-POP 퀴즈",
+  "mapCategory": "K-POP",
+  "questionCount": 10,
+  "timeLimitSeconds": 30,
+  "players": [
+    {
+      "userIdentifier": "host-user-identifier",
+      "nickname": "방장닉네임",
+      "host": true,
+      "ready": false
+    },
+    {
+      "userIdentifier": "participant-user-identifier",
+      "nickname": "참가자닉네임",
+      "host": false,
+      "ready": true
+    }
+  ],
+  "canStart": false
+}
+```
+
+#### Response Fields
+
+| 필드                         | 타입            | 설명                                                |
+| -------------------------- | ------------- | ------------------------------------------------- |
+| `inviteCode`               | string        | 로비 초대 코드                                          |
+| `title`                    | string        | 로비 제목                                             |
+| `hostId`                   | string        | 방장 사용자 식별자. Redis/WebSocket 식별용 값                 |
+| `hostNickname`             | string        | 방장 표시 닉네임                                         |
+| `maxPlayers`               | number        | 최대 참여 인원                                          |
+| `currentPlayers`           | number        | 현재 참여 인원                                          |
+| `status`                   | string        | 로비 상태. `WAITING`, `PLAYING`, `FINISHED`           |
+| `mapId`                    | number | null | 선택된 맵 ID. 맵 미선택 시 `null`                          |
+| `mapTitle`                 | string | null | 선택된 맵 제목. 맵 미선택 시 `null`                          |
+| `mapCategory`              | string | null | 선택된 맵 카테고리. 맵 미선택 시 `null`                        |
+| `questionCount`            | number | null | 진행할 문제 수/라운드 수                                    |
+| `timeLimitSeconds`         | number | null | 라운드당 제한 시간(초)                                     |
+| `players`                  | array         | 로비 참가자 목록                                         |
+| `players[].userIdentifier` | string        | 참가자 식별자. Redis/WebSocket 식별용 값이며 화면 표시용으로 사용하지 않음 |
+| `players[].nickname`       | string        | 참가자 표시 닉네임                                        |
+| `players[].host`           | boolean       | 해당 참가자가 방장인지 여부                                   |
+| `players[].ready`          | boolean       | 해당 참가자의 준비 상태. 방장은 ready 대상이 아니므로 `false`일 수 있음   |
+| `canStart`                 | boolean       | 조회 시점 기준 게임 시작 버튼 활성화 가능 여부                       |
+
+#### 참가자 닉네임 정책
+
+| 항목          | 정책                                                         |
+| ----------- | ---------------------------------------------------------- |
+| 조회 기준       | `players[].userIdentifier` 기준으로 사용자 닉네임 조회                 |
+| 대상 사용자      | 게스트 사용자와 정식 회원 사용자 모두 지원                                   |
+| 조회 실패       | 로비 상세 조회 전체를 실패시키지 않고 fallback 닉네임 반환                      |
+| fallback 형식 | `Unknown-{hash}` 형식의 안전한 표시값                               |
+| 식별자 노출      | `userIdentifier` 원문 일부를 fallback 닉네임에 포함하지 않음              |
+| 순서          | 기존 Redis 참가자 목록 순서 유지                                      |
+| 방장 보정       | Redis participants Set에 방장이 누락된 경우 응답 목록 맨 앞에 방장을 보정할 수 있음 |
+
+#### Error Response
+
+| HTTP Status | 상황                               |
+| ----------: | -------------------------------- |
+|         401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
+|         403 | 로비 참여자가 아닌 사용자가 상세 조회를 시도함       |
+|         404 | 존재하지 않는 로비 초대 코드                 |
+
+`````
+
+---
+
+# 주의: Markdown 코드펜스 중첩
+
+위 블록을 그대로 복사하면 ` ```md ` 내부에 ` ```http `, ` ```json `가 중첩되어 보일 수 있습니다. 실제 `docs/API.md`에는 바깥쪽 ` ```md ` 없이 아래 내용만 넣으시면 됩니다.
+
+실제 파일에 넣을 때는 이 형태입니다.
+
+````md
+### 로비 상세 조회
+
+```http
+GET /api/lobbies/{inviteCode}
+Authorization: Bearer {accessToken}
+`````
+
+로비 대기실 화면에 필요한 로비 기본 정보, 선택된 맵 정보, 룰 정보, 참가자 목록, 시작 가능 여부를 조회합니다.
+
+참가자 목록은 Redis에 저장된 로비 참여자 상태를 기준으로 구성하며, 각 참가자의 `userIdentifier`에 대응하는 사용자 닉네임을 함께 반환합니다.
+
+#### WebSocket 연동 정책
+
+로비 참가, 퇴장, 준비 상태 변경 등으로 로비 상태가 변경되면 서버는 기존 WebSocket refresh 이벤트를 전송합니다.
+
+FE는 refresh 이벤트를 수신하면 이 API를 다시 호출하여 최신 로비 상세 정보를 동기화합니다.
+
+```text
+WebSocket refresh 이벤트 수신
+→ GET /api/lobbies/{inviteCode} 재조회
+→ 최신 players[].nickname / ready / host 상태 반영
+```
+
+#### Path Variables
+
+| 필드           | 타입     | 설명       |
+| ------------ | ------ | -------- |
+| `inviteCode` | string | 로비 초대 코드 |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "inviteCode": "ABC123",
+  "title": "로비 제목",
+  "hostId": "host-user-identifier",
+  "hostNickname": "방장닉네임",
+  "maxPlayers": 4,
+  "currentPlayers": 2,
+  "status": "WAITING",
+  "mapId": 1,
+  "mapTitle": "K-POP 퀴즈",
+  "mapCategory": "K-POP",
+  "questionCount": 10,
+  "timeLimitSeconds": 30,
+  "players": [
+    {
+      "userIdentifier": "host-user-identifier",
+      "nickname": "방장닉네임",
+      "host": true,
+      "ready": false
+    },
+    {
+      "userIdentifier": "participant-user-identifier",
+      "nickname": "참가자닉네임",
+      "host": false,
+      "ready": true
+    }
+  ],
+  "canStart": false
+}
+```
+
+#### Response Fields
+
+| 필드                         | 타입            | 설명                                                |
+| -------------------------- | ------------- | ------------------------------------------------- |
+| `inviteCode`               | string        | 로비 초대 코드                                          |
+| `title`                    | string        | 로비 제목                                             |
+| `hostId`                   | string        | 방장 사용자 식별자. Redis/WebSocket 식별용 값                 |
+| `hostNickname`             | string        | 방장 표시 닉네임                                         |
+| `maxPlayers`               | number        | 최대 참여 인원                                          |
+| `currentPlayers`           | number        | 현재 참여 인원                                          |
+| `status`                   | string        | 로비 상태. `WAITING`, `PLAYING`, `FINISHED`           |
+| `mapId`                    | number | null | 선택된 맵 ID. 맵 미선택 시 `null`                          |
+| `mapTitle`                 | string | null | 선택된 맵 제목. 맵 미선택 시 `null`                          |
+| `mapCategory`              | string | null | 선택된 맵 카테고리. 맵 미선택 시 `null`                        |
+| `questionCount`            | number | null | 진행할 문제 수/라운드 수                                    |
+| `timeLimitSeconds`         | number | null | 라운드당 제한 시간(초)                                     |
+| `players`                  | array         | 로비 참가자 목록                                         |
+| `players[].userIdentifier` | string        | 참가자 식별자. Redis/WebSocket 식별용 값이며 화면 표시용으로 사용하지 않음 |
+| `players[].nickname`       | string        | 참가자 표시 닉네임                                        |
+| `players[].host`           | boolean       | 해당 참가자가 방장인지 여부                                   |
+| `players[].ready`          | boolean       | 해당 참가자의 준비 상태. 방장은 ready 대상이 아니므로 `false`일 수 있음   |
+| `canStart`                 | boolean       | 조회 시점 기준 게임 시작 버튼 활성화 가능 여부                       |
+
+#### 참가자 닉네임 정책
+
+| 항목          | 정책                                                         |
+| ----------- | ---------------------------------------------------------- |
+| 조회 기준       | `players[].userIdentifier` 기준으로 사용자 닉네임 조회                 |
+| 대상 사용자      | 게스트 사용자와 정식 회원 사용자 모두 지원                                   |
+| 조회 실패       | 로비 상세 조회 전체를 실패시키지 않고 fallback 닉네임 반환                      |
+| fallback 형식 | `Unknown-{hash}` 형식의 안전한 표시값                               |
+| 식별자 노출      | `userIdentifier` 원문 일부를 fallback 닉네임에 포함하지 않음              |
+| 순서          | 기존 Redis 참가자 목록 순서 유지                                      |
+| 방장 보정       | Redis participants Set에 방장이 누락된 경우 응답 목록 맨 앞에 방장을 보정할 수 있음 |
+
+#### Error Response
+
+| HTTP Status | 상황                               |
+| ----------: | -------------------------------- |
+|         401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
+|         403 | 로비 참여자가 아닌 사용자가 상세 조회를 시도함       |
+|         404 | 존재하지 않는 로비 초대 코드                 |
+
 ### 초대 코드 기반 로비 입장
 
 ```http

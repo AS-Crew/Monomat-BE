@@ -654,7 +654,7 @@ HTTP/1.1 200 OK
     }
   ]
 }
-````
+```
 
 #### Request Fields
 
@@ -831,7 +831,7 @@ HTTP/1.1 201 Created
 ```http
 GET /api/lobbies/{inviteCode}
 Authorization: Bearer {accessToken}
-````
+```
 
 로비 대기실 화면에 필요한 로비 기본 정보, 선택된 맵 정보, 룰 정보, 참가자 목록, 시작 가능 여부를 조회합니다.
 

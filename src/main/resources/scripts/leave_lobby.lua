@@ -5,9 +5,11 @@
 --
 -- [책임]
 -- 1. participants Set / order List에서 퇴장 유저 제거
--- 2. 남은 인원이 없으면 로비 폭파 및 공개 인덱스 정리
--- 3. 방장이 퇴장한 경우 새 방장 위임
--- 4. current_players 캐시와 공개 로비 인원 기준 ZSET 인덱스 갱신
+-- 2. ready Set에서 퇴장 유저 제거
+-- 3. user_session / user_session_seq 키 정리
+-- 4. 남은 인원이 없으면 로비 폭파 및 공개 인덱스 정리
+-- 5. 방장이 퇴장한 경우 새 방장 위임
+-- 6. current_players 캐시와 공개 로비 인원 기준 ZSET 인덱스 갱신
 --
 -- [중요]
 -- Redis Lua는 원자적으로 실행되므로 스크립트 중간 상태가 외부에 노출되지 않는다.
@@ -23,7 +25,7 @@ local publicLatestIndexKey = KEYS[6]          -- 공개 로비 최신순 정렬 
 local publicMostPlayersIndexKey = KEYS[7]     -- 공개 로비 현재 인원 많은 순 정렬 인덱스 (ZSET)
 local publicMostAvailableIndexKey = KEYS[8]   -- 공개 로비 빈자리 많은 순 정렬 인덱스 (ZSET)
 local lobbyAllKey = KEYS[9]                   -- 전체 로비 인덱스 (Set, 공개·비공개 포함)
-local readyKey = KEYS[10]                   -- 로비 준비 완료 명단 (Set)
+local readyKey = KEYS[10]                     -- 로비 준비 완료 명단 (Set)
 local lobbyUserSessionKey = KEYS[11]          -- lobby:{code}:user_session:{userIdentifier}
 local lobbyUserSessionSeqKey = KEYS[12]       -- lobby:{code}:user_session_seq:{userIdentifier}
 
@@ -83,7 +85,23 @@ local function updatePublicCapacityIndexes(currentPlayers)
     return "OK"
 end
 
--- 1. 참여자 명단(Set)과 입장 순서(List)에서 해당 유저를 제거한다.
+-- order List에서 실제 participants Set에 남아 있는 첫 번째 사용자를 새 방장 후보로 찾는다.
+-- order에 stale userIdentifier가 남아 있으면 함께 제거하여 이후 위임/조회 정합성을 회복한다.
+local function findNextHostFromOrder()
+    local orderedUsers = redis.call('LRANGE', orderKey, 0, -1)
+
+    for _, candidate in ipairs(orderedUsers) do
+        if redis.call('SISMEMBER', participantsKey, candidate) == 1 then
+            return candidate
+        end
+
+        redis.call('LREM', orderKey, 0, candidate)
+    end
+
+    return nil
+end
+
+-- 1. 참여자 명단(Set), 입장 순서(List), 준비 상태(Set), 현재 유효 세션 키에서 해당 유저를 제거한다.
 redis.call('SREM', participantsKey, userId)
 -- 이미 중복된 order 데이터가 있는 상태에서도 퇴장 시 완전히 정리한다.
 redis.call('LREM', orderKey, 0, userId)
@@ -113,10 +131,10 @@ end
 local currentHost = redis.call('HGET', lobbyKey, FIELD_HOST_USER_ID)
 
 if currentHost == userId then
-    local nextHost = redis.call('LINDEX', orderKey, 0)
+    local nextHost = findNextHostFromOrder()
 
     if nextHost then
-        -- 정상 케이스: order List에서 다음 방장을 선정한다.
+        -- 정상 케이스: order List에서 실제 participants Set에 남아 있는 다음 방장을 선정한다.
         redis.call('HSET', lobbyKey, FIELD_HOST_USER_ID, nextHost)
 
         local indexUpdateResult = updatePublicCapacityIndexes(remainCount)
@@ -143,7 +161,16 @@ if currentHost == userId then
 
     -- 이론상 remainCount > 0이면 여기로 오면 안 된다.
     -- 다만 Redis 자료구조 불일치 상황에서는 안전하게 로비를 폭파하고 모든 공개 인덱스를 제거한다.
-    redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
+    redis.call(
+        'DEL',
+        lobbyKey,
+        participantsKey,
+        orderKey,
+        kickedKey,
+        readyKey,
+        lobbyUserSessionKey,
+        lobbyUserSessionSeqKey
+    )
     removePublicIndexes()
     return "DESTROYED"
 end

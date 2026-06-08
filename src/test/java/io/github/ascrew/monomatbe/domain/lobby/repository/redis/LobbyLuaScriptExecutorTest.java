@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,7 +40,9 @@ class LobbyLuaScriptExecutorTest {
                 RedisKeys.lobbyUserSessionKey(lobbyCode, "user-a"),
                 RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "user-a"),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, "user-b"),
-                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "user-b")
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "user-b"),
+                RedisKeys.lobbyUserSessionKey(lobbyCode, "stale-user"),
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "stale-user")
         ));
 
         redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, lobbyCode);
@@ -61,13 +64,13 @@ class LobbyLuaScriptExecutorTest {
 
         redisTemplate.opsForHash().putAll(
                 RedisKeys.lobbyKey(lobbyCode),
-                java.util.Map.of(
+                Map.of(
                         RedisKeys.FIELD_CODE, lobbyCode,
                         RedisKeys.FIELD_HOST_USER_ID, userA,
                         RedisKeys.FIELD_CURRENT_PLAYERS, "2",
                         RedisKeys.FIELD_MAX_PLAYERS, "4",
                         RedisKeys.FIELD_IS_PRIVATE, "false",
-                        "status", "WAITING"
+                        RedisKeys.FIELD_STATUS, "WAITING"
                 )
         );
 
@@ -146,6 +149,63 @@ class LobbyLuaScriptExecutorTest {
                 RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
                 lobbyCode
         )).isEqualTo(3.0);
+    }
+
+    @Test
+    @DisplayName("방장 퇴장 시 order 앞쪽의 stale 사용자를 건너뛰고 실제 참여자를 새 방장으로 위임한다")
+    void executeLeaveLobby_skipsStaleOrderEntryWhenDelegatingHost() {
+        // given
+        lobbyCode = newLobbyCode();
+        String host = "user-a";
+        String staleUser = "stale-user";
+        String nextHost = "user-b";
+
+        redisTemplate.opsForHash().putAll(
+                RedisKeys.lobbyKey(lobbyCode),
+                Map.of(
+                        RedisKeys.FIELD_CODE, lobbyCode,
+                        RedisKeys.FIELD_HOST_USER_ID, host,
+                        RedisKeys.FIELD_CURRENT_PLAYERS, "2",
+                        RedisKeys.FIELD_MAX_PLAYERS, "4",
+                        RedisKeys.FIELD_IS_PRIVATE, "false",
+                        RedisKeys.FIELD_STATUS, "WAITING"
+                )
+        );
+
+        redisTemplate.opsForSet().add(
+                RedisKeys.lobbyParticipantsKey(lobbyCode),
+                host,
+                nextHost
+        );
+
+        redisTemplate.opsForList().rightPushAll(
+                RedisKeys.lobbyOrderKey(lobbyCode),
+                host,
+                staleUser,
+                nextHost
+        );
+
+        redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, lobbyCode);
+        redisTemplate.opsForSet().add(RedisKeys.LOBBY_ALL, lobbyCode);
+        redisTemplate.opsForZSet().add(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, lobbyCode, 2);
+        redisTemplate.opsForZSet().add(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, lobbyCode, 2);
+
+        // when
+        String result = lobbyLuaScriptExecutor.executeLeaveLobby(lobbyCode, host);
+
+        // then
+        assertThat(result).isEqualTo("DELEGATED:" + nextHost);
+
+        assertThat(redisTemplate.opsForHash().get(
+                RedisKeys.lobbyKey(lobbyCode),
+                RedisKeys.FIELD_HOST_USER_ID
+        )).isEqualTo(nextHost);
+
+        assertThat(redisTemplate.opsForList().range(RedisKeys.lobbyOrderKey(lobbyCode), 0, -1))
+                .containsExactly(nextHost);
+
+        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(lobbyCode)))
+                .containsExactly(nextHost);
     }
 
     private String newLobbyCode() {

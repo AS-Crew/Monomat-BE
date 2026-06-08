@@ -116,13 +116,13 @@ class LobbyLuaScriptExecutorTest {
         assertThat(result).isEqualTo("DELEGATED:" + userB);
 
         assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(lobbyCode)))
-                .containsExactly(userB);
+                .containsOnly(userB);
 
         assertThat(redisTemplate.opsForList().range(RedisKeys.lobbyOrderKey(lobbyCode), 0, -1))
                 .containsExactly(userB);
 
         assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyReadyKey(lobbyCode)))
-                .containsExactly(userB);
+                .containsOnly(userB);
 
         assertThat(redisTemplate.opsForValue().get(RedisKeys.lobbyUserSessionKey(lobbyCode, userA)))
                 .isNull();
@@ -205,7 +205,7 @@ class LobbyLuaScriptExecutorTest {
                 .containsExactly(nextHost);
 
         assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(lobbyCode)))
-                .containsExactly(nextHost);
+                .containsOnly(nextHost);
     }
 
     private String newLobbyCode() {

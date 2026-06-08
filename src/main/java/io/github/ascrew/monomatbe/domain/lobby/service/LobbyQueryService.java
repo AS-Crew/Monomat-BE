@@ -746,6 +746,7 @@ public class LobbyQueryService {
                 .inviteCode(lobbyInfo.inviteCode())
                 .title(lobbyInfo.title())
                 .hostId(lobbyInfo.hostId())
+                .hostNickname(resolveHostNickname(lobbyInfo.hostId(), participantNicknameMap))
                 .maxPlayers(lobbyInfo.maxPlayers())
                 .currentPlayers(Math.max(lobbyInfo.currentPlayers(), players.size()))
                 .status(lobbyInfo.status())

@@ -1,5 +1,5 @@
 /*
- * 로비 데이터에 접근하기 위한 Repository 인터페이스.
+ * 로비 데이터에 접근하기 위한 Repository 인터페이스
  * 구현체(LobbyRepositoryImpl)는 Redis와 직접 통신한다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.repository;
@@ -303,6 +303,31 @@ public interface LobbyRepository {
    * @param questionCount 새 문제 수
    */
   void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount);
+
+  /**
+   * Redis 로비 Hash의 설정값을 갱신한다.
+   *
+   * [갱신 대상]
+   * - max_players
+   * - question_count
+   * - time_limit_seconds
+   *
+   * [주의]
+   * 이 메서드는 단순 Redis Hash 갱신만 수행한다.
+   * 로비 존재 여부, 방장 여부, WAITING 여부, 현재 참가자 수, 맵 곡 수 상한 검증은
+   * Service 계층에서 수행한다.
+   *
+   * @param code             로비 초대 코드
+   * @param maxPlayers       최대 참여 인원
+   * @param questionCount    문제 수
+   * @param timeLimitSeconds 제한 시간(초)
+   */
+  void updateSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  );
 
   /**
    * 로비 맵 변경 트랜잭션 보상 복구를 status==WAITING 원자 검증과 함께 수행한다.

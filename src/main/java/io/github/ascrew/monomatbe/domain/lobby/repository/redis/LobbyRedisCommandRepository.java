@@ -24,6 +24,8 @@ import java.util.Set;
  * - 게임 시작 실패 시 Redis 상태 보상 롤백
  * - 퇴장/강퇴 후 ready Set 정리
  * - 게임 시작 전 stale ready 데이터 정리
+ * - 로비 맵 메타데이터 갱신
+ * - 로비 설정값 갱신
  */
 @Slf4j
 @Repository
@@ -416,6 +418,42 @@ public class LobbyRedisCommandRepository {
             );
             redisTemplate.opsForHash().put(lobbyKey, RedisKeys.FIELD_QUESTION_COUNT, String.valueOf(questionCount));
         }
+    }
+
+    /**
+     * Redis 로비 Hash의 설정값을 갱신한다.
+     *
+     * [갱신 대상]
+     * - max_players
+     * - question_count
+     * - time_limit_seconds
+     *
+     * [정합성]
+     * HSET 한 번으로 같은 Redis Hash의 필드 3개를 갱신한다.
+     * Redis 명령 하나는 원자적으로 처리되므로, 조회자가 세 필드 중 일부만 갱신된 상태를 볼 가능성은 없다.
+     *
+     * [주의]
+     * 로비 존재 여부, WAITING 여부, 방장 여부, 현재 참가자 수 검증은 Service 계층에서 완료한 뒤 호출한다.
+     *
+     * @param code             로비 초대 코드
+     * @param maxPlayers       최대 참여 인원
+     * @param questionCount    문제 수
+     * @param timeLimitSeconds 제한 시간(초)
+     */
+    public void updateSettings(
+            String code,
+            int maxPlayers,
+            int questionCount,
+            int timeLimitSeconds
+    ) {
+        redisTemplate.opsForHash().putAll(
+                RedisKeys.lobbyKey(code),
+                Map.of(
+                        RedisKeys.FIELD_MAX_PLAYERS, String.valueOf(maxPlayers),
+                        RedisKeys.FIELD_QUESTION_COUNT, String.valueOf(questionCount),
+                        RedisKeys.FIELD_TIME_LIMIT_SECONDS, String.valueOf(timeLimitSeconds)
+                )
+        );
     }
 
     /**

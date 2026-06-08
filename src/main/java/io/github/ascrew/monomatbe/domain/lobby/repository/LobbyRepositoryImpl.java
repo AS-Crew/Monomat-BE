@@ -180,6 +180,21 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   @Override
+  public void updateSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  ) {
+    lobbyRedisCommandRepository.updateSettings(
+            code,
+            maxPlayers,
+            questionCount,
+            timeLimitSeconds
+    );
+  }
+
+  @Override
   public LobbyMapCompensationResult compensateMapMetadataIfWaiting(
           String code,
           LobbyMapMetadata oldMetadata,

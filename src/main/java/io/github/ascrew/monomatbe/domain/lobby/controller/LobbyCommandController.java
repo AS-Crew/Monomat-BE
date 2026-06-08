@@ -6,6 +6,8 @@
  * - 초대 코드 기반 로비 입장 사전 검증
  * - 로비 참여자 ready 상태 변경
  * - 로비 게임 시작
+ * - 로비 대기실 맵 변경
+ * - 로비 대기실 설정 변경
  */
 package io.github.ascrew.monomatbe.domain.lobby.controller;
 
@@ -15,10 +17,12 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyMapRequest;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbyReadyRequest;
+import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbySettingsRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyCreateService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyJoinService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyMapUpdateService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyReadyService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbySettingsUpdateService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyStartService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -68,12 +72,18 @@ public class LobbyCommandController {
             "요청 수신: 로비 맵 변경 [PATCH /api/lobbies/{code}/map] - 코드: {}, 식별자: {}, mapId: {}";
     private static final String LOG_UPDATE_MAP_RESPONSE =
             "로비 맵 변경 완료 - 코드: {}";
+    private static final String LOG_UPDATE_SETTINGS_REQUEST =
+            "요청 수신: 로비 설정 변경 [PATCH /api/lobbies/{code}/settings] - "
+                    + "코드: {}, 식별자: {}, maxPlayers: {}, questionCount: {}, timeLimitSeconds: {}";
+    private static final String LOG_UPDATE_SETTINGS_RESPONSE =
+            "로비 설정 변경 완료 - 코드: {}";
 
     private final LobbyCreateService lobbyCreateService;
     private final LobbyJoinService lobbyJoinService;
     private final LobbyReadyService lobbyReadyService;
     private final LobbyStartService lobbyStartService;
     private final LobbyMapUpdateService lobbyMapUpdateService;
+    private final LobbySettingsUpdateService lobbySettingsUpdateService;
 
     /**
      * 로비 생성 API
@@ -279,6 +289,58 @@ public class LobbyCommandController {
         lobbyMapUpdateService.updateMap(code, request, principal);
 
         log.info(LOG_UPDATE_MAP_RESPONSE, code);
+
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 로비 대기실 설정 변경 API
+     *
+     * [정책]
+     * - JWT 인증이 필요하다.
+     * - 방장만 설정을 변경할 수 있다.
+     * - 로비 상태가 WAITING일 때만 변경할 수 있다.
+     * - maxPlayers는 현재 참가자 수보다 작을 수 없다.
+     * - questionCount는 선택된 맵의 등록 곡 수를 초과할 수 없다.
+     * - 설정 변경 후 기존 로비 정보 refresh 이벤트를 발행한다.
+     *
+     * [응답 정책]
+     * 기존 ready 변경/맵 변경 명령 API와 동일하게 204 No Content를 반환한다.
+     * FE는 WebSocket refresh 이벤트를 받은 뒤 로비 상세 조회 API로 최신 상태를 다시 가져온다.
+     *
+     * @param code      로비 초대 코드
+     * @param request   설정 변경 요청 DTO
+     * @param principal JWT에서 추출한 인증 주체
+     * @return 204 No Content
+     */
+    @Operation(
+            summary = "로비 설정 변경",
+            description = """
+                    방장이 대기실에서 로비 설정(maxPlayers, questionCount, timeLimitSeconds)을 변경합니다.
+                    JWT 인증이 필요합니다.
+                    로비 상태가 WAITING일 때만 변경할 수 있으며,
+                    설정 변경 후 로비 참여자에게 refresh 이벤트가 전송됩니다.
+                    """
+    )
+    @PatchMapping("/{code}/settings")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> updateLobbySettings(
+            @PathVariable String code,
+            @Valid @RequestBody UpdateLobbySettingsRequest request,
+            @AuthenticationPrincipal CustomPrincipal principal
+    ) {
+        log.info(
+                LOG_UPDATE_SETTINGS_REQUEST,
+                code,
+                principal != null ? principal.userIdentifier() : "null",
+                request.maxPlayers(),
+                request.questionCount(),
+                request.timeLimitSeconds()
+        );
+
+        lobbySettingsUpdateService.updateSettings(code, request, principal);
+
+        log.info(LOG_UPDATE_SETTINGS_RESPONSE, code);
 
         return ResponseEntity.noContent().build();
     }

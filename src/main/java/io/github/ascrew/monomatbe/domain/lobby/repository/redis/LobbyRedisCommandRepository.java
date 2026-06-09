@@ -61,20 +61,37 @@ public class LobbyRedisCommandRepository {
 
         try {
             redisTemplate.delete(keysToDelete);
+
             redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, inviteCode);
             redisTemplate.opsForSet().remove(RedisKeys.LOBBY_ALL, inviteCode);
 
-            log.info("Redis 보상 삭제 완료 - code: {}, keys: {}", inviteCode, keysToDelete);
+            redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_LATEST, inviteCode);
+            redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, inviteCode);
+            redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, inviteCode);
+
+            log.info(
+                    "Redis 보상 삭제 완료 - code: {}, keys: {}, publicIndexes: [{}, {}, {}]",
+                    inviteCode,
+                    keysToDelete,
+                    RedisKeys.LOBBY_PUBLIC_LATEST,
+                    RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                    RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+            );
             return true;
 
         } catch (Exception e) {
             log.error(
-                    "{} Redis 보상 삭제 실패 - code: {}, keys: {}, publicLobbyKey: {}. "
-                            + "로비 잔여 데이터가 조회/ready/canStart 계산에 영향을 줄 수 있으므로 수동 정리 또는 재처리가 필요합니다.",
+                    "{} Redis 보상 삭제 실패 - code: {}, keys: {}, publicLobbyKey: {}, "
+                            + "publicIndexes: [{}, {}, {}]. "
+                            + "로비 잔여 데이터가 조회/ready/canStart 계산에 영향을 줄 수 있으므로 "
+                            + "수동 정리 또는 재처리가 필요합니다.",
                     LOG_MONITORING_REQUIRED,
                     inviteCode,
                     keysToDelete,
                     RedisKeys.LOBBY_PUBLIC,
+                    RedisKeys.LOBBY_PUBLIC_LATEST,
+                    RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
+                    RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
                     e
             );
             return false;

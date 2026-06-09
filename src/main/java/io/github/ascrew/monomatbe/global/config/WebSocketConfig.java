@@ -35,8 +35,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final StompChannelInterceptor stompChannelInterceptor;
 
     // REST CORS와 동일 프로퍼티(monomat.cors.allowed-origins)를 사용한다.
-    // 단 WebSocket은 패턴 기반(setAllowedOriginPatterns)이라 REST의 setAllowedOrigins와 달리
-    // https://*.monomat.games 같은 와일드카드 패턴 값도 그대로 패턴으로 해석된다.
+    // WebSocket은 setAllowedOriginPatterns(패턴 기반)를 쓰지만, CorsProperties가 기동 시점에
+    // 와일드카드(*, https://*.monomat.games 등)를 거부하고 정확한 Origin만 통과시키므로
+    // 여기에는 항상 정확한 Origin만 전달되며 REST(setAllowedOrigins, 정확 매칭)와 동작이 일치한다.
     private final CorsProperties corsProperties;
 
     @Override

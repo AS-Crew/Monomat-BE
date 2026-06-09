@@ -18,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -25,6 +26,8 @@ import org.springframework.security.web.method.annotation.AuthenticationPrincipa
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.lang.reflect.Method;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -233,6 +236,21 @@ class LobbyCommandControllerTest {
                 any(UpdateLobbySettingsRequest.class),
                 eq(principal)
         );
+    }
+
+    @Test
+    void updateLobbySettings_hasAuthenticatedPreAuthorizeGuard() throws NoSuchMethodException {
+        Method method = LobbyCommandController.class.getDeclaredMethod(
+                "updateLobbySettings",
+                String.class,
+                UpdateLobbySettingsRequest.class,
+                CustomPrincipal.class
+        );
+
+        PreAuthorize preAuthorize = method.getAnnotation(PreAuthorize.class);
+
+        assertThat(preAuthorize).isNotNull();
+        assertThat(preAuthorize.value()).isEqualTo("isAuthenticated()");
     }
 
     private UsernamePasswordAuthenticationToken authenticationToken(CustomPrincipal principal) {

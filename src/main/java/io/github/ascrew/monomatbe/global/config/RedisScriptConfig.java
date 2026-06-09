@@ -17,7 +17,6 @@ import org.springframework.data.redis.core.script.RedisScript;
  * - leave_lobby.lua : 로비 퇴장/방장 위임/폭파 원자 처리
  * - enter_lobby.lua : 로비 입장 상태 저장 원자 처리
  */
-
 @Configuration
 public class RedisScriptConfig {
 
@@ -103,7 +102,7 @@ public class RedisScriptConfig {
      * - 맵 선택 여부 검증
      * - 방장 제외 참여자 ready 상태 검증
      * - 로비 상태 PLAYING 전환
-     * - 공개 로비 목록에서 제거
+     * - 공개 로비 목록에는 유지하고, FE가 진행 중 상태로 표시한다
      */
     @Bean
     public RedisScript<String> startLobbyScript() {
@@ -121,6 +120,8 @@ public class RedisScriptConfig {
      * - status == WAITING 원자 검증
      * - 현재 참가자 수가 요청 maxPlayers 이하인지 검증
      * - max_players/question_count/time_limit_seconds Hash 필드 갱신
+     * - current_players Hash 필드 동기화
+     * - 공개 로비 most_available 인덱스 갱신
      */
     @Bean
     public RedisScript<String> updateLobbySettingsScript() {
@@ -158,6 +159,7 @@ public class RedisScriptConfig {
      * - status == WAITING 원자 검증
      * - 현재 참가자 수가 복구할 maxPlayers 이하인지 검증
      * - max_players/question_count/time_limit_seconds Hash 필드 복구
+     * - current_players Hash 필드 동기화
      * - 공개 로비 most_available 인덱스 복구
      */
     @Bean

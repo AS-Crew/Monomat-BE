@@ -318,13 +318,11 @@ public class LobbySettingsUpdateService {
                 return;
             }
 
-            lobbyRepository.enqueueStartReconciliation(
-                    code,
-                    RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":" + restoreResult.name()
-            );
+            String reason = RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":" + restoreResult.name();
+            safeEnqueueSettingsRestoreReconciliation(code, reason);
 
             log.error(
-                    "{} Redis 로비 설정 보상 복구 미완료 - 재처리 큐 적재. "
+                    "{} Redis 로비 설정 보상 복구 미완료 - 재처리 큐 적재 시도. "
                             + "code: {}, result: {}, oldMaxPlayers: {}, oldQuestionCount: {}, oldTimeLimitSeconds: {}",
                     LOG_MONITORING_REQUIRED,
                     code,
@@ -335,19 +333,31 @@ public class LobbySettingsUpdateService {
             );
 
         } catch (Exception e) {
-            lobbyRepository.enqueueStartReconciliation(
-                    code,
-                    RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":EXCEPTION"
-            );
+            String reason = RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":EXCEPTION";
+            safeEnqueueSettingsRestoreReconciliation(code, reason);
 
             log.error(
-                    "{} Redis 로비 설정 보상 복구 실패 - 재처리 큐 적재. "
+                    "{} Redis 로비 설정 보상 복구 실패 - 재처리 큐 적재 시도. "
                             + "code: {}, oldMaxPlayers: {}, oldQuestionCount: {}, oldTimeLimitSeconds: {}",
                     LOG_MONITORING_REQUIRED,
                     code,
                     oldMaxPlayers,
                     oldQuestionCount,
                     oldTimeLimitSeconds,
+                    e
+            );
+        }
+    }
+
+    private void safeEnqueueSettingsRestoreReconciliation(String code, String reason) {
+        try {
+            lobbyRepository.enqueueStartReconciliation(code, reason);
+        } catch (Exception e) {
+            log.error(
+                    "{} 로비 설정 복구 실패 재처리 큐 적재 실패 - code: {}, reason: {}",
+                    LOG_MONITORING_REQUIRED,
+                    code,
+                    reason,
                     e
             );
         }

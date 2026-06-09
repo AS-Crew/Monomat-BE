@@ -700,4 +700,50 @@ class LobbySettingsUpdateServiceTest {
 
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
+
+    @Test
+    @DisplayName("Redis 보상 복구 실패 후 재처리 큐 적재도 실패해도 원래 500 응답을 유지한다")
+    void updateSettings_keepsInternalServerError_whenRestoreAndReconciliationEnqueueFail() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+
+        givenSelectedMapHasNumOfSong(10L, 12);
+        givenRedisSettingsUpdateSucceeds();
+
+        when(gameLobbyJpaRepository.saveAndFlush(any()))
+                .thenThrow(new RuntimeException("DB 장애"));
+
+        when(lobbyRepository.restoreSettings(
+                CODE,
+                OLD_MAX_PLAYERS,
+                OLD_QUESTION_COUNT,
+                OLD_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsRestoreResult.MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS);
+
+        doThrow(new RuntimeException("재처리 큐 장애"))
+                .when(lobbyRepository)
+                .enqueueStartReconciliation(
+                        eq(CODE),
+                        eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
+                );
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        verify(lobbyRepository).restoreSettings(
+                CODE,
+                OLD_MAX_PLAYERS,
+                OLD_QUESTION_COUNT,
+                OLD_TIME_LIMIT_SECONDS
+        );
+        verify(lobbyRepository).enqueueStartReconciliation(
+                eq(CODE),
+                eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
+        );
+        verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
+    }
 }

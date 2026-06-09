@@ -1,5 +1,6 @@
 package io.github.ascrew.monomatbe.domain.lobby.service;
 
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsRestoreResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbySettingsRequest;
@@ -71,6 +72,9 @@ public class LobbySettingsUpdateService {
 
     private static final String RECONCILIATION_REASON_SETTINGS_UPDATE_SNAPSHOT_NOT_FOUND =
             "SETTINGS_UPDATE_DB_SNAPSHOT_NOT_FOUND";
+
+    private static final String RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED =
+            "SETTINGS_UPDATE_RESTORE_FAILED";
 
     private final LobbyRepository lobbyRepository;
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
@@ -296,23 +300,48 @@ public class LobbySettingsUpdateService {
             int oldTimeLimitSeconds
     ) {
         try {
-            lobbyRepository.restoreSettings(
+            LobbySettingsRestoreResult restoreResult = lobbyRepository.restoreSettings(
                     code,
                     oldMaxPlayers,
                     oldQuestionCount,
                     oldTimeLimitSeconds
             );
 
-            log.info(
-                    "Redis 로비 설정 보상 복구 완료 - code: {}, maxPlayers: {}, questionCount: {}, timeLimitSeconds: {}",
+            if (restoreResult == LobbySettingsRestoreResult.RESTORED) {
+                log.info(
+                        "Redis 로비 설정 보상 복구 완료 - code: {}, maxPlayers: {}, questionCount: {}, timeLimitSeconds: {}",
+                        code,
+                        oldMaxPlayers,
+                        oldQuestionCount,
+                        oldTimeLimitSeconds
+                );
+                return;
+            }
+
+            lobbyRepository.enqueueStartReconciliation(
                     code,
+                    RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":" + restoreResult.name()
+            );
+
+            log.error(
+                    "{} Redis 로비 설정 보상 복구 미완료 - 재처리 큐 적재. "
+                            + "code: {}, result: {}, oldMaxPlayers: {}, oldQuestionCount: {}, oldTimeLimitSeconds: {}",
+                    LOG_MONITORING_REQUIRED,
+                    code,
+                    restoreResult,
                     oldMaxPlayers,
                     oldQuestionCount,
                     oldTimeLimitSeconds
             );
+
         } catch (Exception e) {
+            lobbyRepository.enqueueStartReconciliation(
+                    code,
+                    RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":EXCEPTION"
+            );
+
             log.error(
-                    "{} Redis 로비 설정 보상 복구 실패 - Redis-DB 설정값 불일치 가능성 있음. "
+                    "{} Redis 로비 설정 보상 복구 실패 - 재처리 큐 적재. "
                             + "code: {}, oldMaxPlayers: {}, oldQuestionCount: {}, oldTimeLimitSeconds: {}",
                     LOG_MONITORING_REQUIRED,
                     code,

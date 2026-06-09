@@ -151,6 +151,24 @@ public class RedisScriptConfig {
     }
 
     /**
+     * 로비 설정 복구 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - status == WAITING 원자 검증
+     * - 현재 참가자 수가 복구할 maxPlayers 이하인지 검증
+     * - max_players/question_count/time_limit_seconds Hash 필드 복구
+     * - 공개 로비 most_available 인덱스 복구
+     */
+    @Bean
+    public RedisScript<String> restoreLobbySettingsScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/restore_lobby_settings.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
+
+    /**
      * 게임 세션 초기화 Lua 스크립트
      *
      * [처리 내용]

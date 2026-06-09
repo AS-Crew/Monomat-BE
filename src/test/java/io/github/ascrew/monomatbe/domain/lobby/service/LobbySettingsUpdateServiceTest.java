@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsRestoreResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbySettingsRequest;
@@ -152,6 +153,15 @@ class LobbySettingsUpdateServiceTest {
                 NEW_QUESTION_COUNT,
                 NEW_TIME_LIMIT_SECONDS
         )).thenReturn(LobbySettingsUpdateResult.UPDATED);
+    }
+
+    private void givenRedisSettingsRestoreSucceeds() {
+        when(lobbyRepository.restoreSettings(
+                CODE,
+                OLD_MAX_PLAYERS,
+                OLD_QUESTION_COUNT,
+                OLD_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsRestoreResult.RESTORED);
     }
 
     @Test
@@ -574,6 +584,7 @@ class LobbySettingsUpdateServiceTest {
 
         givenSelectedMapHasNumOfSong(10L, 12);
         givenRedisSettingsUpdateSucceeds();
+        givenRedisSettingsRestoreSucceeds();
 
         when(gameLobbyJpaRepository.saveAndFlush(any()))
                 .thenThrow(new RuntimeException("DB 장애"));
@@ -595,12 +606,66 @@ class LobbySettingsUpdateServiceTest {
                 OLD_QUESTION_COUNT,
                 OLD_TIME_LIMIT_SECONDS
         );
+        verify(lobbyRepository, never()).enqueueStartReconciliation(
+                eq(CODE),
+                org.mockito.ArgumentMatchers.startsWith("SETTINGS_UPDATE_RESTORE_FAILED")
+        );
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 
     @Test
-    @DisplayName("DB 실패 후 Redis 보상 복구도 실패해도 원래 500 응답을 유지한다")
-    void updateSettings_keepsInternalServerError_whenRedisCompensationFails() {
+    @DisplayName("DB 실패 후 Redis 보상 복구 결과가 실패이면 reconciliation 큐에 적재하고 원래 500 응답을 유지한다")
+    void updateSettings_enqueuesReconciliation_whenRedisCompensationResultFails() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+
+        givenSelectedMapHasNumOfSong(10L, 12);
+        givenRedisSettingsUpdateSucceeds();
+
+        when(gameLobbyJpaRepository.saveAndFlush(any()))
+                .thenThrow(new RuntimeException("DB 장애"));
+
+        when(lobbyRepository.restoreSettings(
+                CODE,
+                OLD_MAX_PLAYERS,
+                OLD_QUESTION_COUNT,
+                OLD_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsRestoreResult.MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS);
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                });
+
+        verify(lobbyRepository).updateSettings(
+                CODE,
+                NEW_MAX_PLAYERS,
+                NEW_QUESTION_COUNT,
+                NEW_TIME_LIMIT_SECONDS
+        );
+
+        verify(lobbyRepository).restoreSettings(
+                CODE,
+                OLD_MAX_PLAYERS,
+                OLD_QUESTION_COUNT,
+                OLD_TIME_LIMIT_SECONDS
+        );
+
+        verify(lobbyRepository).enqueueStartReconciliation(
+                eq(CODE),
+                eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
+        );
+
+        verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
+    }
+
+    @Test
+    @DisplayName("DB 실패 후 Redis 보상 복구 중 예외가 발생하면 reconciliation 큐에 적재하고 원래 500 응답을 유지한다")
+    void updateSettings_enqueuesReconciliation_whenRedisCompensationThrowsException() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
@@ -628,18 +693,11 @@ class LobbySettingsUpdateServiceTest {
                     assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
                 });
 
-        verify(lobbyRepository).updateSettings(
-                CODE,
-                NEW_MAX_PLAYERS,
-                NEW_QUESTION_COUNT,
-                NEW_TIME_LIMIT_SECONDS
+        verify(lobbyRepository).enqueueStartReconciliation(
+                eq(CODE),
+                eq("SETTINGS_UPDATE_RESTORE_FAILED:EXCEPTION")
         );
-        verify(lobbyRepository).restoreSettings(
-                CODE,
-                OLD_MAX_PLAYERS,
-                OLD_QUESTION_COUNT,
-                OLD_TIME_LIMIT_SECONDS
-        );
+
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 }

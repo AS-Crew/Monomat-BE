@@ -5,6 +5,7 @@ import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsRestoreResult;
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
@@ -211,18 +212,33 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   }
 
   @Override
-  public void restoreSettings(
+  public LobbySettingsRestoreResult restoreSettings(
           String code,
           int maxPlayers,
           int questionCount,
           int timeLimitSeconds
   ) {
-    lobbyRedisCommandRepository.updateSettings(
-            code,
-            maxPlayers,
-            questionCount,
-            timeLimitSeconds
-    );
+    try {
+      String result = lobbyLuaScriptExecutor.executeRestoreLobbySettings(
+              code,
+              maxPlayers,
+              questionCount,
+              timeLimitSeconds
+      );
+
+      return LobbySettingsRestoreResult.from(result);
+    } catch (Exception e) {
+      log.error(
+              "로비 설정 복구 Lua 스크립트 실행 중 예외 발생 - code: {}, maxPlayers: {}, questionCount: {}, timeLimitSeconds: {}",
+              code,
+              maxPlayers,
+              questionCount,
+              timeLimitSeconds,
+              e
+      );
+
+      return LobbySettingsRestoreResult.ERROR;
+    }
   }
 
   @Override

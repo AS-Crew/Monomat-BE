@@ -14,7 +14,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class LobbyLuaScriptExecutorTest {
 
@@ -43,6 +42,9 @@ class LobbyLuaScriptExecutorTest {
     @SuppressWarnings("unchecked")
     private final RedisScript<String> updateLobbySettingsScript = mock(RedisScript.class);
 
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> restoreLobbySettingsScript = mock(RedisScript.class);
+
     private final LobbyLuaScriptExecutor sut = new LobbyLuaScriptExecutor(
             redisTemplate,
             leaveLobbyScript,
@@ -51,18 +53,13 @@ class LobbyLuaScriptExecutorTest {
             startLobbyScript,
             compensateLobbyMapScript,
             reapLobbyScript,
-            updateLobbySettingsScript
+            updateLobbySettingsScript,
+            restoreLobbySettingsScript
     );
 
     @Test
     @DisplayName("로비 설정 변경 Lua 실행 시 빈자리 정렬 인덱스 키와 필요한 필드명을 함께 전달한다")
     void executeUpdateLobbySettings_passesMostAvailableIndexAndFieldNames() {
-        when(redisTemplate.execute(
-                eq(updateLobbySettingsScript),
-                org.mockito.ArgumentMatchers.<String>anyList(),
-                org.mockito.ArgumentMatchers.<String>any()
-        )).thenReturn("UPDATED");
-
         sut.executeUpdateLobbySettings(
                 CODE,
                 4,
@@ -108,6 +105,58 @@ class LobbyLuaScriptExecutorTest {
                 CODE,
                 "4",
                 "10",
+                "30"
+        );
+    }
+
+    @Test
+    @DisplayName("로비 설정 복구 Lua 실행 시 빈자리 정렬 인덱스 키와 필요한 필드명을 함께 전달한다")
+    void executeRestoreLobbySettings_passesMostAvailableIndexAndFieldNames() {
+        sut.executeRestoreLobbySettings(
+                CODE,
+                6,
+                5,
+                30
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+
+        ArgumentCaptor<String> argCaptor = ArgumentCaptor.forClass(String.class);
+
+        verify(redisTemplate).execute(
+                eq(restoreLobbySettingsScript),
+                keysCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture()
+        );
+
+        assertThat(keysCaptor.getValue()).containsExactly(
+                RedisKeys.lobbyKey(CODE),
+                RedisKeys.lobbyParticipantsKey(CODE),
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+        );
+
+        assertThat(argCaptor.getAllValues()).containsExactly(
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_MAX_PLAYERS,
+                RedisKeys.FIELD_QUESTION_COUNT,
+                RedisKeys.FIELD_TIME_LIMIT_SECONDS,
+                LobbyStatus.WAITING.name(),
+                RedisKeys.FIELD_IS_PRIVATE,
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                CODE,
+                "6",
+                "5",
                 "30"
         );
     }

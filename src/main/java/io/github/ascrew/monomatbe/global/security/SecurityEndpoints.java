@@ -25,9 +25,6 @@ public final class SecurityEndpoints {
     // 토큰 재발급
     public static final String AUTH_REFRESH = "/api/auth/refresh";
 
-    // 헬스체크 (배포 워크플로/모니터링용. 그 외 actuator 경로는 비공개 유지)
-    public static final String ACTUATOR_HEALTH = "/actuator/health";
-
 
     // Swagger (dev 허용 / prod 차단)
 
@@ -45,7 +42,7 @@ public final class SecurityEndpoints {
      */
     public static String[] publicEndpoints() {
         return new String[] {
-                WS, AUTH_GUEST, AUTH_REGISTER, AUTH_LOGIN, AUTH_REFRESH, ACTUATOR_HEALTH
+                WS, AUTH_GUEST, AUTH_REGISTER, AUTH_LOGIN, AUTH_REFRESH
         };
     }
 

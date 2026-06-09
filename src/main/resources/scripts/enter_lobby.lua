@@ -130,6 +130,9 @@ local added = redis.call('SADD', participantsKey, userIdentifier)
 
 -- 10. 신규 참여자일 때만 order List와 current_players를 갱신한다.
 if added == 1 then
+    -- 신규 입장 시 RPUSH 전에 기존 잔여 중복을 제거한다.
+    -- 과거 중복 잔여가 있더라도, 같은 사용자가 새로 정상 입장할 때 order가 정리된다.
+    redis.call('LREM', orderKey, 0, userIdentifier)
     redis.call('RPUSH', orderKey, userIdentifier)
 
     -- participants Set이 현재 인원의 단일 진실의 원천이다.

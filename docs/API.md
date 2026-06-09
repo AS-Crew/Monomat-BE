@@ -454,7 +454,7 @@ HTTP/1.1 200 OK
 PUT /api/maps/{mapId}/manage
 Authorization: Bearer {accessToken}
 Content-Type: application/json
-````
+```
 
 #### Request
 
@@ -615,6 +615,124 @@ HTTP/1.1 200 OK
 
 ---
 
+### 맵 생성 일괄 API
+
+맵 기본 정보와 문제 목록을 하나의 트랜잭션으로 생성합니다.  
+정식 회원만 사용할 수 있으며, 문제 중 하나라도 검증 또는 저장에 실패하면 맵 생성까지 전체 rollback됩니다.
+
+- Method: `POST`
+- URL: `/api/maps/with-items`
+- Auth: Required
+- Permission: `REGISTERED`
+
+#### Request Body
+
+```json
+{
+  "title": "J-POP 퀴즈",
+  "description": "J-POP 중심 퀴즈 맵",
+  "category": "J-POP",
+  "isPublic": false,
+  "items": [
+    {
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=video1",
+      "startTime": 30,
+      "endTime": 60,
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15
+    },
+    {
+      "orderNum": 2,
+      "youtubeUrl": "https://www.youtube.com/watch?v=video2",
+      "startTime": 0,
+      "endTime": 30,
+      "answers": ["omg"],
+      "hint": "ㅇㅇㅈ",
+      "hintTime": 15
+    }
+  ]
+}
+```
+
+#### Request Fields
+
+| 필드                   |       타입 | 필수 | 설명                             |
+| -------------------- | -------: | -: | ------------------------------ |
+| `title`              |   string |  O | 맵 제목                           |
+| `description`        |   string |  X | 맵 설명                           |
+| `category`           |   string |  O | 맵 카테고리                         |
+| `isPublic`           |  boolean |  O | 공개 요청 여부                       |
+| `items`              |    array |  O | 생성할 문제 목록                      |
+| `items[].orderNum`   |   number |  O | 문제 순서. 1부터 items 개수까지 중복 없이 지정 |
+| `items[].youtubeUrl` |   string |  O | YouTube URL                    |
+| `items[].startTime`  |   number |  O | 재생 시작 시간, 초 단위                 |
+| `items[].endTime`    |   number |  O | 재생 종료 시간, 초 단위                 |
+| `items[].answers`    | string[] |  O | 정답 목록                          |
+| `items[].hint`       |   string |  O | 힌트                             |
+| `items[].hintTime`   |   number |  X | 힌트 공개 시간. null이면 기본값 15초 적용    |
+
+#### Response 201 Created
+
+```json
+{
+  "map": {
+    "id": 1,
+    "ownerId": 10,
+    "ownerNickname": "owner",
+    "title": "J-POP 퀴즈",
+    "description": "J-POP 중심 퀴즈 맵",
+    "category": "J-POP",
+    "numOfSong": 2,
+    "totalPlayTime": 60,
+    "isPublic": false,
+    "pendingPublic": false,
+    "playCount": 0,
+    "createdAt": "2026-06-07T12:00:00",
+    "updatedAt": "2026-06-07T12:00:00"
+  },
+  "items": [
+    {
+      "id": 10,
+      "mapId": 1,
+      "orderNum": 1,
+      "youtubeUrl": "https://www.youtube.com/watch?v=video1",
+      "videoId": "video1",
+      "startTime": 30,
+      "endTime": 60,
+      "title": "YouTube title 1",
+      "artist": "YouTube author 1",
+      "thumbnailUrl": "https://thumbnail/1",
+      "answers": ["ditto"],
+      "hint": "ㄷㅌ",
+      "hintTime": 15,
+      "createdAt": "2026-06-07T12:00:00",
+      "updatedAt": "2026-06-07T12:00:00"
+    }
+  ]
+}
+```
+
+#### Error Responses
+
+|                       상태 코드 | 상황                                                 |
+| --------------------------: | -------------------------------------------------- |
+|           `400 Bad Request` | 요청 값 검증 실패, 중복 orderNum, orderNum 순서 불연속, 재생 구간 오류 |
+|          `401 Unauthorized` | 미인증                                                |
+|             `403 Forbidden` | 게스트 또는 정식 회원이 아닌 사용자                               |
+|              `409 Conflict` | 맵 최대 문제 수 초과, DB 저장 충돌                             |
+| `500 Internal Server Error` | 예상하지 못한 서버 오류                                      |
+
+#### Transaction Policy
+
+* 맵 기본 정보와 문제 목록은 하나의 트랜잭션으로 저장됩니다.
+* 아이템 중 하나라도 검증 또는 저장에 실패하면 `map`, `map_item` 모두 rollback됩니다.
+* YouTube URL/oEmbed 검증 정책은 기존 문제 생성 API와 동일합니다.
+* 생성 완료 후 `numOfSong`, `totalPlayTime`이 생성된 items 기준으로 반영됩니다.
+
+---
+
 ## 로비 (Lobby)
 
 ### 로비 생성
@@ -707,6 +825,116 @@ HTTP/1.1 201 Created
 | 401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
 | 404 | 사용자 또는 선택한 맵을 찾을 수 없음 |
 | 500 | Redis 저장 후 DB 스냅샷 저장 실패 등 로비 생성 실패 |
+
+### 로비 상세 조회
+
+```http
+GET /api/lobbies/{inviteCode}
+Authorization: Bearer {accessToken}
+```
+
+로비 대기실 화면에 필요한 로비 기본 정보, 선택된 맵 정보, 룰 정보, 참가자 목록, 시작 가능 여부를 조회합니다.
+
+참가자 목록은 Redis에 저장된 로비 참여자 상태를 기준으로 구성하며, 각 참가자의 `userIdentifier`에 대응하는 사용자 닉네임을 함께 반환합니다.
+
+#### WebSocket 연동 정책
+
+로비 참가, 퇴장, 준비 상태 변경 등으로 로비 상태가 변경되면 서버는 기존 WebSocket refresh 이벤트를 전송합니다.
+
+FE는 refresh 이벤트를 수신하면 이 API를 다시 호출하여 최신 로비 상세 정보를 동기화합니다.
+
+```text
+WebSocket refresh 이벤트 수신
+→ GET /api/lobbies/{inviteCode} 재조회
+→ 최신 players[].nickname / ready / host 상태 반영
+```
+
+#### Path Variables
+
+| 필드           | 타입     | 설명       |
+| ------------ | ------ | -------- |
+| `inviteCode` | string | 로비 초대 코드 |
+
+#### Success Response
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "inviteCode": "ABC123",
+  "title": "로비 제목",
+  "hostId": "host-user-identifier",
+  "hostNickname": "방장닉네임",
+  "maxPlayers": 4,
+  "currentPlayers": 2,
+  "status": "WAITING",
+  "mapId": 1,
+  "mapTitle": "K-POP 퀴즈",
+  "mapCategory": "K-POP",
+  "questionCount": 10,
+  "timeLimitSeconds": 30,
+  "players": [
+    {
+      "userIdentifier": "host-user-identifier",
+      "nickname": "방장닉네임",
+      "host": true,
+      "ready": false
+    },
+    {
+      "userIdentifier": "participant-user-identifier",
+      "nickname": "참가자닉네임",
+      "host": false,
+      "ready": true
+    }
+  ],
+  "canStart": false
+}
+```
+
+#### Response Fields
+
+| 필드                         | 타입            | 설명                                                |
+| -------------------------- | ------------- | ------------------------------------------------- |
+| `inviteCode`               | string        | 로비 초대 코드                                          |
+| `title`                    | string        | 로비 제목                                             |
+| `hostId`                   | string        | 방장 사용자 식별자. Redis/WebSocket 식별용 값                 |
+| `hostNickname`             | string        | 방장 표시 닉네임                                         |
+| `maxPlayers`               | number        | 최대 참여 인원                                          |
+| `currentPlayers`           | number        | 현재 참여 인원                                          |
+| `status`                   | string        | 로비 상태. `WAITING`, `PLAYING`, `FINISHED`           |
+| `mapId`                    | number \| null | 선택된 맵 ID. 맵 미선택 시 `null` |
+| `mapTitle`                 | string \| null | 선택된 맵 제목. 맵 미선택 시 `null` |
+| `mapCategory`              | string \| null | 선택된 맵 카테고리. 맵 미선택 시 `null` |
+| `questionCount`            | number \| null | 진행할 문제 수/라운드 수 |
+| `timeLimitSeconds`         | number \| null | 라운드당 제한 시간(초) |
+| `players`                  | array         | 로비 참가자 목록                                         |
+| `players[].userIdentifier` | string        | 참가자 식별자. Redis/WebSocket 식별용 값이며 화면 표시용으로 사용하지 않음 |
+| `players[].nickname`       | string        | 참가자 표시 닉네임                                        |
+| `players[].host`           | boolean       | 해당 참가자가 방장인지 여부                                   |
+| `players[].ready`          | boolean       | 해당 참가자의 준비 상태. 방장은 ready 대상이 아니므로 `false`일 수 있음   |
+| `canStart`                 | boolean       | 조회 시점 기준 게임 시작 버튼 활성화 가능 여부                       |
+
+#### 참가자 닉네임 정책
+
+| 항목          | 정책                                                         |
+| ----------- | ---------------------------------------------------------- |
+| 조회 기준       | `players[].userIdentifier` 기준으로 사용자 닉네임 조회                 |
+| 대상 사용자      | 게스트 사용자와 정식 회원 사용자 모두 지원                                   |
+| 조회 실패       | 로비 상세 조회 전체를 실패시키지 않고 fallback 닉네임 반환                      |
+| fallback 형식 | `Unknown-{hash}` 형식의 안전한 표시값                               |
+| 식별자 노출      | `userIdentifier` 원문 일부를 fallback 닉네임에 포함하지 않음              |
+| 순서          | 기존 Redis 참가자 목록 순서 유지                                      |
+| 방장 보정       | Redis participants Set에 방장이 누락된 경우 응답 목록 맨 앞에 방장을 보정할 수 있음 |
+
+#### Error Response
+
+| HTTP Status | 상황                               |
+| ----------: | -------------------------------- |
+|         401 | 인증 정보 없음 또는 유효하지 않은 Access Token |
+|         403 | 로비 참여자가 아닌 사용자가 상세 조회를 시도함       |
+|         404 | 존재하지 않는 로비 초대 코드                 |
 
 ### 초대 코드 기반 로비 입장
 

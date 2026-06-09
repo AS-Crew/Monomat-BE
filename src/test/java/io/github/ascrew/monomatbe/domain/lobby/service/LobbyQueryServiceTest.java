@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
  * [검증 정책]
  * - 비공개 로비가 공개 목록 원본에 섞여 있으면 제외한다.
  * - WAITING / PLAYING 로비는 공개 목록에 노출한다.
- * - FINISHED 로비는 공개 목록에서 제외한다.
+ * - FINISHED 로비는 목록에서 제외한다.
  * - 제목 검색은 대소문자를 무시하고 contains 기준으로 동작한다.
  * - 검색어는 LobbySearchCondition 생성 시점에 lower-case로 정규화된다.
  * - 카테고리 필터는 Repository에서 정규화된 FE 표시값(K-POP, J-POP, POP)을 기준으로 동작한다.
@@ -133,11 +133,6 @@ class LobbyQueryServiceTest {
                 lobby("LOBBY-2", "JPOP Anime Quiz", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
         ));
 
-        /*
-         * LobbySearchCondition 생성 시점에 keyword가 lower-case로 정규화된다.
-         * Service는 로비 title만 lower-case로 변환하여 비교하므로,
-         * 요청 keyword의 대소문자 차이는 결과에 영향을 주지 않아야 한다.
-         */
         LobbySearchCondition condition = LobbySearchCondition.of("random", null, "latest");
 
         // when
@@ -155,7 +150,7 @@ class LobbyQueryServiceTest {
         // given
         when(lobbyRepository.getPublicLobbies()).thenReturn(List.of(
                 lobby("LOBBY-1", "KPOP Random Quiz", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
-                lobby("LOBBY-2", "JPOP Anime Quiz", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
+                lobby("LOBBY-2", "JPOP Anime Quiz", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
         ));
 
         LobbySearchCondition condition = LobbySearchCondition.of("  random  ", null, "latest");
@@ -242,17 +237,7 @@ class LobbyQueryServiceTest {
                 lobby("MID-1", "중간 로비 1", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
         ));
 
-        /*
-         * latest 정렬 결과는 NEW, MID-2, MID-1, OLD 순서다.
-         * page=1, size=2이면 두 번째 페이지이므로 MID-1, OLD가 반환되어야 한다.
-         */
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                1,
-                2
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 1, 2);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -278,13 +263,7 @@ class LobbyQueryServiceTest {
                 lobby("LOBBY-1", "로비 1", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
         ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                2
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 2);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -304,13 +283,7 @@ class LobbyQueryServiceTest {
                 lobby("LOBBY-1", "로비 1", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
         ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                10,
-                20
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 10, 20);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -334,23 +307,13 @@ class LobbyQueryServiceTest {
                 lobbyWithHost("ROOM-2", guestHostId, 1000L)
         ));
 
-        /*
-         * 방장 닉네임 조회는 페이지 내 hostId 전체를 한 번에 넘긴다.
-         * 게스트/회원 식별자가 섞여 있어도 동일한 Map 조회로 닉네임이 채워져야 한다.
-         */
         when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(memberHostId, guestHostId)))
                 .thenReturn(Map.of(
                         memberHostId, "정식회원닉",
                         guestHostId, "게스트닉"
                 ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                20
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 20);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -366,7 +329,6 @@ class LobbyQueryServiceTest {
                         tuple("ROOM-2", "게스트닉")
                 );
 
-        // N+1 방지: 페이지 내 방장 닉네임은 단 1회 조회로 처리한다.
         verify(lobbyPlayerNicknameResolver, times(1)).resolveNicknameMap(any());
     }
 
@@ -384,13 +346,7 @@ class LobbyQueryServiceTest {
         when(lobbyPlayerNicknameResolver.fallbackNickname(hostId))
                 .thenReturn("Unknown-missin");
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                20
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 20);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -508,20 +464,17 @@ class LobbyQueryServiceTest {
     }
 
     @Test
-    @DisplayName("로비 상세 조회 응답의 참여자 목록에 닉네임을 포함한다")
-    void getLobbyDetail_includesPlayerNicknames() {
+    @DisplayName("로비 상세 조회 응답의 참여자 목록과 최상위 방장 정보에 닉네임을 포함한다")
+    void getLobbyDetail_includesPlayerNicknamesAndHostNickname() {
         // given
         String code = "ABC123";
         String hostIdentifier = "host-user-identifier";
         String participantIdentifier = "participant-user-identifier";
 
-        JoinLobbyResponse lobbyInfo = new JoinLobbyResponse(
+        JoinLobbyResponse lobbyInfo = lobbyDetailInfo(
                 code,
-                "테스트 로비",
                 hostIdentifier,
-                8,
                 2,
-                LobbyStatus.WAITING.name(),
                 1L,
                 "테스트 맵",
                 "K-POP",
@@ -529,8 +482,7 @@ class LobbyQueryServiceTest {
                 30
         );
 
-        when(lobbyRepository.findByInviteCode(code))
-                .thenReturn(Optional.of(lobbyInfo));
+        stubLobbyDetailBase(code, lobbyInfo);
 
         when(lobbyRepository.getParticipantIdentifiers(code))
                 .thenReturn(List.of(hostIdentifier, participantIdentifier));
@@ -544,22 +496,15 @@ class LobbyQueryServiceTest {
                         participantIdentifier, "참여자닉네임"
                 ));
 
-        when(gameLobbyJpaRepository.findByInviteCode(code))
-                .thenReturn(Optional.empty());
-
-        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
-                .thenReturn(false);
-
-        CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                hostIdentifier,
-                UserType.REGISTERED
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
+                code,
+                registeredPrincipal(hostIdentifier)
         );
 
-        // when
-        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
-
         // then
+        assertThat(response.hostNickname()).isEqualTo("방장닉네임");
+
         assertThat(response.players())
                 .extracting(LobbyPlayerResponse::nickname)
                 .containsExactly("방장닉네임", "참여자닉네임");
@@ -578,29 +523,20 @@ class LobbyQueryServiceTest {
     }
 
     @Test
-    @DisplayName("로비 상세 조회 응답에서 닉네임을 찾지 못하면 fallback 닉네임을 사용한다")
-    void getLobbyDetail_usesFallbackNicknameWhenNicknameIsMissing() {
+    @DisplayName("로비 상세 조회 응답에서 참가자 닉네임을 찾지 못하면 fallback 닉네임을 사용한다")
+    void getLobbyDetail_usesFallbackNicknameWhenParticipantNicknameIsMissing() {
         // given
         String code = "ABC123";
         String hostIdentifier = "host-user-identifier";
         String participantIdentifier = "participant-user-identifier";
 
-        JoinLobbyResponse lobbyInfo = new JoinLobbyResponse(
+        JoinLobbyResponse lobbyInfo = lobbyDetailInfo(
                 code,
-                "테스트 로비",
                 hostIdentifier,
-                8,
-                2,
-                LobbyStatus.WAITING.name(),
-                null,
-                null,
-                null,
-                null,
-                null
+                2
         );
 
-        when(lobbyRepository.findByInviteCode(code))
-                .thenReturn(Optional.of(lobbyInfo));
+        stubLobbyDetailBase(code, lobbyInfo);
 
         when(lobbyRepository.getParticipantIdentifiers(code))
                 .thenReturn(List.of(hostIdentifier, participantIdentifier));
@@ -616,25 +552,123 @@ class LobbyQueryServiceTest {
         when(lobbyPlayerNicknameResolver.fallbackNickname(participantIdentifier))
                 .thenReturn("Unknown-partic");
 
-        when(gameLobbyJpaRepository.findByInviteCode(code))
-                .thenReturn(Optional.empty());
-
-        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
-                .thenReturn(false);
-
-        CustomPrincipal principal = new CustomPrincipal(
-                1L,
-                hostIdentifier,
-                UserType.REGISTERED
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
+                code,
+                registeredPrincipal(hostIdentifier)
         );
 
-        // when
-        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(code, principal);
-
         // then
+        assertThat(response.hostNickname()).isEqualTo("방장닉네임");
+
         assertThat(response.players())
                 .extracting(LobbyPlayerResponse::nickname)
                 .containsExactly("방장닉네임", "Unknown-partic");
+    }
+
+    @Test
+    @DisplayName("로비 상세 조회 응답에서 방장 닉네임을 찾지 못하면 fallback 닉네임을 hostNickname으로 내려준다")
+    void getLobbyDetail_usesFallbackHostNicknameWhenHostNicknameIsMissing() {
+        // given
+        String code = "ABC123";
+        String hostIdentifier = "missing-host-identifier";
+        String participantIdentifier = "participant-user-identifier";
+
+        JoinLobbyResponse lobbyInfo = lobbyDetailInfo(
+                code,
+                hostIdentifier,
+                2
+        );
+
+        stubLobbyDetailBase(code, lobbyInfo);
+
+        when(lobbyRepository.getParticipantIdentifiers(code))
+                .thenReturn(List.of(hostIdentifier, participantIdentifier));
+
+        when(lobbyRepository.getReadyParticipantIdentifiers(code))
+                .thenReturn(Set.of(participantIdentifier));
+
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostIdentifier, participantIdentifier)))
+                .thenReturn(Map.of(
+                        participantIdentifier, "참여자닉네임"
+                ));
+
+        when(lobbyPlayerNicknameResolver.fallbackNickname(hostIdentifier))
+                .thenReturn("Unknown-host12");
+
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
+                code,
+                registeredPrincipal(hostIdentifier)
+        );
+
+        // then
+        assertThat(response.hostNickname()).isEqualTo("Unknown-host12");
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::nickname)
+                .containsExactly("Unknown-host12", "참여자닉네임");
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::host)
+                .containsExactly(true, false);
+
+        assertThat(response.players())
+                .extracting(LobbyPlayerResponse::ready)
+                .containsExactly(false, true);
+    }
+
+    @Test
+    @DisplayName("로비 상세 조회 시 participants Set에 방장이 없으면 방장을 보정하고 hostNickname을 포함한다")
+    void getLobbyDetail_addsMissingHostAndIncludesHostNickname() {
+        // given
+        String code = "ABC123";
+        String hostIdentifier = "host-user-identifier";
+        String participantIdentifier = "participant-user-identifier";
+
+        JoinLobbyResponse lobbyInfo = lobbyDetailInfo(
+                code,
+                hostIdentifier,
+                1
+        );
+
+        stubLobbyDetailBase(code, lobbyInfo);
+
+        when(lobbyRepository.getParticipantIdentifiers(code))
+                .thenReturn(List.of(participantIdentifier));
+
+        when(lobbyRepository.getReadyParticipantIdentifiers(code))
+                .thenReturn(Set.of(participantIdentifier));
+
+        when(lobbyPlayerNicknameResolver.resolveNicknameMap(List.of(hostIdentifier, participantIdentifier)))
+                .thenReturn(Map.of(
+                        hostIdentifier, "방장닉네임",
+                        participantIdentifier, "참가자닉네임"
+                ));
+
+        // when
+        LobbyDetailResponse response = lobbyQueryService.getLobbyDetail(
+                code,
+                registeredPrincipal(hostIdentifier)
+        );
+
+        // then
+        assertThat(response.hostNickname()).isEqualTo("방장닉네임");
+
+        assertThat(response.players())
+                .extracting(
+                        LobbyPlayerResponse::userIdentifier,
+                        LobbyPlayerResponse::nickname,
+                        LobbyPlayerResponse::host,
+                        LobbyPlayerResponse::ready
+                )
+                .containsExactly(
+                        tuple(hostIdentifier, "방장닉네임", true, false),
+                        tuple(participantIdentifier, "참가자닉네임", false, true)
+                );
+
+        verify(lobbyPlayerNicknameResolver)
+                .resolveNicknameMap(List.of(hostIdentifier, participantIdentifier));
     }
 
     @Test
@@ -643,33 +677,19 @@ class LobbyQueryServiceTest {
         // given
         when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
 
-        /*
-         * page=0, size=2이면 Service는 hasNext 계산을 위해 size + 1개를 조회한다.
-         * 따라서 Repository에는 limit=3 요청이 들어간다.
-         */
         when(lobbyRepository.getPublicLobbyCodesByLatestIndex(0L, 3)).thenReturn(List.of(
                 "NEW",
                 "MID",
                 "OLD"
         ));
 
-        /*
-         * 3단계 이후 Service는 ZSET에서 읽은 code 목록 전체를 Repository에 넘긴다.
-         * 이 중 size + 1번째인 OLD는 응답 items에는 포함되지 않고 hasNext 계산에만 사용된다.
-         */
         when(lobbyRepository.getPublicLobbiesByCodes(List.of("NEW", "MID", "OLD"))).thenReturn(List.of(
                 lobby("NEW", "최신 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 3000L),
                 lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L),
                 lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
         ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                2
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 2);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -697,13 +717,7 @@ class LobbyQueryServiceTest {
                 lobby("UNMATCHED", "JPOP 애니송", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
         ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                "랜덤",
-                null,
-                "latest",
-                0,
-                20
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of("랜덤", null, "latest", 0, 20);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -727,13 +741,7 @@ class LobbyQueryServiceTest {
                 lobby("JPOP", "제이팝 로비", "J-POP", 2, 6, LobbyStatus.WAITING, 2000L)
         ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                "K-POP",
-                "latest",
-                0,
-                20
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, "K-POP", "latest", 0, 20);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -757,13 +765,7 @@ class LobbyQueryServiceTest {
                 lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
         ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                20
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 20);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -783,10 +785,6 @@ class LobbyQueryServiceTest {
         // given
         when(lobbyRepository.existsPublicLatestIndex()).thenReturn(true);
 
-        /*
-         * 첫 조회에서는 STALE, NEW를 반환한다.
-         * STALE은 Repository에서 Hash 없음으로 제외되고 NEW만 DTO로 반환된다고 가정한다.
-         */
         when(lobbyRepository.getPublicLobbyCodesByLatestIndex(0L, 3))
                 .thenReturn(List.of("STALE", "NEW", "MID"));
 
@@ -796,10 +794,6 @@ class LobbyQueryServiceTest {
                         lobby("MID", "중간 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 2000L)
                 ));
 
-        /*
-         * 첫 조회에서 size + 1개를 확보하지 못했으므로,
-         * 다음 offset에서 추가 조회가 발생해야 한다.
-         */
         when(lobbyRepository.getPublicLobbyCodesByLatestIndex(3L, 1))
                 .thenReturn(List.of("OLD"));
 
@@ -808,13 +802,7 @@ class LobbyQueryServiceTest {
                         lobby("OLD", "오래된 로비", "K-POP", 2, 6, LobbyStatus.WAITING, 1000L)
                 ));
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                2
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 2);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -846,13 +834,7 @@ class LobbyQueryServiceTest {
         when(lobbyRepository.getPublicLobbyCodesByLatestIndex(3L, 2))
                 .thenReturn(List.of());
 
-        LobbySearchCondition condition = LobbySearchCondition.of(
-                null,
-                null,
-                "latest",
-                0,
-                2
-        );
+        LobbySearchCondition condition = LobbySearchCondition.of(null, null, "latest", 0, 2);
 
         // when
         var result = lobbyQueryService.getPublicLobbyPage(condition);
@@ -864,14 +846,6 @@ class LobbyQueryServiceTest {
         assertThat(result.hasNext()).isFalse();
     }
 
-    /**
-     * 테스트용 로비 DTO를 생성한다.
-     *
-     * [의도]
-     * 각 테스트에서 필요한 값만 명확히 드러내기 위해 fixture 생성 메서드를 둔다.
-     * 실제 Redis 조회 로직은 테스트 대상이 아니므로,
-     * LobbyRedisDto builder를 사용해 Service 정책 검증에 필요한 필드만 채운다.
-     */
     private LobbyRedisDto lobby(
             String code,
             String title,
@@ -893,14 +867,6 @@ class LobbyQueryServiceTest {
         );
     }
 
-    /**
-     * 공개/비공개 여부를 직접 지정할 수 있는 테스트용 로비 DTO를 생성한다.
-     *
-     * [사용 목적]
-     * 정상 Redis 생성 경로에서는 비공개 로비가 lobby:public Set에 들어가지 않는다.
-     * 다만 운영 중 Redis 수동 조작이나 복구 과정에서 비공개 로비 코드가 섞일 수 있으므로,
-     * Service 계층의 최종 방어 필터를 검증하기 위해 isPrivate 값을 지정할 수 있게 한다.
-     */
     private LobbyRedisDto lobby(
             String code,
             String title,
@@ -926,14 +892,6 @@ class LobbyQueryServiceTest {
                 .build();
     }
 
-    /**
-     * 방장 닉네임 검증 테스트용 로비 DTO를 생성한다.
-     *
-     * [의도]
-     * 기존 lobby() fixture는 hostId를 고정값으로 채우기 때문에
-     * 회원/게스트 방장별 닉네임 매핑을 구분해 검증할 수 없다.
-     * 따라서 hostId를 직접 지정할 수 있는 fixture를 둔다.
-     */
     private LobbyRedisDto lobbyWithHost(
             String code,
             String hostId,
@@ -954,15 +912,6 @@ class LobbyQueryServiceTest {
                 .build();
     }
 
-    /**
-     * capacity 유효성 검증 테스트용 로비 DTO를 생성한다.
-     *
-     * [의도]
-     * 기존 lobby() fixture는 currentPlayers/maxPlayers를 primitive int로 받기 때문에
-     * null 값 검증에 사용할 수 없다.
-     * Redis 손상 데이터 방어 테스트에서는 null/0/음수 값을 명시적으로 만들 수 있어야 하므로
-     * Integer 기반 별도 fixture를 사용한다.
-     */
     private LobbyRedisDto lobbyWithCapacity(
             String code,
             Integer currentPlayers,
@@ -981,5 +930,69 @@ class LobbyQueryServiceTest {
                 .status(LobbyStatus.WAITING.name())
                 .createdAtEpochMillis(1000L)
                 .build();
+    }
+
+    private JoinLobbyResponse lobbyDetailInfo(
+            String code,
+            String hostIdentifier,
+            int currentPlayers
+    ) {
+        return lobbyDetailInfo(
+                code,
+                hostIdentifier,
+                currentPlayers,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    private JoinLobbyResponse lobbyDetailInfo(
+            String code,
+            String hostIdentifier,
+            int currentPlayers,
+            Long mapId,
+            String mapTitle,
+            String mapCategory,
+            Integer questionCount,
+            Integer timeLimitSeconds
+    ) {
+        return new JoinLobbyResponse(
+                code,
+                "테스트 로비",
+                hostIdentifier,
+                8,
+                currentPlayers,
+                LobbyStatus.WAITING.name(),
+                mapId,
+                mapTitle,
+                mapCategory,
+                questionCount,
+                timeLimitSeconds
+        );
+    }
+
+    private void stubLobbyDetailBase(
+            String code,
+            JoinLobbyResponse lobbyInfo
+    ) {
+        when(lobbyRepository.findByInviteCode(code))
+                .thenReturn(Optional.of(lobbyInfo));
+
+        when(gameLobbyJpaRepository.findByInviteCode(code))
+                .thenReturn(Optional.empty());
+
+        when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
+                .thenReturn(false);
+    }
+
+    private CustomPrincipal registeredPrincipal(String userIdentifier) {
+        return new CustomPrincipal(
+                1L,
+                userIdentifier,
+                UserType.REGISTERED
+        );
     }
 }

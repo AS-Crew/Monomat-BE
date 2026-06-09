@@ -34,11 +34,17 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final CustomStompErrorHandler customStompErrorHandler;
     private final StompChannelInterceptor stompChannelInterceptor;
 
+    // REST CORS와 동일 프로퍼티(monomat.cors.allowed-origins)를 사용한다.
+    // WebSocket은 setAllowedOriginPatterns(패턴 기반)를 쓰지만, CorsProperties가 기동 시점에
+    // 와일드카드(*, https://*.monomat.games 등)를 거부하고 정확한 Origin만 통과시키므로
+    // 여기에는 항상 정확한 Origin만 전달되며 REST(setAllowedOrigins, 정확 매칭)와 동작이 일치한다.
+    private final CorsProperties corsProperties;
+
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry
                 .addEndpoint("/ws") //최초로 웹소켓 연결을 하기위해 url /ws 지정
-                .setAllowedOriginPatterns("*") //모든 도메인에서 접속을 허용
+                .setAllowedOriginPatterns(corsProperties.getAllowedOrigins().toArray(new String[0])) //허용된 프론트엔드 출처에서만 접속 허용
                 .withSockJS(); //웹소켓 연결 실패시 일반 HTTP통신으로 연결
 
         registry.setErrorHandler(customStompErrorHandler);

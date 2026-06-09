@@ -16,8 +16,17 @@ import org.springframework.data.redis.core.script.RedisScript;
  * - create_lobby.lua : 로비 생성 원자 처리
  * - leave_lobby.lua : 로비 퇴장/방장 위임/폭파 원자 처리
  * - enter_lobby.lua : 로비 입장 상태 저장 원자 처리
+ * - kick_lobby.lua : 로비 강퇴 원자 처리
+ * - start_lobby.lua : 로비 게임 시작 원자 처리
+ * - compensate_lobby_map.lua : 로비 맵 변경 보상 복구 원자 처리
+ * - update_lobby_settings.lua : 로비 설정 변경 원자 처리
+ * - restore_lobby_settings.lua : 로비 설정 복구 원자 처리
+ * - init_game_session.lua : 게임 세션 초기화 원자 처리
+ * - ready_to_play.lua : 라운드 재생 준비 상태 원자 처리
+ * - append_recent_lobby_chat.lua : 로비 최근 채팅 저장 원자 처리
+ * - submit_game_answer.lua : 게임 정답 제출 원자 처리
+ * - cleanup_game_session.lua : 게임 세션 Redis 키 정리 원자 처리
  */
-
 @Configuration
 public class RedisScriptConfig {
 
@@ -103,12 +112,31 @@ public class RedisScriptConfig {
      * - 맵 선택 여부 검증
      * - 방장 제외 참여자 ready 상태 검증
      * - 로비 상태 PLAYING 전환
-     * - 공개 로비 목록에서 제거
+     * - 공개 로비 목록에는 유지하고, FE가 진행 중 상태로 표시한다
      */
     @Bean
     public RedisScript<String> startLobbyScript() {
         DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
         redisScript.setLocation(new ClassPathResource("scripts/start_lobby.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
+
+    /**
+     * 로비 설정 변경 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - status == WAITING 원자 검증
+     * - 현재 참가자 수가 요청 maxPlayers 이하인지 검증
+     * - max_players/question_count/time_limit_seconds Hash 필드 갱신
+     * - current_players Hash 필드 동기화
+     * - 공개 로비 most_available 인덱스 갱신
+     */
+    @Bean
+    public RedisScript<String> updateLobbySettingsScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/update_lobby_settings.lua"));
         redisScript.setResultType(String.class);
         return redisScript;
     }
@@ -129,6 +157,25 @@ public class RedisScriptConfig {
     public RedisScript<String> compensateLobbyMapScript() {
         DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
         redisScript.setLocation(new ClassPathResource("scripts/compensate_lobby_map.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
+
+    /**
+     * 로비 설정 복구 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - status == WAITING 원자 검증
+     * - 현재 참가자 수가 복구할 maxPlayers 이하인지 검증
+     * - max_players/question_count/time_limit_seconds Hash 필드 복구
+     * - current_players Hash 필드 동기화
+     * - 공개 로비 most_available 인덱스 복구
+     */
+    @Bean
+    public RedisScript<String> restoreLobbySettingsScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/restore_lobby_settings.lua"));
         redisScript.setResultType(String.class);
         return redisScript;
     }

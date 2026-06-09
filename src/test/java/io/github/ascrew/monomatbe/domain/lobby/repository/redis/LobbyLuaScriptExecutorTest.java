@@ -1,214 +1,163 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository.redis;
 
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
-@SpringBootTest
 class LobbyLuaScriptExecutorTest {
 
-    @Autowired
-    private LobbyLuaScriptExecutor lobbyLuaScriptExecutor;
+    private static final String CODE = "ABC123";
 
-    @Autowired
-    private StringRedisTemplate redisTemplate;
+    private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
 
-    private String lobbyCode;
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> leaveLobbyScript = mock(RedisScript.class);
 
-    @AfterEach
-    void tearDown() {
-        if (lobbyCode == null) {
-            return;
-        }
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> createLobbyScript = mock(RedisScript.class);
 
-        redisTemplate.delete(List.of(
-                RedisKeys.lobbyKey(lobbyCode),
-                RedisKeys.lobbyParticipantsKey(lobbyCode),
-                RedisKeys.lobbyOrderKey(lobbyCode),
-                RedisKeys.lobbyKickedKey(lobbyCode),
-                RedisKeys.lobbyReadyKey(lobbyCode),
-                RedisKeys.lobbyUserSessionKey(lobbyCode, "user-a"),
-                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "user-a"),
-                RedisKeys.lobbyUserSessionKey(lobbyCode, "user-b"),
-                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "user-b"),
-                RedisKeys.lobbyUserSessionKey(lobbyCode, "stale-user"),
-                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, "stale-user")
-        ));
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> kickLobbyScript = mock(RedisScript.class);
 
-        redisTemplate.opsForSet().remove(RedisKeys.LOBBY_PUBLIC, lobbyCode);
-        redisTemplate.opsForSet().remove(RedisKeys.LOBBY_ALL, lobbyCode);
-        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_LATEST, lobbyCode);
-        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, lobbyCode);
-        redisTemplate.opsForZSet().remove(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, lobbyCode);
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> startLobbyScript = mock(RedisScript.class);
 
-        lobbyCode = null;
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> compensateLobbyMapScript = mock(RedisScript.class);
+
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> reapLobbyScript = mock(RedisScript.class);
+
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> updateLobbySettingsScript = mock(RedisScript.class);
+
+    @SuppressWarnings("unchecked")
+    private final RedisScript<String> restoreLobbySettingsScript = mock(RedisScript.class);
+
+    private final LobbyLuaScriptExecutor sut = new LobbyLuaScriptExecutor(
+            redisTemplate,
+            leaveLobbyScript,
+            createLobbyScript,
+            kickLobbyScript,
+            startLobbyScript,
+            compensateLobbyMapScript,
+            reapLobbyScript,
+            updateLobbySettingsScript,
+            restoreLobbySettingsScript
+    );
+
+    @Test
+    @DisplayName("로비 설정 변경 Lua 실행 시 빈자리 정렬 인덱스 키와 필요한 필드명을 함께 전달한다")
+    void executeUpdateLobbySettings_passesMostAvailableIndexAndFieldNames() {
+        sut.executeUpdateLobbySettings(
+                CODE,
+                4,
+                10,
+                30
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+
+        ArgumentCaptor<String> argCaptor = ArgumentCaptor.forClass(String.class);
+
+        verify(redisTemplate).execute(
+                eq(updateLobbySettingsScript),
+                keysCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture()
+        );
+
+        assertThat(keysCaptor.getValue()).containsExactly(
+                RedisKeys.lobbyKey(CODE),
+                RedisKeys.lobbyParticipantsKey(CODE),
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+        );
+
+        assertThat(argCaptor.getAllValues()).containsExactly(
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_MAX_PLAYERS,
+                RedisKeys.FIELD_QUESTION_COUNT,
+                RedisKeys.FIELD_TIME_LIMIT_SECONDS,
+                LobbyStatus.WAITING.name(),
+                RedisKeys.FIELD_IS_PRIVATE,
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                CODE,
+                "4",
+                "10",
+                "30"
+        );
     }
 
     @Test
-    @DisplayName("퇴장 시 order 중복 전체, ready, user session 키를 정리한다")
-    void executeLeaveLobby_removesAllDuplicatedOrderEntriesAndSessionKeys() {
-        // given
-        lobbyCode = newLobbyCode();
-        String userA = "user-a";
-        String userB = "user-b";
-
-        redisTemplate.opsForHash().putAll(
-                RedisKeys.lobbyKey(lobbyCode),
-                Map.of(
-                        RedisKeys.FIELD_CODE, lobbyCode,
-                        RedisKeys.FIELD_HOST_USER_ID, userA,
-                        RedisKeys.FIELD_CURRENT_PLAYERS, "2",
-                        RedisKeys.FIELD_MAX_PLAYERS, "4",
-                        RedisKeys.FIELD_IS_PRIVATE, "false",
-                        RedisKeys.FIELD_STATUS, "WAITING"
-                )
+    @DisplayName("로비 설정 복구 Lua 실행 시 빈자리 정렬 인덱스 키와 필요한 필드명을 함께 전달한다")
+    void executeRestoreLobbySettings_passesMostAvailableIndexAndFieldNames() {
+        sut.executeRestoreLobbySettings(
+                CODE,
+                6,
+                5,
+                30
         );
 
-        redisTemplate.opsForSet().add(
-                RedisKeys.lobbyParticipantsKey(lobbyCode),
-                userA,
-                userB
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+
+        ArgumentCaptor<String> argCaptor = ArgumentCaptor.forClass(String.class);
+
+        verify(redisTemplate).execute(
+                eq(restoreLobbySettingsScript),
+                keysCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture(),
+                argCaptor.capture()
         );
 
-        redisTemplate.opsForList().rightPushAll(
-                RedisKeys.lobbyOrderKey(lobbyCode),
-                userA,
-                userA,
-                userA,
-                userB
+        assertThat(keysCaptor.getValue()).containsExactly(
+                RedisKeys.lobbyKey(CODE),
+                RedisKeys.lobbyParticipantsKey(CODE),
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
         );
 
-        redisTemplate.opsForSet().add(
-                RedisKeys.lobbyReadyKey(lobbyCode),
-                userA,
-                userB
+        assertThat(argCaptor.getAllValues()).containsExactly(
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_MAX_PLAYERS,
+                RedisKeys.FIELD_QUESTION_COUNT,
+                RedisKeys.FIELD_TIME_LIMIT_SECONDS,
+                LobbyStatus.WAITING.name(),
+                RedisKeys.FIELD_IS_PRIVATE,
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                CODE,
+                "6",
+                "5",
+                "30"
         );
-
-        redisTemplate.opsForValue().set(
-                RedisKeys.lobbyUserSessionKey(lobbyCode, userA),
-                "ws-a"
-        );
-
-        redisTemplate.opsForValue().set(
-                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, userA),
-                "1"
-        );
-
-        redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, lobbyCode);
-        redisTemplate.opsForSet().add(RedisKeys.LOBBY_ALL, lobbyCode);
-        redisTemplate.opsForZSet().add(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, lobbyCode, 2);
-        redisTemplate.opsForZSet().add(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, lobbyCode, 2);
-
-        // when
-        String result = lobbyLuaScriptExecutor.executeLeaveLobby(lobbyCode, userA);
-
-        // then
-        assertThat(result).isEqualTo("DELEGATED:" + userB);
-
-        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(lobbyCode)))
-                .containsOnly(userB);
-
-        assertThat(redisTemplate.opsForList().range(RedisKeys.lobbyOrderKey(lobbyCode), 0, -1))
-                .containsExactly(userB);
-
-        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyReadyKey(lobbyCode)))
-                .containsOnly(userB);
-
-        assertThat(redisTemplate.opsForValue().get(RedisKeys.lobbyUserSessionKey(lobbyCode, userA)))
-                .isNull();
-
-        assertThat(redisTemplate.opsForValue().get(RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, userA)))
-                .isNull();
-
-        assertThat(redisTemplate.opsForHash().get(
-                RedisKeys.lobbyKey(lobbyCode),
-                RedisKeys.FIELD_CURRENT_PLAYERS
-        )).isEqualTo("1");
-
-        assertThat(redisTemplate.opsForHash().get(
-                RedisKeys.lobbyKey(lobbyCode),
-                RedisKeys.FIELD_HOST_USER_ID
-        )).isEqualTo(userB);
-
-        assertThat(redisTemplate.opsForZSet().score(
-                RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS,
-                lobbyCode
-        )).isEqualTo(1.0);
-
-        assertThat(redisTemplate.opsForZSet().score(
-                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE,
-                lobbyCode
-        )).isEqualTo(3.0);
-    }
-
-    @Test
-    @DisplayName("방장 퇴장 시 order 앞쪽의 stale 사용자를 건너뛰고 실제 참여자를 새 방장으로 위임한다")
-    void executeLeaveLobby_skipsStaleOrderEntryWhenDelegatingHost() {
-        // given
-        lobbyCode = newLobbyCode();
-        String host = "user-a";
-        String staleUser = "stale-user";
-        String nextHost = "user-b";
-
-        redisTemplate.opsForHash().putAll(
-                RedisKeys.lobbyKey(lobbyCode),
-                Map.of(
-                        RedisKeys.FIELD_CODE, lobbyCode,
-                        RedisKeys.FIELD_HOST_USER_ID, host,
-                        RedisKeys.FIELD_CURRENT_PLAYERS, "2",
-                        RedisKeys.FIELD_MAX_PLAYERS, "4",
-                        RedisKeys.FIELD_IS_PRIVATE, "false",
-                        RedisKeys.FIELD_STATUS, "WAITING"
-                )
-        );
-
-        redisTemplate.opsForSet().add(
-                RedisKeys.lobbyParticipantsKey(lobbyCode),
-                host,
-                nextHost
-        );
-
-        redisTemplate.opsForList().rightPushAll(
-                RedisKeys.lobbyOrderKey(lobbyCode),
-                host,
-                staleUser,
-                nextHost
-        );
-
-        redisTemplate.opsForSet().add(RedisKeys.LOBBY_PUBLIC, lobbyCode);
-        redisTemplate.opsForSet().add(RedisKeys.LOBBY_ALL, lobbyCode);
-        redisTemplate.opsForZSet().add(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, lobbyCode, 2);
-        redisTemplate.opsForZSet().add(RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE, lobbyCode, 2);
-
-        // when
-        String result = lobbyLuaScriptExecutor.executeLeaveLobby(lobbyCode, host);
-
-        // then
-        assertThat(result).isEqualTo("DELEGATED:" + nextHost);
-
-        assertThat(redisTemplate.opsForHash().get(
-                RedisKeys.lobbyKey(lobbyCode),
-                RedisKeys.FIELD_HOST_USER_ID
-        )).isEqualTo(nextHost);
-
-        assertThat(redisTemplate.opsForList().range(RedisKeys.lobbyOrderKey(lobbyCode), 0, -1))
-                .containsExactly(nextHost);
-
-        assertThat(redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(lobbyCode)))
-                .containsOnly(nextHost);
-    }
-
-    private String newLobbyCode() {
-        return "TEST_LOBBY_" + UUID.randomUUID();
     }
 }

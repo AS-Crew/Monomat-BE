@@ -2,8 +2,10 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsRestoreResult;
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.CreateLobbyRequest;
@@ -177,6 +179,66 @@ public class LobbyRepositoryImpl implements LobbyRepository {
   @Override
   public void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount) {
     lobbyRedisCommandRepository.updateMapMetadata(code, metadata, questionCount);
+  }
+
+  @Override
+  public LobbySettingsUpdateResult updateSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  ) {
+    try {
+      String result = lobbyLuaScriptExecutor.executeUpdateLobbySettings(
+              code,
+              maxPlayers,
+              questionCount,
+              timeLimitSeconds
+      );
+
+      return LobbySettingsUpdateResult.from(result);
+    } catch (Exception e) {
+      log.error(
+              "로비 설정 변경 Lua 스크립트 실행 중 예외 발생 - code: {}, maxPlayers: {}, questionCount: {}, timeLimitSeconds: {}",
+              code,
+              maxPlayers,
+              questionCount,
+              timeLimitSeconds,
+              e
+      );
+
+      return LobbySettingsUpdateResult.ERROR;
+    }
+  }
+
+  @Override
+  public LobbySettingsRestoreResult restoreSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  ) {
+    try {
+      String result = lobbyLuaScriptExecutor.executeRestoreLobbySettings(
+              code,
+              maxPlayers,
+              questionCount,
+              timeLimitSeconds
+      );
+
+      return LobbySettingsRestoreResult.from(result);
+    } catch (Exception e) {
+      log.error(
+              "로비 설정 복구 Lua 스크립트 실행 중 예외 발생 - code: {}, maxPlayers: {}, questionCount: {}, timeLimitSeconds: {}",
+              code,
+              maxPlayers,
+              questionCount,
+              timeLimitSeconds,
+              e
+      );
+
+      return LobbySettingsRestoreResult.ERROR;
+    }
   }
 
   @Override

@@ -129,6 +129,56 @@ class LobbyCanStartPolicyTest {
         assertThat(canStart).isFalse();
     }
 
+    @Test
+    @DisplayName("설정 변경 후 questionCount가 맵 곡 수 이하이면 모든 일반 참가자가 ready일 때 canStart는 true다")
+    void canStartTrueWhenUpdatedQuestionCountIsLessThanOrEqualToMapSongCount() {
+        // given
+        JoinLobbyResponse lobbyInfo = waitingLobbyWithMap();
+
+        GameLobby gameLobby = gameLobbyWithRoundCount(4);
+        givenQuizMapSongCount(4);
+
+        List<LobbyPlayerResponse> players = List.of(
+                hostPlayer(),
+                readyPlayer(PLAYER_ID)
+        );
+
+        // when
+        boolean canStart = lobbyCanStartPolicy.calculateCanStart(
+                lobbyInfo,
+                players,
+                gameLobby
+        );
+
+        // then
+        assertThat(canStart).isTrue();
+    }
+
+    @Test
+    @DisplayName("설정 변경 후 questionCount가 맵 곡 수보다 크면 모든 일반 참가자가 ready여도 canStart는 false다")
+    void canStartFalseWhenUpdatedQuestionCountExceedsMapSongCount() {
+        // given
+        JoinLobbyResponse lobbyInfo = waitingLobbyWithMap();
+
+        GameLobby gameLobby = gameLobbyWithRoundCount(6);
+        givenQuizMapSongCount(5);
+
+        List<LobbyPlayerResponse> players = List.of(
+                hostPlayer(),
+                readyPlayer(PLAYER_ID)
+        );
+
+        // when
+        boolean canStart = lobbyCanStartPolicy.calculateCanStart(
+                lobbyInfo,
+                players,
+                gameLobby
+        );
+
+        // then
+        assertThat(canStart).isFalse();
+    }
+
     private JoinLobbyResponse waitingLobbyWithMap() {
         return new JoinLobbyResponse(
                 LOBBY_CODE,

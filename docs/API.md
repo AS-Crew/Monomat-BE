@@ -551,6 +551,95 @@ Content-Type: application/json
 
 ---
 
+### 로비 설정 변경
+
+방장이 대기실에서 로비 설정을 변경한다.
+
+- Method: `PATCH`
+- URL: `/api/lobbies/{code}/settings`
+- Auth: 필요
+- 권한: 방장만 가능
+- 상태 제한: `WAITING` 상태에서만 가능
+
+#### Path Variables
+
+| 이름 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `code` | string | Y | 로비 초대 코드 |
+
+#### Request Body
+
+```json
+{
+  "maxPlayers": 4,
+  "questionCount": 10,
+  "timeLimitSeconds": 30
+}
+````
+
+| 필드                 | 타입     | 필수 | 제한     | 설명           |
+| ------------------ | ------ | -- | ------ | ------------ |
+| `maxPlayers`       | number | Y  | 2~8    | 최대 참여 인원     |
+| `questionCount`    | number | Y  | 1~50   | 진행할 문제 수     |
+| `timeLimitSeconds` | number | Y  | 10~120 | 문제당 제한 시간(초) |
+
+#### Response
+
+성공 시 응답 본문 없이 `204 No Content`를 반환한다.
+
+```http
+HTTP/1.1 204 No Content
+```
+
+설정 변경 후 서버는 기존 로비 정보 refresh 이벤트를 발행한다.
+FE는 refresh 이벤트를 받은 뒤 로비 상세 조회 API를 다시 호출해 최신 설정과 `canStart` 값을 반영한다.
+
+#### 검증 정책
+
+* 인증된 사용자만 요청할 수 있다.
+* 방장만 로비 설정을 변경할 수 있다.
+* 로비 상태가 `WAITING`일 때만 변경할 수 있다.
+* `maxPlayers`는 현재 참가자 수보다 작을 수 없다.
+* `questionCount`는 선택된 맵의 등록 곡 수를 초과할 수 없다.
+* 선택된 맵이 없는 경우 `questionCount`는 기본 범위 검증만 적용한다.
+* Redis 로비 상태와 DB `GAME_LOBBY` 스냅샷을 함께 갱신한다.
+* DB 갱신 실패 시 Redis 설정값을 이전 값으로 보상 복구한다.
+
+#### Error Response
+
+| HTTP Status                 | 발생 조건                                             |
+| --------------------------- | ------------------------------------------------- |
+| `400 Bad Request`           | 요청 값이 범위를 벗어난 경우                                  |
+| `401 Unauthorized`          | 인증 정보가 없거나 유효하지 않은 경우                             |
+| `403 Forbidden`             | 방장이 아닌 사용자가 요청한 경우                                |
+| `404 Not Found`             | 로비가 존재하지 않는 경우                                    |
+| `409 Conflict`              | 로비가 `WAITING` 상태가 아니거나, 현재 참가자 수/맵 곡 수 조건을 위반한 경우 |
+| `500 Internal Server Error` | Redis/DB 갱신 중 서버 내부 오류가 발생한 경우                    |
+
+#### 요청 예시
+
+```http
+PATCH /api/lobbies/ABC123/settings
+Authorization: Bearer {accessToken}
+Content-Type: application/json
+```
+
+```json
+{
+  "maxPlayers": 4,
+  "questionCount": 10,
+  "timeLimitSeconds": 30
+}
+```
+
+#### 성공 응답 예시
+
+```http
+HTTP/1.1 204 No Content
+```
+
+---
+
 ### 공개 맵 상세 조회
 
 ```http

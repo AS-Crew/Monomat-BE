@@ -22,7 +22,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 게임 로비 엔티티.
+ * 게임 로비 엔티티
  *
  * [설계 의도 — ARCHITECTURE.md 기준]
  * 실시간 로비 상태는 Redis에서 관리한다.
@@ -104,7 +104,6 @@ public class GameLobby {
      *
      * [단일 책임 원칙 — 기본값 설정의 유일한 지점]
      * status, isDeleted, createdAt의 기본값은 이 메서드에서만 설정한다.
-     * 서비스 레이어에서 이 필드들을 Builder로 명시하지 않는 것이 의도된 설계이다.
      *
      * [보정 항목]
      * - createdAt : Builder에서 누락 시 자동 세팅
@@ -155,5 +154,25 @@ public class GameLobby {
     public void updateMapAndQuestionCount(Long mapId, Integer questionCount) {
         this.mapId = mapId;
         this.questionCount = questionCount;
+    }
+
+    /**
+     * 로비 설정을 변경한다.
+     *
+     * [사용 시점]
+     * 방장이 WAITING 상태의 대기실에서 maxPlayers, questionCount, timeLimitSeconds를 수정할 때 사용한다.
+     *
+     * [검증 책임]
+     * 값의 범위, 방장 여부, WAITING 여부, 현재 참가자 수, 선택 맵의 곡 수 상한은
+     * Service 계층에서 검증한 뒤 이 메서드를 호출한다.
+     */
+    public void updateSettings(
+            Integer maxPlayers,
+            Integer questionCount,
+            Integer timeLimitSeconds
+    ) {
+        this.maxPlayers = maxPlayers;
+        this.questionCount = questionCount;
+        this.timeLimitSeconds = timeLimitSeconds;
     }
 }

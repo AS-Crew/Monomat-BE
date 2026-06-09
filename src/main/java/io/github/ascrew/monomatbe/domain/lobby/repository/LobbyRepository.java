@@ -1,5 +1,5 @@
 /*
- * 로비 데이터에 접근하기 위한 Repository 인터페이스.
+ * 로비 데이터에 접근하기 위한 Repository 인터페이스
  * 구현체(LobbyRepositoryImpl)는 Redis와 직접 통신한다.
  */
 package io.github.ascrew.monomatbe.domain.lobby.repository;
@@ -7,6 +7,8 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsRestoreResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
@@ -303,6 +305,51 @@ public interface LobbyRepository {
    * @param questionCount 새 문제 수
    */
   void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount);
+
+  /**
+   * Redis 로비 Hash의 설정값을 원자적으로 갱신한다.
+   *
+   * [원자 처리]
+   * - 로비 존재 여부 확인
+   * - WAITING 상태 확인
+   * - 현재 참가자 수 <= maxPlayers 확인
+   * - max_players/question_count/time_limit_seconds 갱신
+   *
+   * @param code             로비 초대 코드
+   * @param maxPlayers       최대 참여 인원
+   * @param questionCount    문제 수
+   * @param timeLimitSeconds 제한 시간(초)
+   * @return 설정 변경 처리 결과
+   */
+  LobbySettingsUpdateResult updateSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  );
+
+  /**
+   * DB 갱신 실패 시 Redis 설정값을 이전 값으로 원자 복구한다.
+   *
+   * [원자 처리]
+   * - 로비 존재 여부 확인
+   * - WAITING 상태 확인
+   * - 현재 참가자 수 <= 복구할 maxPlayers 확인
+   * - max_players/question_count/time_limit_seconds 복구
+   * - 공개 로비 most_available 인덱스 복구
+   *
+   * @param code             로비 초대 코드
+   * @param maxPlayers       복구할 최대 참여 인원
+   * @param questionCount    복구할 문제 수
+   * @param timeLimitSeconds 복구할 제한 시간
+   * @return 설정 복구 처리 결과
+   */
+  LobbySettingsRestoreResult restoreSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  );
 
   /**
    * 로비 맵 변경 트랜잭션 보상 복구를 status==WAITING 원자 검증과 함께 수행한다.

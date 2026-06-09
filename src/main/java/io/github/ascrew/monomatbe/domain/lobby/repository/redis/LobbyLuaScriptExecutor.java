@@ -40,6 +40,8 @@ public class LobbyLuaScriptExecutor {
     private final RedisScript<String> startLobbyScript;
     private final RedisScript<String> compensateLobbyMapScript;
     private final RedisScript<String> reapLobbyScript;
+    private final RedisScript<String> updateLobbySettingsScript;
+    private final RedisScript<String> restoreLobbySettingsScript;
 
     public LobbyLuaScriptExecutor(
             StringRedisTemplate redisTemplate,
@@ -48,7 +50,9 @@ public class LobbyLuaScriptExecutor {
             @Qualifier("kickLobbyScript") RedisScript<String> kickLobbyScript,
             @Qualifier("startLobbyScript") RedisScript<String> startLobbyScript,
             @Qualifier("compensateLobbyMapScript") RedisScript<String> compensateLobbyMapScript,
-            @Qualifier("reapLobbyScript") RedisScript<String> reapLobbyScript
+            @Qualifier("reapLobbyScript") RedisScript<String> reapLobbyScript,
+            @Qualifier("updateLobbySettingsScript") RedisScript<String> updateLobbySettingsScript,
+            @Qualifier("restoreLobbySettingsScript") RedisScript<String> restoreLobbySettingsScript
     ) {
         this.redisTemplate = redisTemplate;
         this.leaveLobbyScript = leaveLobbyScript;
@@ -57,6 +61,8 @@ public class LobbyLuaScriptExecutor {
         this.startLobbyScript = startLobbyScript;
         this.compensateLobbyMapScript = compensateLobbyMapScript;
         this.reapLobbyScript = reapLobbyScript;
+        this.updateLobbySettingsScript = updateLobbySettingsScript;
+        this.restoreLobbySettingsScript = restoreLobbySettingsScript;
     }
 
     /**
@@ -152,7 +158,6 @@ public class LobbyLuaScriptExecutor {
      * @return leave_lobby.lua 반환 문자열
      */
     public String executeLeaveLobby(String code, String userIdentifier) {
-
         List<String> keys = List.of(
                 RedisKeys.lobbyKey(code),
                 RedisKeys.lobbyParticipantsKey(code),
@@ -203,7 +208,6 @@ public class LobbyLuaScriptExecutor {
      * @return reap_lobby.lua 반환 문자열 ("REAPED" | "ALIVE" | "TOO_YOUNG" | "STALE_INDEX")
      */
     public String executeReapLobby(String code, long graceMillis) {
-
         List<String> keys = List.of(
                 RedisKeys.lobbyKey(code),
                 RedisKeys.lobbyParticipantsKey(code),
@@ -349,7 +353,11 @@ public class LobbyLuaScriptExecutor {
      *
      * @return "COMPENSATED" | "SKIPPED_NOT_WAITING" | "LOBBY_NOT_FOUND"
      */
-    public String executeCompensateLobbyMap(String code, LobbyMapMetadata oldMetadata, int oldQuestionCount) {
+    public String executeCompensateLobbyMap(
+            String code,
+            LobbyMapMetadata oldMetadata,
+            int oldQuestionCount
+    ) {
         List<String> keys = List.of(RedisKeys.lobbyKey(code));
 
         boolean restoreMap = oldMetadata != null
@@ -370,6 +378,110 @@ public class LobbyLuaScriptExecutor {
                 restoreMap ? oldMetadata.mapCategory() : EMPTY_REDIS_VALUE,
                 RedisKeys.FIELD_QUESTION_COUNT,
                 String.valueOf(oldQuestionCount)
+        );
+    }
+
+    /**
+     * update_lobby_settings.lua를 실행하여 로비 설정 변경을 원자적으로 처리한다.
+     *
+     * [KEYS 계약]
+     * KEYS[1] = lobby:{code}
+     * KEYS[2] = lobby:{code}:participants
+     * KEYS[3] = lobby:public:most_available
+     *
+     * [ARGV 계약]
+     * ARGV[1]  = status field name
+     * ARGV[2]  = maxPlayers field name
+     * ARGV[3]  = questionCount field name
+     * ARGV[4]  = timeLimitSeconds field name
+     * ARGV[5]  = WAITING status
+     * ARGV[6]  = isPrivate field name
+     * ARGV[7]  = currentPlayers field name
+     * ARGV[8]  = lobby code
+     * ARGV[9]  = maxPlayers
+     * ARGV[10] = questionCount
+     * ARGV[11] = timeLimitSeconds
+     *
+     * @return "UPDATED" | "LOBBY_NOT_FOUND" | "NOT_WAITING" | "MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS"
+     */
+    public String executeUpdateLobbySettings(
+            String code,
+            int maxPlayers,
+            int questionCount,
+            int timeLimitSeconds
+    ) {
+        List<String> keys = List.of(
+                RedisKeys.lobbyKey(code),
+                RedisKeys.lobbyParticipantsKey(code),
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+        );
+
+        return redisTemplate.execute(
+                updateLobbySettingsScript,
+                keys,
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_MAX_PLAYERS,
+                RedisKeys.FIELD_QUESTION_COUNT,
+                RedisKeys.FIELD_TIME_LIMIT_SECONDS,
+                LobbyStatus.WAITING.name(),
+                RedisKeys.FIELD_IS_PRIVATE,
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                code,
+                String.valueOf(maxPlayers),
+                String.valueOf(questionCount),
+                String.valueOf(timeLimitSeconds)
+        );
+    }
+
+    /**
+     * restore_lobby_settings.lua를 실행하여 로비 설정 복구를 원자적으로 처리한다.
+     *
+     * [KEYS 계약]
+     * KEYS[1] = lobby:{code}
+     * KEYS[2] = lobby:{code}:participants
+     * KEYS[3] = lobby:public:most_available
+     *
+     * [ARGV 계약]
+     * ARGV[1]  = status field name
+     * ARGV[2]  = maxPlayers field name
+     * ARGV[3]  = questionCount field name
+     * ARGV[4]  = timeLimitSeconds field name
+     * ARGV[5]  = WAITING status
+     * ARGV[6]  = isPrivate field name
+     * ARGV[7]  = currentPlayers field name
+     * ARGV[8]  = lobby code
+     * ARGV[9]  = restore maxPlayers
+     * ARGV[10] = restore questionCount
+     * ARGV[11] = restore timeLimitSeconds
+     *
+     * @return "RESTORED" | "LOBBY_NOT_FOUND" | "NOT_WAITING" | "MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS"
+     */
+    public String executeRestoreLobbySettings(
+            String code,
+            int maxPlayers,
+            int questionCount,
+            int timeLimitSeconds
+    ) {
+        List<String> keys = List.of(
+                RedisKeys.lobbyKey(code),
+                RedisKeys.lobbyParticipantsKey(code),
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
+        );
+
+        return redisTemplate.execute(
+                restoreLobbySettingsScript,
+                keys,
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_MAX_PLAYERS,
+                RedisKeys.FIELD_QUESTION_COUNT,
+                RedisKeys.FIELD_TIME_LIMIT_SECONDS,
+                LobbyStatus.WAITING.name(),
+                RedisKeys.FIELD_IS_PRIVATE,
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                code,
+                String.valueOf(maxPlayers),
+                String.valueOf(questionCount),
+                String.valueOf(timeLimitSeconds)
         );
     }
 

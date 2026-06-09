@@ -16,6 +16,16 @@ import org.springframework.data.redis.core.script.RedisScript;
  * - create_lobby.lua : 로비 생성 원자 처리
  * - leave_lobby.lua : 로비 퇴장/방장 위임/폭파 원자 처리
  * - enter_lobby.lua : 로비 입장 상태 저장 원자 처리
+ * - kick_lobby.lua : 로비 강퇴 원자 처리
+ * - start_lobby.lua : 로비 게임 시작 원자 처리
+ * - compensate_lobby_map.lua : 로비 맵 변경 보상 복구 원자 처리
+ * - update_lobby_settings.lua : 로비 설정 변경 원자 처리
+ * - restore_lobby_settings.lua : 로비 설정 복구 원자 처리
+ * - init_game_session.lua : 게임 세션 초기화 원자 처리
+ * - ready_to_play.lua : 라운드 재생 준비 상태 원자 처리
+ * - append_recent_lobby_chat.lua : 로비 최근 채팅 저장 원자 처리
+ * - submit_game_answer.lua : 게임 정답 제출 원자 처리
+ * - cleanup_game_session.lua : 게임 세션 Redis 키 정리 원자 처리
  */
 @Configuration
 public class RedisScriptConfig {

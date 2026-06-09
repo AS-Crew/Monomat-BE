@@ -198,6 +198,29 @@ public final class RedisKeys {
     public static final String LOBBY_PUBLIC_MOST_AVAILABLE = "lobby:public:most_available";
 
     /**
+     * 로비 설정 Redis-DB 정합성 재처리 큐.
+     *
+     * [사용 목적]
+     * 로비 설정 변경 중 DB 갱신 실패 후 Redis 설정 복구까지 실패한 경우,
+     * 운영자가 원인과 대상 로비를 추적할 수 있도록 별도 큐에 적재한다.
+     *
+     * [주의]
+     * 게임 시작 상태 재처리 큐와 분리한다.
+     * 설정 복구 실패는 PLAYING 상태 불일치가 아니라
+     * max_players/question_count/time_limit_seconds 정합성 문제이기 때문이다.
+     */
+    public static final String LOBBY_SETTINGS_RECONCILIATION_QUEUE =
+            "lobby:settings:reconciliation";
+
+    /** 로비 설정 재처리 큐 적재 성공 metric key */
+    public static final String METRIC_LOBBY_SETTINGS_RECONCILIATION_ENQUEUED =
+            "metric:lobby:settings:reconciliation:enqueued";
+
+    /** 로비 설정 재처리 큐 적재 실패 metric key */
+    public static final String METRIC_LOBBY_SETTINGS_RECONCILIATION_FAILED =
+            "metric:lobby:settings:reconciliation:failed";
+
+    /**
      * WebSocket 세션 sequence 발급용 전역 키.
      *
      * 동일 userIdentifier의 재접속이 거의 동시에 발생할 때,

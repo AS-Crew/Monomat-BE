@@ -8,6 +8,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbySettingsReconciliationRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -37,6 +38,7 @@ import java.util.Objects;
  * - Redis 설정 변경 Lua 실행
  * - DB GAME_LOBBY 스냅샷 갱신
  * - DB 실패 시 Redis 설정값 보상 복구
+ * - 보상 복구 실패 시 settings 전용 reconciliation queue 적재
  * - 커밋 후 로비 refresh 이벤트 발행
  */
 @Slf4j
@@ -80,6 +82,7 @@ public class LobbySettingsUpdateService {
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final QuizMapJpaRepository quizMapJpaRepository;
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
+    private final LobbySettingsReconciliationRepository lobbySettingsReconciliationRepository;
 
     @Transactional
     public void updateSettings(
@@ -319,10 +322,10 @@ public class LobbySettingsUpdateService {
             }
 
             String reason = RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":" + restoreResult.name();
-            safeEnqueueSettingsRestoreReconciliation(code, reason);
+            enqueueSettingsRestoreReconciliation(code, reason);
 
             log.error(
-                    "{} Redis 로비 설정 보상 복구 미완료 - 재처리 큐 적재 시도. "
+                    "{} Redis 로비 설정 보상 복구 미완료 - 설정 재처리 큐 적재 시도. "
                             + "code: {}, result: {}, oldMaxPlayers: {}, oldQuestionCount: {}, oldTimeLimitSeconds: {}",
                     LOG_MONITORING_REQUIRED,
                     code,
@@ -334,10 +337,10 @@ public class LobbySettingsUpdateService {
 
         } catch (Exception e) {
             String reason = RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":EXCEPTION";
-            safeEnqueueSettingsRestoreReconciliation(code, reason);
+            enqueueSettingsRestoreReconciliation(code, reason);
 
             log.error(
-                    "{} Redis 로비 설정 보상 복구 실패 - 재처리 큐 적재 시도. "
+                    "{} Redis 로비 설정 보상 복구 실패 - 설정 재처리 큐 적재 시도. "
                             + "code: {}, oldMaxPlayers: {}, oldQuestionCount: {}, oldTimeLimitSeconds: {}",
                     LOG_MONITORING_REQUIRED,
                     code,
@@ -349,12 +352,12 @@ public class LobbySettingsUpdateService {
         }
     }
 
-    private void safeEnqueueSettingsRestoreReconciliation(String code, String reason) {
+    private void enqueueSettingsRestoreReconciliation(String code, String reason) {
         try {
-            lobbyRepository.enqueueStartReconciliation(code, reason);
+            lobbySettingsReconciliationRepository.enqueueSettingsReconciliation(code, reason);
         } catch (Exception e) {
             log.error(
-                    "{} 로비 설정 복구 실패 재처리 큐 적재 실패 - code: {}, reason: {}",
+                    "{} 로비 설정 복구 실패 재처리 큐 적재 호출 실패 - code: {}, reason: {}",
                     LOG_MONITORING_REQUIRED,
                     code,
                     reason,

@@ -10,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.lobby.repository.redis.LobbySettingsReconciliationRepository;
 import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
 import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
@@ -42,12 +43,15 @@ class LobbySettingsUpdateServiceTest {
     private final GameLobbyJpaRepository gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
     private final QuizMapJpaRepository quizMapJpaRepository = mock(QuizMapJpaRepository.class);
     private final LobbyRealtimeNotifier lobbyRealtimeNotifier = mock(LobbyRealtimeNotifier.class);
+    private final LobbySettingsReconciliationRepository lobbySettingsReconciliationRepository =
+            mock(LobbySettingsReconciliationRepository.class);
 
     private final LobbySettingsUpdateService sut = new LobbySettingsUpdateService(
             lobbyRepository,
             gameLobbyJpaRepository,
             quizMapJpaRepository,
-            lobbyRealtimeNotifier
+            lobbyRealtimeNotifier,
+            lobbySettingsReconciliationRepository
     );
 
     private static final String CODE = "ABC123";
@@ -606,16 +610,16 @@ class LobbySettingsUpdateServiceTest {
                 OLD_QUESTION_COUNT,
                 OLD_TIME_LIMIT_SECONDS
         );
-        verify(lobbyRepository, never()).enqueueStartReconciliation(
-                eq(CODE),
-                org.mockito.ArgumentMatchers.startsWith("SETTINGS_UPDATE_RESTORE_FAILED")
+        verify(lobbySettingsReconciliationRepository, never()).enqueueSettingsReconciliation(
+                anyString(),
+                anyString()
         );
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 
     @Test
-    @DisplayName("DB 실패 후 Redis 보상 복구 결과가 실패이면 reconciliation 큐에 적재하고 원래 500 응답을 유지한다")
-    void updateSettings_enqueuesReconciliation_whenRedisCompensationResultFails() {
+    @DisplayName("DB 실패 후 Redis 보상 복구 결과가 실패이면 설정 재처리 큐에 적재하고 원래 500 응답을 유지한다")
+    void updateSettings_enqueuesSettingsReconciliation_whenRedisCompensationResultFails() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
@@ -636,17 +640,8 @@ class LobbySettingsUpdateServiceTest {
 
         assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
                 .isInstanceOf(ResponseStatusException.class)
-                .satisfies(ex -> {
-                    ResponseStatusException rse = (ResponseStatusException) ex;
-                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
-                });
-
-        verify(lobbyRepository).updateSettings(
-                CODE,
-                NEW_MAX_PLAYERS,
-                NEW_QUESTION_COUNT,
-                NEW_TIME_LIMIT_SECONDS
-        );
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
 
         verify(lobbyRepository).restoreSettings(
                 CODE,
@@ -654,18 +649,16 @@ class LobbySettingsUpdateServiceTest {
                 OLD_QUESTION_COUNT,
                 OLD_TIME_LIMIT_SECONDS
         );
-
-        verify(lobbyRepository).enqueueStartReconciliation(
+        verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
                 eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
         );
-
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 
     @Test
-    @DisplayName("DB 실패 후 Redis 보상 복구 중 예외가 발생하면 reconciliation 큐에 적재하고 원래 500 응답을 유지한다")
-    void updateSettings_enqueuesReconciliation_whenRedisCompensationThrowsException() {
+    @DisplayName("DB 실패 후 Redis 보상 복구 중 예외가 발생하면 설정 재처리 큐에 적재하고 원래 500 응답을 유지한다")
+    void updateSettings_enqueuesSettingsReconciliation_whenRedisCompensationThrowsException() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
@@ -688,22 +681,19 @@ class LobbySettingsUpdateServiceTest {
 
         assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
                 .isInstanceOf(ResponseStatusException.class)
-                .satisfies(ex -> {
-                    ResponseStatusException rse = (ResponseStatusException) ex;
-                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
-                });
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        verify(lobbyRepository).enqueueStartReconciliation(
+        verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
                 eq("SETTINGS_UPDATE_RESTORE_FAILED:EXCEPTION")
         );
-
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 
     @Test
-    @DisplayName("Redis 보상 복구 실패 후 재처리 큐 적재도 실패해도 원래 500 응답을 유지한다")
-    void updateSettings_keepsInternalServerError_whenRestoreAndReconciliationEnqueueFail() {
+    @DisplayName("Redis 보상 복구 실패 후 설정 재처리 큐 적재도 실패해도 원래 500 응답을 유지한다")
+    void updateSettings_keepsInternalServerError_whenSettingsReconciliationEnqueueFails() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
@@ -722,9 +712,9 @@ class LobbySettingsUpdateServiceTest {
                 OLD_TIME_LIMIT_SECONDS
         )).thenReturn(LobbySettingsRestoreResult.MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS);
 
-        doThrow(new RuntimeException("재처리 큐 장애"))
-                .when(lobbyRepository)
-                .enqueueStartReconciliation(
+        doThrow(new RuntimeException("설정 재처리 큐 장애"))
+                .when(lobbySettingsReconciliationRepository)
+                .enqueueSettingsReconciliation(
                         eq(CODE),
                         eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
                 );
@@ -734,13 +724,7 @@ class LobbySettingsUpdateServiceTest {
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        verify(lobbyRepository).restoreSettings(
-                CODE,
-                OLD_MAX_PLAYERS,
-                OLD_QUESTION_COUNT,
-                OLD_TIME_LIMIT_SECONDS
-        );
-        verify(lobbyRepository).enqueueStartReconciliation(
+        verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
                 eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
         );

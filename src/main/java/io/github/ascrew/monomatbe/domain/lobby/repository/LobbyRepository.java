@@ -7,6 +7,7 @@ package io.github.ascrew.monomatbe.domain.lobby.repository;
 import io.github.ascrew.monomatbe.domain.lobby.KickLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LeaveLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyMapCompensationResult;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
 import io.github.ascrew.monomatbe.domain.lobby.LobbyUserAccessStatus;
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
 import io.github.ascrew.monomatbe.domain.lobby.StartLobbyResult;
@@ -305,24 +306,35 @@ public interface LobbyRepository {
   void updateMapMetadata(String code, LobbyMapMetadata metadata, int questionCount);
 
   /**
-   * Redis 로비 Hash의 설정값을 갱신한다.
+   * Redis 로비 Hash의 설정값을 원자적으로 갱신한다.
    *
-   * [갱신 대상]
-   * - max_players
-   * - question_count
-   * - time_limit_seconds
-   *
-   * [주의]
-   * 이 메서드는 단순 Redis Hash 갱신만 수행한다.
-   * 로비 존재 여부, 방장 여부, WAITING 여부, 현재 참가자 수, 맵 곡 수 상한 검증은
-   * Service 계층에서 수행한다.
+   * [원자 처리]
+   * - 로비 존재 여부 확인
+   * - WAITING 상태 확인
+   * - 현재 참가자 수 <= maxPlayers 확인
+   * - max_players/question_count/time_limit_seconds 갱신
    *
    * @param code             로비 초대 코드
    * @param maxPlayers       최대 참여 인원
    * @param questionCount    문제 수
    * @param timeLimitSeconds 제한 시간(초)
+   * @return 설정 변경 처리 결과
    */
-  void updateSettings(
+  LobbySettingsUpdateResult updateSettings(
+          String code,
+          int maxPlayers,
+          int questionCount,
+          int timeLimitSeconds
+  );
+
+  /**
+   * DB 갱신 실패 시 Redis 설정값을 이전 값으로 보상 복구한다.
+   *
+   * [주의]
+   * 이 메서드는 보상 복구 전용이다.
+   * 사용자 요청의 신규 설정 저장에는 updateSettings(...)를 사용해야 한다.
+   */
+  void restoreSettings(
           String code,
           int maxPlayers,
           int questionCount,

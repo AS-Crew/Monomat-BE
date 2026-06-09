@@ -37,7 +37,7 @@ class LobbyRedisCommandRepositoryTest {
 
     @Test
     @DisplayName("updateSettings는 로비 Hash의 max_players, question_count, time_limit_seconds를 함께 갱신한다")
-    void updateSettings_putsSettingsFieldsIntoLobbyHash() {
+    void restoreSettings_putsSettingsFieldsIntoLobbyHash() {
         when(redisTemplate.opsForHash()).thenReturn(hashOperations);
 
         sut.updateSettings(

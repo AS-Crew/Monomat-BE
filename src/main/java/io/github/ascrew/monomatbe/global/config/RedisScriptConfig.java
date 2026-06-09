@@ -114,6 +114,23 @@ public class RedisScriptConfig {
     }
 
     /**
+     * 로비 설정 변경 Lua 스크립트
+     *
+     * [처리 내용]
+     * - 로비 존재 여부 확인
+     * - status == WAITING 원자 검증
+     * - 현재 참가자 수가 요청 maxPlayers 이하인지 검증
+     * - max_players/question_count/time_limit_seconds Hash 필드 갱신
+     */
+    @Bean
+    public RedisScript<String> updateLobbySettingsScript() {
+        DefaultRedisScript<String> redisScript = new DefaultRedisScript<>();
+        redisScript.setLocation(new ClassPathResource("scripts/update_lobby_settings.lua"));
+        redisScript.setResultType(String.class);
+        return redisScript;
+    }
+
+    /**
      * 로비 맵 변경 보상 복구 Lua 스크립트
      *
      * [처리 내용]

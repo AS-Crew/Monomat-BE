@@ -2,6 +2,7 @@ package io.github.ascrew.monomatbe.domain.lobby.service;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
+import io.github.ascrew.monomatbe.domain.lobby.LobbySettingsUpdateResult;
 import io.github.ascrew.monomatbe.domain.lobby.dto.JoinLobbyResponse;
 import io.github.ascrew.monomatbe.domain.lobby.dto.UpdateLobbySettingsRequest;
 import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
@@ -24,25 +25,16 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-/**
- * LobbySettingsUpdateService의 로비 설정 변경 정책을 검증한다.
- *
- * [테스트 범위]
- * - principal / userId / userIdentifier 검증
- * - 로비 미존재 처리
- * - WAITING 상태 제한 (Redis 1차 / DB 락 후 재검증)
- * - 방장 권한 제한
- * - 현재 참가자 수보다 낮은 maxPlayers 차단
- * - 선택된 맵의 numOfSong보다 큰 questionCount 차단
- * - DB row lock 타임아웃 처리
- * - DB GAME_LOBBY 스냅샷 누락 시 Redis 보상 삭제 및 reconciliation 적재
- * - 정상 변경 시 Redis/DB 설정 갱신 및 realtime refresh afterCommit 등록
- * - DB 갱신 실패 시 Redis 설정값 보상 복구
- */
 class LobbySettingsUpdateServiceTest {
 
     private final LobbyRepository lobbyRepository = mock(LobbyRepository.class);
@@ -147,12 +139,20 @@ class LobbySettingsUpdateServiceTest {
         QuizMap quizMap = QuizMap.builder()
                 .id(mapId)
                 .numOfSong(numOfSong)
+                .isDeleted(false)
                 .build();
 
         when(quizMapJpaRepository.findById(mapId)).thenReturn(Optional.of(quizMap));
     }
 
-    // ─── principal 검증 ───────────────────────────────────
+    private void givenRedisSettingsUpdateSucceeds() {
+        when(lobbyRepository.updateSettings(
+                CODE,
+                NEW_MAX_PLAYERS,
+                NEW_QUESTION_COUNT,
+                NEW_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsUpdateResult.UPDATED);
+    }
 
     @Test
     @DisplayName("principal이 null이면 401 Unauthorized를 던진다")
@@ -191,8 +191,6 @@ class LobbySettingsUpdateServiceTest {
         verify(lobbyRepository, never()).findByInviteCode(anyString());
     }
 
-    // ─── 로비 조회 / 상태 / 권한 검증 ───────────────────────
-
     @Test
     @DisplayName("Redis에 로비가 없으면 404 Not Found를 던진다")
     void updateSettings_throwsNotFound_whenLobbyNotFound() {
@@ -207,7 +205,7 @@ class LobbySettingsUpdateServiceTest {
     }
 
     @Test
-    @DisplayName("Redis 상태가 PLAYING이면 409 Conflict를 던진다 (DB 락 획득 전 차단)")
+    @DisplayName("Redis 상태가 PLAYING이면 409 Conflict를 던진다")
     void updateSettings_throwsConflict_whenRedisLobbyStatusIsPlaying() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(playingLobby()));
 
@@ -234,8 +232,6 @@ class LobbySettingsUpdateServiceTest {
 
         verify(gameLobbyJpaRepository, never()).findByInviteCodeForUpdate(anyString());
     }
-
-    // ─── maxPlayers / questionCount 동적 검증 ───────────────
 
     @Test
     @DisplayName("maxPlayers가 현재 참가자 수보다 작으면 409 Conflict를 던진다")
@@ -294,8 +290,6 @@ class LobbySettingsUpdateServiceTest {
         verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
     }
 
-    // ─── DB row lock / DB 상태 재검증 ───────────────────────
-
     @Test
     @DisplayName("Redis는 WAITING이지만 DB 락 획득 후 status가 PLAYING이면 409 Conflict를 던진다")
     void updateSettings_throwsConflict_whenDbStatusIsPlayingAfterLockAcquired() {
@@ -332,8 +326,6 @@ class LobbySettingsUpdateServiceTest {
         verify(lobbyRepository, never()).updateSettings(anyString(), anyInt(), anyInt(), anyInt());
         verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
     }
-
-    // ─── DB 스냅샷 누락 ────────────────────────────────────
 
     @Test
     @DisplayName("DB GAME_LOBBY 스냅샷이 없으면 Redis 보상 삭제 후 409를 던진다")
@@ -372,7 +364,77 @@ class LobbySettingsUpdateServiceTest {
         );
     }
 
-    // ─── 정상 변경 ────────────────────────────────────────
+    @Test
+    @DisplayName("Redis 설정 변경 결과가 NOT_WAITING이면 409 Conflict를 던진다")
+    void updateSettings_throwsConflict_whenRedisSettingsUpdateReturnsNotWaiting() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+        givenSelectedMapHasNumOfSong(10L, 12);
+
+        when(lobbyRepository.updateSettings(
+                CODE,
+                NEW_MAX_PLAYERS,
+                NEW_QUESTION_COUNT,
+                NEW_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsUpdateResult.NOT_WAITING);
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+
+        verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("Redis 설정 변경 결과가 MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS이면 409 Conflict를 던진다")
+    void updateSettings_throwsConflict_whenRedisSettingsUpdateReturnsMaxPlayersLessThanCurrentPlayers() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+        givenSelectedMapHasNumOfSong(10L, 12);
+
+        when(lobbyRepository.updateSettings(
+                CODE,
+                NEW_MAX_PLAYERS,
+                NEW_QUESTION_COUNT,
+                NEW_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsUpdateResult.MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS);
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+
+        verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("Redis 설정 변경 결과가 ERROR이면 500 Internal Server Error를 던진다")
+    void updateSettings_throwsInternalServerError_whenRedisSettingsUpdateReturnsError() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+        givenSelectedMapHasNumOfSong(10L, 12);
+
+        when(lobbyRepository.updateSettings(
+                CODE,
+                NEW_MAX_PLAYERS,
+                NEW_QUESTION_COUNT,
+                NEW_TIME_LIMIT_SECONDS
+        )).thenReturn(LobbySettingsUpdateResult.ERROR);
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
+    }
 
     @Test
     @DisplayName("정상 요청 시 Redis/DB 설정을 갱신하고 afterCommit refresh 이벤트를 등록한다")
@@ -387,6 +449,7 @@ class LobbySettingsUpdateServiceTest {
                     .thenReturn(Optional.of(gameLobby));
 
             givenSelectedMapHasNumOfSong(10L, 12);
+            givenRedisSettingsUpdateSucceeds();
 
             when(gameLobbyJpaRepository.saveAndFlush(any()))
                     .thenAnswer(invocation -> invocation.getArgument(0));
@@ -426,6 +489,8 @@ class LobbySettingsUpdateServiceTest {
             when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                     .thenReturn(Optional.of(gameLobby));
 
+            givenRedisSettingsUpdateSucceeds();
+
             when(gameLobbyJpaRepository.saveAndFlush(any()))
                     .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -449,18 +514,16 @@ class LobbySettingsUpdateServiceTest {
         }
     }
 
-    // ─── DB 실패 시 Redis 보상 복구 ────────────────────────
-
     @Test
     @DisplayName("DB 갱신 실패 시 Redis 설정값을 이전 값으로 보상 복구하고 500을 던진다")
     void updateSettings_rollbacksRedisSettings_whenDbSaveFails() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
-
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                 .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
 
         givenSelectedMapHasNumOfSong(10L, 12);
+        givenRedisSettingsUpdateSucceeds();
 
         when(gameLobbyJpaRepository.saveAndFlush(any()))
                 .thenThrow(new RuntimeException("DB 장애"));
@@ -476,7 +539,7 @@ class LobbySettingsUpdateServiceTest {
                 NEW_QUESTION_COUNT,
                 NEW_TIME_LIMIT_SECONDS
         );
-        verify(lobbyRepository).updateSettings(
+        verify(lobbyRepository).restoreSettings(
                 CODE,
                 OLD_MAX_PLAYERS,
                 OLD_QUESTION_COUNT,
@@ -490,18 +553,18 @@ class LobbySettingsUpdateServiceTest {
     void updateSettings_keepsInternalServerError_whenRedisCompensationFails() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
-
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
                 .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
 
         givenSelectedMapHasNumOfSong(10L, 12);
+        givenRedisSettingsUpdateSucceeds();
 
         when(gameLobbyJpaRepository.saveAndFlush(any()))
                 .thenThrow(new RuntimeException("DB 장애"));
 
         doThrow(new RuntimeException("Redis 보상 실패"))
                 .when(lobbyRepository)
-                .updateSettings(
+                .restoreSettings(
                         CODE,
                         OLD_MAX_PLAYERS,
                         OLD_QUESTION_COUNT,
@@ -510,8 +573,10 @@ class LobbySettingsUpdateServiceTest {
 
         assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
                 .isInstanceOf(ResponseStatusException.class)
-                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
-                        .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR));
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+                });
 
         verify(lobbyRepository).updateSettings(
                 CODE,
@@ -519,7 +584,7 @@ class LobbySettingsUpdateServiceTest {
                 NEW_QUESTION_COUNT,
                 NEW_TIME_LIMIT_SECONDS
         );
-        verify(lobbyRepository).updateSettings(
+        verify(lobbyRepository).restoreSettings(
                 CODE,
                 OLD_MAX_PLAYERS,
                 OLD_QUESTION_COUNT,

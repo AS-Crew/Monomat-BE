@@ -291,6 +291,56 @@ class LobbySettingsUpdateServiceTest {
     }
 
     @Test
+    @DisplayName("선택된 맵이 삭제 상태이면 409 Conflict를 던진다")
+    void updateSettings_throwsConflict_whenSelectedMapIsDeleted() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+
+        QuizMap deletedMap = QuizMap.builder()
+                .id(10L)
+                .numOfSong(12)
+                .isDeleted(true)
+                .build();
+
+        when(quizMapJpaRepository.findById(10L)).thenReturn(Optional.of(deletedMap));
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+
+        verify(lobbyRepository, never()).updateSettings(anyString(), anyInt(), anyInt(), anyInt());
+        verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    @DisplayName("선택된 맵의 numOfSong이 null이면 409 Conflict를 던진다")
+    void updateSettings_throwsConflict_whenSelectedMapSongCountIsNull() {
+        when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
+        when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
+        when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE))
+                .thenReturn(Optional.of(gameLobbyWith(LobbyStatus.WAITING, 10L)));
+
+        QuizMap mapWithNullSongCount = QuizMap.builder()
+                .id(10L)
+                .numOfSong(null)
+                .isDeleted(false)
+                .build();
+
+        when(quizMapJpaRepository.findById(10L)).thenReturn(Optional.of(mapWithNullSongCount));
+
+        assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(HttpStatus.CONFLICT));
+
+        verify(lobbyRepository, never()).updateSettings(anyString(), anyInt(), anyInt(), anyInt());
+        verify(gameLobbyJpaRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
     @DisplayName("Redis는 WAITING이지만 DB 락 획득 후 status가 PLAYING이면 409 Conflict를 던진다")
     void updateSettings_throwsConflict_whenDbStatusIsPlayingAfterLockAcquired() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));

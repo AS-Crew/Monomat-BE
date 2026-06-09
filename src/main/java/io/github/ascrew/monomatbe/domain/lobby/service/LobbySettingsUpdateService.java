@@ -196,6 +196,7 @@ public class LobbySettingsUpdateService {
         }
 
         QuizMap quizMap = quizMapJpaRepository.findById(mapId)
+                .filter(map -> !Boolean.TRUE.equals(map.getIsDeleted()))
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.CONFLICT,
                         ERROR_SELECTED_MAP_NOT_FOUND

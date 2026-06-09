@@ -38,7 +38,7 @@ import java.util.Objects;
  * - Redis 설정 변경 Lua 실행
  * - DB GAME_LOBBY 스냅샷 갱신
  * - DB 실패 시 Redis 설정값 보상 복구
- * - 보상 복구 실패 시 settings 전용 reconciliation queue 적재
+ * - 보상 복구 실패 또는 DB 스냅샷 누락 정리 실패 시 settings 전용 reconciliation queue 적재
  * - 커밋 후 로비 refresh 이벤트 발행
  */
 @Slf4j
@@ -74,7 +74,6 @@ public class LobbySettingsUpdateService {
 
     private static final String RECONCILIATION_REASON_SETTINGS_UPDATE_SNAPSHOT_NOT_FOUND =
             "SETTINGS_UPDATE_DB_SNAPSHOT_NOT_FOUND";
-
     private static final String RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED =
             "SETTINGS_UPDATE_RESTORE_FAILED";
 
@@ -246,13 +245,13 @@ public class LobbySettingsUpdateService {
         boolean deleted = lobbyRepository.deleteFromRedis(code);
 
         if (!deleted) {
-            lobbyRepository.enqueueStartReconciliation(
+            enqueueSettingsReconciliation(
                     code,
                     RECONCILIATION_REASON_SETTINGS_UPDATE_SNAPSHOT_NOT_FOUND
             );
 
             log.error(
-                    "{} DB 스냅샷 누락 로비 Redis 삭제 실패 - 재처리 큐 적재 완료. code: {}, requester: {}",
+                    "{} DB 스냅샷 누락 로비 Redis 삭제 실패 - 설정 재처리 큐 적재 시도. code: {}, requester: {}",
                     LOG_ALERT_REQUIRED,
                     code,
                     requesterIdentifier
@@ -322,7 +321,7 @@ public class LobbySettingsUpdateService {
             }
 
             String reason = RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":" + restoreResult.name();
-            enqueueSettingsRestoreReconciliation(code, reason);
+            enqueueSettingsReconciliation(code, reason);
 
             log.error(
                     "{} Redis 로비 설정 보상 복구 미완료 - 설정 재처리 큐 적재 시도. "
@@ -337,7 +336,7 @@ public class LobbySettingsUpdateService {
 
         } catch (Exception e) {
             String reason = RECONCILIATION_REASON_SETTINGS_RESTORE_FAILED + ":EXCEPTION";
-            enqueueSettingsRestoreReconciliation(code, reason);
+            enqueueSettingsReconciliation(code, reason);
 
             log.error(
                     "{} Redis 로비 설정 보상 복구 실패 - 설정 재처리 큐 적재 시도. "
@@ -352,12 +351,12 @@ public class LobbySettingsUpdateService {
         }
     }
 
-    private void enqueueSettingsRestoreReconciliation(String code, String reason) {
+    private void enqueueSettingsReconciliation(String code, String reason) {
         try {
             lobbySettingsReconciliationRepository.enqueueSettingsReconciliation(code, reason);
         } catch (Exception e) {
             log.error(
-                    "{} 로비 설정 복구 실패 재처리 큐 적재 호출 실패 - code: {}, reason: {}",
+                    "{} 로비 설정 재처리 큐 적재 호출 실패 - code: {}, reason: {}",
                     LOG_MONITORING_REQUIRED,
                     code,
                     reason,

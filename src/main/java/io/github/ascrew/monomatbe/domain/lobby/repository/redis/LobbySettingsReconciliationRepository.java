@@ -7,14 +7,15 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 
 /**
- * 로비 설정 Redis-DB 정합성 재처리 큐 Repository
+ * 로비 설정 Redis-DB 정합성 재처리 큐 Repository.
  *
  * [책임]
  * - 로비 설정 변경 중 DB 갱신 실패 후 Redis 설정 복구까지 실패한 케이스를 별도 큐에 적재한다.
+ * - 로비 설정 변경 중 DB 스냅샷 누락 후 Redis 잔존 로비 삭제가 실패한 케이스를 별도 큐에 적재한다.
  *
  * [분리 이유]
  * 게임 시작 재처리 큐는 start_lobby.lua 이후 Redis/DB PLAYING 상태 불일치를 다룬다.
- * 로비 설정 복구 실패는 max_players/question_count/time_limit_seconds 불일치 문제이므로
+ * 로비 설정 관련 실패는 max_players/question_count/time_limit_seconds 또는 설정 변경 중 스냅샷 불일치 문제이므로
  * start reconciliation queue에 넣으면 운영 로그와 후속 처리 주체가 잘못된다.
  *
  * [실패 정책]
@@ -58,7 +59,7 @@ public class LobbySettingsReconciliationRepository {
 
             incrementMetric(RedisKeys.METRIC_LOBBY_SETTINGS_RECONCILIATION_ENQUEUED);
 
-            log.error(
+            log.warn(
                     "{} 로비 설정 재처리 큐 적재 완료 - code: {}, reason: {}, queueKey: {}",
                     LOG_MONITORING_REQUIRED,
                     code,

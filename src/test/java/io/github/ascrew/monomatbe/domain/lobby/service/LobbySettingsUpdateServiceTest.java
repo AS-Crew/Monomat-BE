@@ -39,6 +39,25 @@ import static org.mockito.Mockito.when;
 
 class LobbySettingsUpdateServiceTest {
 
+    private static final String CODE = "ABC123";
+    private static final String HOST_ID = "host-uuid";
+    private static final Long USER_ID = 1L;
+
+    private static final int OLD_MAX_PLAYERS = 6;
+    private static final int OLD_QUESTION_COUNT = 5;
+    private static final int OLD_TIME_LIMIT_SECONDS = 30;
+
+    private static final int NEW_MAX_PLAYERS = 4;
+    private static final int NEW_QUESTION_COUNT = 10;
+    private static final int NEW_TIME_LIMIT_SECONDS = 45;
+
+    private static final String SETTINGS_SNAPSHOT_NOT_FOUND_REASON =
+            "SETTINGS_UPDATE_DB_SNAPSHOT_NOT_FOUND";
+    private static final String SETTINGS_RESTORE_FAILED_REASON =
+            "SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS";
+    private static final String SETTINGS_RESTORE_EXCEPTION_REASON =
+            "SETTINGS_UPDATE_RESTORE_FAILED:EXCEPTION";
+
     private final LobbyRepository lobbyRepository = mock(LobbyRepository.class);
     private final GameLobbyJpaRepository gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
     private final QuizMapJpaRepository quizMapJpaRepository = mock(QuizMapJpaRepository.class);
@@ -53,18 +72,6 @@ class LobbySettingsUpdateServiceTest {
             lobbyRealtimeNotifier,
             lobbySettingsReconciliationRepository
     );
-
-    private static final String CODE = "ABC123";
-    private static final String HOST_ID = "host-uuid";
-    private static final Long USER_ID = 1L;
-
-    private static final int OLD_MAX_PLAYERS = 6;
-    private static final int OLD_QUESTION_COUNT = 5;
-    private static final int OLD_TIME_LIMIT_SECONDS = 30;
-
-    private static final int NEW_MAX_PLAYERS = 4;
-    private static final int NEW_QUESTION_COUNT = 10;
-    private static final int NEW_TIME_LIMIT_SECONDS = 45;
 
     private CustomPrincipal hostPrincipal() {
         return new CustomPrincipal(USER_ID, HOST_ID, UserType.REGISTERED);
@@ -406,12 +413,13 @@ class LobbySettingsUpdateServiceTest {
 
         verify(lobbyRepository).deleteFromRedis(CODE);
         verify(lobbyRepository, never()).enqueueStartReconciliation(anyString(), anyString());
+        verify(lobbySettingsReconciliationRepository, never()).enqueueSettingsReconciliation(anyString(), anyString());
         verify(lobbyRepository, never()).updateSettings(anyString(), anyInt(), anyInt(), anyInt());
     }
 
     @Test
-    @DisplayName("DB 스냅샷 누락 + Redis 삭제 실패 시 reconciliation 큐에 적재한다")
-    void updateSettings_enqueuesReconciliation_whenSnapshotMissingAndRedisDeleteFails() {
+    @DisplayName("DB 스냅샷 누락 + Redis 삭제 실패 시 설정 재처리 큐에 적재한다")
+    void updateSettings_enqueuesSettingsReconciliation_whenSnapshotMissingAndRedisDeleteFails() {
         when(lobbyRepository.findByInviteCode(CODE)).thenReturn(Optional.of(waitingLobby()));
         when(lobbyRepository.getCurrentPlayerCount(CODE)).thenReturn(2);
         when(gameLobbyJpaRepository.findByInviteCodeForUpdate(CODE)).thenReturn(Optional.empty());
@@ -422,10 +430,12 @@ class LobbySettingsUpdateServiceTest {
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                         .isEqualTo(HttpStatus.CONFLICT));
 
-        verify(lobbyRepository).enqueueStartReconciliation(
+        verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
-                eq("SETTINGS_UPDATE_DB_SNAPSHOT_NOT_FOUND")
+                eq(SETTINGS_SNAPSHOT_NOT_FOUND_REASON)
         );
+        verify(lobbyRepository, never()).enqueueStartReconciliation(anyString(), anyString());
+        verify(lobbyRepository, never()).updateSettings(anyString(), anyInt(), anyInt(), anyInt());
     }
 
     @Test
@@ -651,8 +661,9 @@ class LobbySettingsUpdateServiceTest {
         );
         verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
-                eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
+                eq(SETTINGS_RESTORE_FAILED_REASON)
         );
+        verify(lobbyRepository, never()).enqueueStartReconciliation(anyString(), anyString());
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 
@@ -686,8 +697,9 @@ class LobbySettingsUpdateServiceTest {
 
         verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
-                eq("SETTINGS_UPDATE_RESTORE_FAILED:EXCEPTION")
+                eq(SETTINGS_RESTORE_EXCEPTION_REASON)
         );
+        verify(lobbyRepository, never()).enqueueStartReconciliation(anyString(), anyString());
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 
@@ -716,7 +728,7 @@ class LobbySettingsUpdateServiceTest {
                 .when(lobbySettingsReconciliationRepository)
                 .enqueueSettingsReconciliation(
                         eq(CODE),
-                        eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
+                        eq(SETTINGS_RESTORE_FAILED_REASON)
                 );
 
         assertThatThrownBy(() -> sut.updateSettings(CODE, validRequest(), hostPrincipal()))
@@ -726,8 +738,9 @@ class LobbySettingsUpdateServiceTest {
 
         verify(lobbySettingsReconciliationRepository).enqueueSettingsReconciliation(
                 eq(CODE),
-                eq("SETTINGS_UPDATE_RESTORE_FAILED:MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS")
+                eq(SETTINGS_RESTORE_FAILED_REASON)
         );
+        verify(lobbyRepository, never()).enqueueStartReconciliation(anyString(), anyString());
         verify(lobbyRealtimeNotifier, never()).notifyLobbyInfoRefresh(anyString());
     }
 }

@@ -382,16 +382,20 @@ public class LobbyLuaScriptExecutor {
      * [KEYS 계약]
      * KEYS[1] = lobby:{code}
      * KEYS[2] = lobby:{code}:participants
+     * KEYS[3] = lobby:public:most_available
      *
      * [ARGV 계약]
-     * ARGV[1] = status field name
-     * ARGV[2] = maxPlayers field name
-     * ARGV[3] = questionCount field name
-     * ARGV[4] = timeLimitSeconds field name
-     * ARGV[5] = WAITING status
-     * ARGV[6] = maxPlayers
-     * ARGV[7] = questionCount
-     * ARGV[8] = timeLimitSeconds
+     * ARGV[1]  = status field name
+     * ARGV[2]  = maxPlayers field name
+     * ARGV[3]  = questionCount field name
+     * ARGV[4]  = timeLimitSeconds field name
+     * ARGV[5]  = WAITING status
+     * ARGV[6]  = isPrivate field name
+     * ARGV[7]  = currentPlayers field name
+     * ARGV[8]  = lobby code
+     * ARGV[9]  = maxPlayers
+     * ARGV[10] = questionCount
+     * ARGV[11] = timeLimitSeconds
      *
      * @return "UPDATED" | "LOBBY_NOT_FOUND" | "NOT_WAITING" | "MAX_PLAYERS_LESS_THAN_CURRENT_PLAYERS"
      */
@@ -403,7 +407,8 @@ public class LobbyLuaScriptExecutor {
     ) {
         List<String> keys = List.of(
                 RedisKeys.lobbyKey(code),
-                RedisKeys.lobbyParticipantsKey(code)
+                RedisKeys.lobbyParticipantsKey(code),
+                RedisKeys.LOBBY_PUBLIC_MOST_AVAILABLE
         );
 
         return redisTemplate.execute(
@@ -414,6 +419,9 @@ public class LobbyLuaScriptExecutor {
                 RedisKeys.FIELD_QUESTION_COUNT,
                 RedisKeys.FIELD_TIME_LIMIT_SECONDS,
                 LobbyStatus.WAITING.name(),
+                RedisKeys.FIELD_IS_PRIVATE,
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                code,
                 String.valueOf(maxPlayers),
                 String.valueOf(questionCount),
                 String.valueOf(timeLimitSeconds)

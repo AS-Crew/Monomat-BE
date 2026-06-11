@@ -45,6 +45,8 @@ class RedisKeysTest {
         assertThat(RedisKeys.gameSessionPlaybackLockKey(CODE, 2)).contains(tag).endsWith(":round:2:playback_lock");
         assertThat(RedisKeys.gameSessionRoundDataKey(CODE, 2)).contains(tag).endsWith(":round:2:data");
         assertThat(RedisKeys.gameSessionRoundCorrectPlayersKey(CODE, 2)).contains(tag).endsWith(":round:2:correct_players");
+        assertThat(RedisKeys.gameSessionRoundSkipVotesKey(CODE, 2)).contains(tag).endsWith(":round:2:skip_votes");
+        assertThat(RedisKeys.gameSessionRoundPlaybackErrorsKey(CODE, 2)).contains(tag).endsWith(":round:2:playback_errors");
         assertThat(RedisKeys.gameSessionRoundCorrectTimesKey(CODE, 2)).contains(tag).endsWith(":round:2:correct_times");
         assertThat(RedisKeys.gameSessionRoundEndedLockKey(CODE, 2)).contains(tag).endsWith(":round:2:ended_lock");
         assertThat(RedisKeys.gameSessionRoundNextLockKey(CODE, 2)).contains(tag).endsWith(":round:2:next_round_lock");
@@ -57,6 +59,8 @@ class RedisKeysTest {
 
         assertThat(RedisKeys.gameSessionRoundsKey(CODE)).startsWith(base + ":");
         assertThat(RedisKeys.gameSessionRoundReadyKey(CODE, 1)).startsWith(base + ":round:1:");
+        assertThat(RedisKeys.gameSessionRoundSkipVotesKey(CODE, 1)).startsWith(base + ":round:1:");
+        assertThat(RedisKeys.gameSessionRoundPlaybackErrorsKey(CODE, 1)).startsWith(base + ":round:1:");
     }
 
     @Test

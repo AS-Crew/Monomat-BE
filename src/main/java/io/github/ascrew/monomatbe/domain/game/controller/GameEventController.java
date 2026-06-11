@@ -1,9 +1,11 @@
 package io.github.ascrew.monomatbe.domain.game.controller;
 
 import io.github.ascrew.monomatbe.domain.game.dto.GameChatMessageDto;
+import io.github.ascrew.monomatbe.domain.game.dto.PlaybackErrorReportDto;
 import io.github.ascrew.monomatbe.domain.game.dto.ReadyToPlayRequest;
 import io.github.ascrew.monomatbe.domain.game.service.GameAnswerService;
 import io.github.ascrew.monomatbe.domain.game.service.GameRoundStartService;
+import io.github.ascrew.monomatbe.domain.game.service.GameSkipVoteService;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,7 @@ public class GameEventController {
 
     private final GameRoundStartService gameRoundStartService;
     private final GameAnswerService gameAnswerService;
+    private final GameSkipVoteService gameSkipVoteService;
 
     @MessageMapping("/game/{code}/ready-to-play")
     public void readyToPlay(
@@ -52,5 +55,24 @@ public class GameEventController {
         }
 
         gameAnswerService.processGameChat(code, principal.userIdentifier(), messageDto);
+    }
+
+    @MessageMapping("/game/{code}/playback-error")
+    public void handlePlaybackError(
+            @DestinationVariable("code") String code,
+            @Payload @Valid PlaybackErrorReportDto request,
+            CustomPrincipal principal) {
+
+        if (principal == null || principal.userIdentifier() == null) {
+            log.warn("GameEventController: 인증 정보 없음 - code: {}", code);
+            return;
+        }
+
+        if (request == null || request.roundNo() == null || request.roundNo() <= 0) {
+            log.warn("GameEventController: 잘못된 playback-error 요청 - code: {}, request: {}", code, request);
+            return;
+        }
+
+        gameSkipVoteService.reportPlaybackError(code, principal.userIdentifier(), request);
     }
 }

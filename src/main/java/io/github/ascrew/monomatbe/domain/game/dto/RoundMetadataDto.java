@@ -16,11 +16,15 @@ public record RoundMetadataDto(
         String thumbnailUrl,
         List<PlayerRankingDto> rankings,
         int waitTimeSeconds,
-        boolean isLastRound
+        boolean isLastRound,
+        RoundEndReason endReason
 ) {
     public RoundMetadataDto {
         if (type == null || !GameEventTypes.ROUND_END.equals(type)) {
             type = GameEventTypes.ROUND_END;
+        }
+        if (endReason == null) {
+            endReason = RoundEndReason.TIMEOUT;
         }
     }
 }

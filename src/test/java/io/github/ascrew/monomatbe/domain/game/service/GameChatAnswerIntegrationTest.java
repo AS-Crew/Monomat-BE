@@ -58,6 +58,9 @@ class GameChatAnswerIntegrationTest {
     @MockitoBean
     private ChatSenderProfileResolver chatSenderProfileResolver;
 
+    @MockitoBean
+    private GameSkipVoteService gameSkipVoteService;
+
     @BeforeEach
     void setUp() {
         // Mock 기본 셋팅
@@ -84,6 +87,8 @@ class GameChatAnswerIntegrationTest {
         redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundCorrectTimesKey(LOBBY_CODE, 1));
+        redisTemplate.delete(RedisKeys.gameSessionRoundEndedLockKey(LOBBY_CODE, 1));
+        redisTemplate.delete(RedisKeys.gameSessionPlayersKey(LOBBY_CODE));
     }
 
     private void givenGameSession(String status, int currentRoundNo, int timeLimit, Long playbackStartedAt) {
@@ -151,6 +156,88 @@ class GameChatAnswerIntegrationTest {
         // 3. Redis Set에 정답자로 등록 검증
         Boolean isCorrect = redisTemplate.opsForSet().isMember(RedisKeys.gameSessionRoundCorrectPlayersKey(LOBBY_CODE, 1), USER_ID);
         assertThat(isCorrect).isTrue();
+    }
+
+    @Test
+    @DisplayName("전원이 정답을 맞춰도 라운드 종료 락이 생성되지 않는다")
+    void allCorrectDoesNotTriggerEarlyRoundEnd() {
+        // given
+        givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
+        redisTemplate.opsForHash().put(RedisKeys.gameSessionPlayersKey(LOBBY_CODE), USER_ID, "0");
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "다이너마이트");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        assertThat(redisTemplate.hasKey(RedisKeys.gameSessionRoundEndedLockKey(LOBBY_CODE, 1))).isFalse();
+    }
+
+    @Test
+    @DisplayName("/k는 스킵 투표로 위임되고 정답/일반 채팅으로 흐르지 않는다")
+    void skipVoteCommandDelegatesAndStopsChatFlow() {
+        // given
+        givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "/k");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        verify(gameSkipVoteService).voteSkip(LOBBY_CODE, USER_ID, 1);
+        verify(messagingTemplate, never()).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), any(ChatMessageDto.class));
+        verify(messagingTemplate, never()).convertAndSendToUser(anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("방장 /p는 강제 스킵으로 처리되고 정답/일반 채팅으로 흐르지 않는다")
+    void hostForceSkipCommandDelegatesAndStopsChatFlow() {
+        // given
+        givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
+        when(gameSkipVoteService.forceSkipByHost(LOBBY_CODE, USER_ID, 1)).thenReturn(true);
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "/p");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        verify(gameSkipVoteService).forceSkipByHost(LOBBY_CODE, USER_ID, 1);
+        verify(messagingTemplate, never()).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), any(ChatMessageDto.class));
+    }
+
+    @Test
+    @DisplayName("비방장 /p는 명령으로 처리하지 않고 기존 채팅 흐름에 태운다")
+    void nonHostForceSkipCommandFallsBackToChatFlow() {
+        // given
+        givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
+        when(gameSkipVoteService.forceSkipByHost(LOBBY_CODE, USER_ID, 1)).thenReturn(false);
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "/p");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        verify(gameSkipVoteService).forceSkipByHost(LOBBY_CODE, USER_ID, 1);
+        ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
+        assertThat(chatCaptor.getValue().getContent()).isEqualTo("/p");
+    }
+
+    @Test
+    @DisplayName("정확히 /k, /p가 아닌 입력은 명령으로 인식하지 않는다")
+    void similarCommandTextIsNotRecognizedAsCommand() {
+        // given
+        givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
+        GameChatMessageDto messageDto = new GameChatMessageDto(1, "/K");
+
+        // when
+        gameAnswerService.processGameChat(LOBBY_CODE, USER_ID, messageDto);
+
+        // then
+        verifyNoInteractions(gameSkipVoteService);
+        ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
+        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
+        assertThat(chatCaptor.getValue().getContent()).isEqualTo("/K");
     }
 
     @Test

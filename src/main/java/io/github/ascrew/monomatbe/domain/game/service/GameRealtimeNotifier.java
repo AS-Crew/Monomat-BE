@@ -1,6 +1,8 @@
 package io.github.ascrew.monomatbe.domain.game.service;
 
 import io.github.ascrew.monomatbe.domain.game.dto.RoundMetadataDto;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundSkipVoteDto;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundSkippedDto;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +36,26 @@ public class GameRealtimeNotifier {
     public void notifyRoundEnd(String lobbyCode, RoundMetadataDto dto) {
         messagingTemplate.convertAndSend(
                 StompDestinations.subscribeGameRoundEnd(lobbyCode),
+                dto
+        );
+    }
+
+    /**
+     * 라운드 스킵 투표 현황을 브로드캐스트합니다.
+     */
+    public void notifyRoundSkipVote(String lobbyCode, RoundSkipVoteDto dto) {
+        messagingTemplate.convertAndSend(
+                StompDestinations.subscribeGameRound(lobbyCode),
+                dto
+        );
+    }
+
+    /**
+     * 스킵 계열 라운드 종료 확정 이벤트를 브로드캐스트합니다.
+     */
+    public void notifyRoundSkipped(String lobbyCode, RoundSkippedDto dto) {
+        messagingTemplate.convertAndSend(
+                StompDestinations.subscribeGameRound(lobbyCode),
                 dto
         );
     }

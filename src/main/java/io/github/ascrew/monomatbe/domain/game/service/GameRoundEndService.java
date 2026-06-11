@@ -3,7 +3,9 @@ package io.github.ascrew.monomatbe.domain.game.service;
 import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.domain.game.dto.PlayerRankingDto;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundEndReason;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundMetadataDto;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundSkippedDto;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSessionPlayer;
 import io.github.ascrew.monomatbe.domain.game.repository.GameSessionJpaRepository;
@@ -83,6 +85,15 @@ public class GameRoundEndService {
      */
     @Transactional
     public void endRound(String lobbyCode, int roundNo) {
+        endRound(lobbyCode, roundNo, RoundEndReason.TIMEOUT);
+    }
+
+    /**
+     * 특정 라운드를 종료하고 종료 사유를 결과 이벤트에 포함합니다.
+     */
+    @Transactional
+    public void endRound(String lobbyCode, int roundNo, RoundEndReason endReason) {
+        RoundEndReason resolvedEndReason = endReason != null ? endReason : RoundEndReason.TIMEOUT;
         String endedLockKey = RedisKeys.gameSessionRoundEndedLockKey(lobbyCode, roundNo);
         Boolean lockAcquired = redisTemplate.opsForValue().setIfAbsent(endedLockKey, "1", Duration.ofMinutes(5));
 
@@ -234,6 +245,7 @@ public class GameRoundEndService {
                     .rankings(rankings)
                     .waitTimeSeconds(10)
                     .isLastRound(isLastRound)
+                    .endReason(resolvedEndReason)
                     .build();
 
             // 8. 트랜잭션 성공 후 STOMP 브로드캐스트 및 스케줄링 등록
@@ -245,6 +257,7 @@ public class GameRoundEndService {
                     log.info("라운드 종료 트랜잭션 커밋 완료 - Redis 점수 반영 및 브로드캐스트 전송. code: {}, roundNo: {}, isLast: {}", lobbyCode, roundNo, isLastRound);
 
                     syncRedisScoresQuietly(lobbyCode, roundNo, playersKey, scoreAddedMap);
+                    notifyRoundSkippedQuietly(lobbyCode, roundNo, resolvedEndReason);
                     notifyRoundEndQuietly(lobbyCode, roundNo, metadataDto);
 
                     if (isLastRound) {
@@ -275,6 +288,29 @@ public class GameRoundEndService {
             }
             throw t;
         }
+    }
+
+    /** 스킵 계열 라운드 종료 확정 이벤트를 브로드캐스트한다. */
+    private void notifyRoundSkippedQuietly(String lobbyCode, int roundNo, RoundEndReason endReason) {
+        if (!isSkipReason(endReason)) {
+            return;
+        }
+        try {
+            RoundSkippedDto dto = RoundSkippedDto.builder()
+                    .roundNo(roundNo)
+                    .endReason(endReason)
+                    .build();
+            gameRealtimeNotifier.notifyRoundSkipped(lobbyCode, dto);
+        } catch (Exception e) {
+            log.error("ROUND_SKIPPED 브로드캐스트 실패 - code: {}, roundNo: {}, endReason: {}",
+                    lobbyCode, roundNo, endReason, e);
+        }
+    }
+
+    private boolean isSkipReason(RoundEndReason endReason) {
+        return endReason == RoundEndReason.SKIP_VOTE
+                || endReason == RoundEndReason.HOST_SKIP
+                || endReason == RoundEndReason.PLAYBACK_ERROR;
     }
 
     /** Redis 누적 점수(HINCRBY)를 반영한다. 실패해도 이후 후처리 단계 진행에 영향을 주지 않는다. */

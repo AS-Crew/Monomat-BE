@@ -6,6 +6,8 @@ public final class GameEventTypes {
     public static final String ROUND_PLAYBACK_STARTED = "ROUND_PLAYBACK_STARTED";
     public static final String ROUND_END = "ROUND_END";
     public static final String ROUND_CORRECT = "ROUND_CORRECT";
+    public static final String ROUND_SKIP_VOTE = "ROUND_SKIP_VOTE";
+    public static final String ROUND_SKIPPED = "ROUND_SKIPPED";
 
     private GameEventTypes() {}
 }

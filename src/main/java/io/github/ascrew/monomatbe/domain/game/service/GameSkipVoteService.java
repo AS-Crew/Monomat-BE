@@ -41,20 +41,23 @@ public class GameSkipVoteService {
             return;
         }
 
-        VoteState voteState = addVoteAndReadState(
+        VoteResult voteResult = addVoteAndReadState(
                 RedisKeys.gameSessionRoundSkipVotesKey(code, roundNo),
                 userIdentifier,
                 code,
                 false
         );
+        VoteState voteState = voteResult.voteState();
         if (voteState.totalParticipants() <= 0) {
             log.warn("스킵 투표 처리 불가 - 참가자 수 없음. code: {}, roundNo: {}", code, roundNo);
             return;
         }
 
-        broadcastSkipVote(code, roundNo, voteState);
+        if (voteResult.added()) {
+            broadcastSkipVote(code, roundNo, voteState);
+        }
 
-        if (voteState.reachedThreshold()) {
+        if (voteResult.added() && voteState.reachedThreshold()) {
             log.info("스킵 투표 기준 도달 - code: {}, roundNo: {}, votes: {}, required: {}",
                     code, roundNo, voteState.votes(), voteState.requiredVotes());
             gameRoundEndService.endRound(code, roundNo, RoundEndReason.SKIP_VOTE);
@@ -101,18 +104,19 @@ public class GameSkipVoteService {
             return;
         }
 
-        VoteState voteState = addVoteAndReadState(
+        VoteResult voteResult = addVoteAndReadState(
                 RedisKeys.gameSessionRoundPlaybackErrorsKey(code, roundNo),
                 userIdentifier,
                 code,
                 true
         );
+        VoteState voteState = voteResult.voteState();
         if (voteState.totalParticipants() <= 0) {
             log.warn("재생 오류 보고 처리 불가 - 참가자 수 없음. code: {}, roundNo: {}", code, roundNo);
             return;
         }
 
-        if (voteState.reachedThreshold()) {
+        if (voteResult.added() && voteState.reachedThreshold()) {
             log.error("[MONITORING_REQUIRED] 재생 오류 보고 기준 도달로 라운드 자동 스킵 - "
                             + "code: {}, roundNo: {}, reports: {}, required: {}, errorCode: {}, message: {}",
                     code,
@@ -162,10 +166,10 @@ public class GameSkipVoteService {
         redisTemplate.opsForSet().remove(RedisKeys.gameSessionRoundPlaybackErrorsKey(code, roundNo), userIdentifier);
     }
 
-    private VoteState addVoteAndReadState(String voteKey, String userIdentifier, String code, boolean playbackError) {
-        redisTemplate.opsForSet().add(voteKey, userIdentifier);
+    private VoteResult addVoteAndReadState(String voteKey, String userIdentifier, String code, boolean playbackError) {
+        Long added = redisTemplate.opsForSet().add(voteKey, userIdentifier);
         redisTemplate.expire(voteKey, ROUND_SET_TTL);
-        return readVoteState(voteKey, code, playbackError);
+        return new VoteResult(readVoteState(voteKey, code, playbackError), Long.valueOf(1L).equals(added));
     }
 
     private VoteState readVoteState(String voteKey, String code, boolean playbackError) {
@@ -263,5 +267,8 @@ public class GameSkipVoteService {
         boolean reachedThreshold() {
             return totalParticipants > 0 && votes >= requiredVotes;
         }
+    }
+
+    private record VoteResult(VoteState voteState, boolean added) {
     }
 }

@@ -76,11 +76,13 @@ class GameSkipVoteServiceTest {
     }
 
     @Test
-    @DisplayName("중복 스킵 투표는 SADD 멱등 Set으로 기록되고 기준 미달이면 종료하지 않는다")
+    @DisplayName("중복 스킵 투표는 SADD 멱등 Set으로 기록되고 신규 투표일 때만 브로드캐스트한다")
     void duplicateSkipVoteCountsOnce() {
         // given
         String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
-        givenVoteState(skipVotesKey, Set.of(USER_1), Set.of(USER_1, USER_2, "user-3"));
+        when(setOperations.add(skipVotesKey, USER_1)).thenReturn(1L, 0L);
+        when(setOperations.members(skipVotesKey)).thenReturn(Set.of(USER_1));
+        when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(Set.of(USER_1, USER_2, "user-3"));
 
         // when
         gameSkipVoteService.voteSkip(LOBBY_CODE, USER_1, ROUND_NO);
@@ -90,7 +92,7 @@ class GameSkipVoteServiceTest {
         verify(setOperations, times(2)).add(skipVotesKey, USER_1);
         verify(redisTemplate, times(2)).expire(skipVotesKey, Duration.ofHours(2));
         verify(gameRoundEndService, never()).endRound(anyString(), anyInt(), any(RoundEndReason.class));
-        verify(gameRealtimeNotifier, times(2)).notifyRoundSkipVote(eq(LOBBY_CODE), any(RoundSkipVoteDto.class));
+        verify(gameRealtimeNotifier, times(1)).notifyRoundSkipVote(eq(LOBBY_CODE), any(RoundSkipVoteDto.class));
     }
 
     @Test
@@ -98,6 +100,8 @@ class GameSkipVoteServiceTest {
     void skipVoteThresholdEndsRound() {
         // given
         String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
+        when(setOperations.add(skipVotesKey, USER_1)).thenReturn(1L);
+        when(setOperations.add(skipVotesKey, USER_2)).thenReturn(1L);
         when(setOperations.members(skipVotesKey)).thenReturn(Set.of(USER_1), Set.of(USER_1, USER_2));
         when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(Set.of(USER_1, USER_2, "user-3"));
 
@@ -142,6 +146,8 @@ class GameSkipVoteServiceTest {
     void playbackErrorThresholdEndsRound(CapturedOutput output) {
         // given
         String playbackErrorsKey = RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, ROUND_NO);
+        when(setOperations.add(playbackErrorsKey, USER_1)).thenReturn(1L);
+        when(setOperations.add(playbackErrorsKey, USER_2)).thenReturn(1L);
         when(setOperations.members(playbackErrorsKey)).thenReturn(Set.of(USER_1), Set.of(USER_1, USER_2));
         when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(Set.of(USER_1, USER_2, "user-3"));
 
@@ -182,6 +188,7 @@ class GameSkipVoteServiceTest {
     void staleVotesAreExcludedFromThreshold() {
         // given
         String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
+        when(setOperations.add(skipVotesKey, USER_1)).thenReturn(0L);
         givenVoteState(skipVotesKey, Set.of(USER_1, "left-user"), Set.of(USER_1, USER_2, "user-3"));
 
         // when

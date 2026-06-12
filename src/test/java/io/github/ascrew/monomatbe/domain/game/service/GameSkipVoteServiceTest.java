@@ -19,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,9 +60,9 @@ class GameSkipVoteServiceTest {
     void setUp() {
         lenient().when(redisTemplate.opsForSet()).thenReturn(setOperations);
         lenient().when(redisTemplate.opsForHash()).thenReturn(hashOperations);
-        when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(true);
-        when(lobbyRepository.isParticipant(eq(LOBBY_CODE), anyString())).thenReturn(true);
-        when(hashOperations.multiGet(
+        lenient().when(lobbyRepository.existsByCode(LOBBY_CODE)).thenReturn(true);
+        lenient().when(lobbyRepository.isParticipant(eq(LOBBY_CODE), anyString())).thenReturn(true);
+        lenient().when(hashOperations.multiGet(
                 eq(RedisKeys.gameSessionKey(LOBBY_CODE)),
                 eq(List.of(RedisKeys.FIELD_STATUS, RedisKeys.FIELD_ROUND_PHASE, RedisKeys.FIELD_CURRENT_ROUND_NO))
         )).thenReturn(List.of("PLAYING", "PLAYING", "1"));
@@ -79,8 +80,7 @@ class GameSkipVoteServiceTest {
     void duplicateSkipVoteCountsOnce() {
         // given
         String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
-        when(setOperations.size(skipVotesKey)).thenReturn(1L);
-        when(setOperations.size(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(3L);
+        givenVoteState(skipVotesKey, Set.of(USER_1), Set.of(USER_1, USER_2, "user-3"));
 
         // when
         gameSkipVoteService.voteSkip(LOBBY_CODE, USER_1, ROUND_NO);
@@ -98,8 +98,8 @@ class GameSkipVoteServiceTest {
     void skipVoteThresholdEndsRound() {
         // given
         String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
-        when(setOperations.size(skipVotesKey)).thenReturn(1L, 2L);
-        when(setOperations.size(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(3L);
+        when(setOperations.members(skipVotesKey)).thenReturn(Set.of(USER_1), Set.of(USER_1, USER_2));
+        when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(Set.of(USER_1, USER_2, "user-3"));
 
         // when
         gameSkipVoteService.voteSkip(LOBBY_CODE, USER_1, ROUND_NO);
@@ -142,23 +142,68 @@ class GameSkipVoteServiceTest {
     void playbackErrorThresholdEndsRound(CapturedOutput output) {
         // given
         String playbackErrorsKey = RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, ROUND_NO);
-        when(setOperations.size(playbackErrorsKey)).thenReturn(1L, 2L);
-        when(setOperations.size(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(3L);
+        when(setOperations.members(playbackErrorsKey)).thenReturn(Set.of(USER_1), Set.of(USER_1, USER_2));
+        when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(Set.of(USER_1, USER_2, "user-3"));
 
+        // when
+        gameSkipVoteService.reportPlaybackError(
+                LOBBY_CODE,
+                USER_1,
+                new PlaybackErrorReportDto(ROUND_NO, "150", "region blocked")
+        );
+        gameSkipVoteService.reportPlaybackError(
+                LOBBY_CODE,
+                USER_2,
+                new PlaybackErrorReportDto(ROUND_NO, "150", "region blocked")
+        );
+
+        // then
+        verify(gameRoundEndService).endRound(LOBBY_CODE, ROUND_NO, RoundEndReason.PLAYBACK_ERROR);
+        assertThat(output).contains("[MONITORING_REQUIRED]");
+    }
+
+    @Test
+    @DisplayName("지원하지 않는 재생 오류 코드는 집계하지 않는다")
+    void unsupportedPlaybackErrorCodeIsIgnored() {
         // when
         gameSkipVoteService.reportPlaybackError(
                 LOBBY_CODE,
                 USER_1,
                 new PlaybackErrorReportDto(ROUND_NO, "YOUTUBE_REGION_BLOCKED", "region blocked")
         );
-        gameSkipVoteService.reportPlaybackError(
-                LOBBY_CODE,
-                USER_2,
-                new PlaybackErrorReportDto(ROUND_NO, "YOUTUBE_REGION_BLOCKED", "region blocked")
-        );
 
         // then
-        verify(gameRoundEndService).endRound(LOBBY_CODE, ROUND_NO, RoundEndReason.PLAYBACK_ERROR);
-        assertThat(output).contains("[MONITORING_REQUIRED]");
+        verify(setOperations, never()).add(RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, ROUND_NO), USER_1);
+        verify(gameRoundEndService, never()).endRound(anyString(), anyInt(), any(RoundEndReason.class));
+    }
+
+    @Test
+    @DisplayName("현재 참가자가 아닌 기존 표는 기준 계산에서 제외한다")
+    void staleVotesAreExcludedFromThreshold() {
+        // given
+        String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
+        givenVoteState(skipVotesKey, Set.of(USER_1, "left-user"), Set.of(USER_1, USER_2, "user-3"));
+
+        // when
+        gameSkipVoteService.voteSkip(LOBBY_CODE, USER_1, ROUND_NO);
+
+        // then
+        verify(gameRoundEndService, never()).endRound(anyString(), anyInt(), any(RoundEndReason.class));
+    }
+
+    @Test
+    @DisplayName("퇴장한 참가자의 스킵 투표와 재생 오류 보고를 라운드 Set에서 제거한다")
+    void removeParticipantRoundSignalsRemovesSkipAndPlaybackEntries() {
+        // when
+        gameSkipVoteService.removeParticipantRoundSignals(LOBBY_CODE, USER_1, ROUND_NO);
+
+        // then
+        verify(setOperations).remove(RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO), USER_1);
+        verify(setOperations).remove(RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, ROUND_NO), USER_1);
+    }
+
+    private void givenVoteState(String voteKey, Set<String> votes, Set<String> participants) {
+        when(setOperations.members(voteKey)).thenReturn(votes);
+        when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(participants);
     }
 }

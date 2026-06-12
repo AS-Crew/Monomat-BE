@@ -12,7 +12,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 인게임 라운드 스킵 투표, 방장 강제 스킵, 재생 오류 fail-over를 처리하는 서비스.
@@ -23,6 +26,7 @@ import java.util.List;
 public class GameSkipVoteService {
 
     private static final Duration ROUND_SET_TTL = Duration.ofHours(2);
+    private static final Set<String> SUPPORTED_YOUTUBE_IFRAME_ERROR_CODES = Set.of("2", "5", "100", "101", "150");
 
     private final StringRedisTemplate redisTemplate;
     private final LobbyRepository lobbyRepository;
@@ -40,7 +44,8 @@ public class GameSkipVoteService {
         VoteState voteState = addVoteAndReadState(
                 RedisKeys.gameSessionRoundSkipVotesKey(code, roundNo),
                 userIdentifier,
-                code
+                code,
+                false
         );
         if (voteState.totalParticipants() <= 0) {
             log.warn("스킵 투표 처리 불가 - 참가자 수 없음. code: {}, roundNo: {}", code, roundNo);
@@ -68,7 +73,7 @@ public class GameSkipVoteService {
 
         Object hostUserId = redisTemplate.opsForHash().get(RedisKeys.lobbyKey(code), RedisKeys.FIELD_HOST_USER_ID);
         if (!userIdentifier.equals(hostUserId)) {
-            log.info("비방장 /p 입력 - 명령으로 처리하지 않음. code: {}, user: {}", code, userIdentifier);
+            log.info("비방장 /p 입력 - 라운드 종료 없이 무시. code: {}, user: {}", code, userIdentifier);
             return false;
         }
 
@@ -90,11 +95,17 @@ public class GameSkipVoteService {
         if (!isValidPlayingParticipant(code, userIdentifier, roundNo)) {
             return;
         }
+        if (!isSupportedPlaybackErrorCode(request.errorCode())) {
+            log.warn("재생 오류 보고 무시 - 지원하지 않는 errorCode. code: {}, user: {}, errorCode: {}",
+                    code, userIdentifier, request.errorCode());
+            return;
+        }
 
         VoteState voteState = addVoteAndReadState(
                 RedisKeys.gameSessionRoundPlaybackErrorsKey(code, roundNo),
                 userIdentifier,
-                code
+                code,
+                true
         );
         if (voteState.totalParticipants() <= 0) {
             log.warn("재생 오류 보고 처리 불가 - 참가자 수 없음. code: {}, roundNo: {}", code, roundNo);
@@ -122,7 +133,7 @@ public class GameSkipVoteService {
             return;
         }
 
-        VoteState skipState = readVoteState(RedisKeys.gameSessionRoundSkipVotesKey(code, roundNo), code);
+        VoteState skipState = readVoteState(RedisKeys.gameSessionRoundSkipVotesKey(code, roundNo), code, false);
         if (skipState.reachedThreshold()) {
             log.info("참가자 변경 후 스킵 투표 기준 도달 - code: {}, roundNo: {}, votes: {}, required: {}",
                     code, roundNo, skipState.votes(), skipState.requiredVotes());
@@ -130,7 +141,7 @@ public class GameSkipVoteService {
             return;
         }
 
-        VoteState playbackErrorState = readVoteState(RedisKeys.gameSessionRoundPlaybackErrorsKey(code, roundNo), code);
+        VoteState playbackErrorState = readVoteState(RedisKeys.gameSessionRoundPlaybackErrorsKey(code, roundNo), code, true);
         if (playbackErrorState.reachedThreshold()) {
             log.error("[MONITORING_REQUIRED] 참가자 변경 후 재생 오류 보고 기준 도달로 라운드 자동 스킵 - "
                             + "code: {}, roundNo: {}, reports: {}, required: {}",
@@ -139,18 +150,34 @@ public class GameSkipVoteService {
         }
     }
 
-    private VoteState addVoteAndReadState(String voteKey, String userIdentifier, String code) {
-        redisTemplate.opsForSet().add(voteKey, userIdentifier);
-        redisTemplate.expire(voteKey, ROUND_SET_TTL);
-        return readVoteState(voteKey, code);
+    /**
+     * 퇴장한 참가자의 라운드별 스킵/오류 신호를 제거한다.
+     */
+    public void removeParticipantRoundSignals(String code, String userIdentifier, int roundNo) {
+        if (!StringUtils.hasText(code) || !StringUtils.hasText(userIdentifier) || roundNo <= 0) {
+            return;
+        }
+
+        redisTemplate.opsForSet().remove(RedisKeys.gameSessionRoundSkipVotesKey(code, roundNo), userIdentifier);
+        redisTemplate.opsForSet().remove(RedisKeys.gameSessionRoundPlaybackErrorsKey(code, roundNo), userIdentifier);
     }
 
-    private VoteState readVoteState(String voteKey, String code) {
-        Long votes = redisTemplate.opsForSet().size(voteKey);
-        Long totalParticipants = redisTemplate.opsForSet().size(RedisKeys.lobbyParticipantsKey(code));
-        long total = totalParticipants != null ? totalParticipants : 0L;
-        long required = requiredVotes(total);
-        return new VoteState(votes != null ? votes : 0L, required, total);
+    private VoteState addVoteAndReadState(String voteKey, String userIdentifier, String code, boolean playbackError) {
+        redisTemplate.opsForSet().add(voteKey, userIdentifier);
+        redisTemplate.expire(voteKey, ROUND_SET_TTL);
+        return readVoteState(voteKey, code, playbackError);
+    }
+
+    private VoteState readVoteState(String voteKey, String code, boolean playbackError) {
+        Set<String> participants = redisTemplate.opsForSet().members(RedisKeys.lobbyParticipantsKey(code));
+        Set<String> voteMembers = redisTemplate.opsForSet().members(voteKey);
+        Set<String> activeParticipants = participants != null ? participants : Collections.emptySet();
+        Set<String> activeVotes = new HashSet<>(voteMembers != null ? voteMembers : Collections.emptySet());
+        activeVotes.retainAll(activeParticipants);
+
+        long total = activeParticipants.size();
+        long required = playbackError ? requiredPlaybackErrorReports(total) : requiredVotes(total);
+        return new VoteState(activeVotes.size(), required, total);
     }
 
     private void broadcastSkipVote(String code, int roundNo, VoteState voteState) {
@@ -185,7 +212,7 @@ public class GameSkipVoteService {
                 RedisKeys.FIELD_ROUND_PHASE,
                 RedisKeys.FIELD_CURRENT_ROUND_NO
         ));
-        if (values == null || values.get(0) == null) {
+        if (values == null || values.size() < 3 || values.get(0) == null) {
             log.warn("스킵 처리 무시 - 활성화된 게임 세션이 없음. code: {}", code);
             return false;
         }
@@ -199,7 +226,13 @@ public class GameSkipVoteService {
             return false;
         }
 
-        int currentRoundNo = Integer.parseInt(currentRoundNoStr);
+        int currentRoundNo;
+        try {
+            currentRoundNo = Integer.parseInt(currentRoundNoStr);
+        } catch (NumberFormatException e) {
+            log.warn("스킵 처리 무시 - 현재 라운드 번호 파싱 실패. code: {}, value: {}", code, currentRoundNoStr);
+            return false;
+        }
         if (roundNo != currentRoundNo) {
             log.warn("스킵 처리 무시 - 라운드 번호 불일치. code: {}, expected: {}, actual: {}",
                     code, currentRoundNo, roundNo);
@@ -208,11 +241,22 @@ public class GameSkipVoteService {
         return true;
     }
 
+    private boolean isSupportedPlaybackErrorCode(String errorCode) {
+        return StringUtils.hasText(errorCode) && SUPPORTED_YOUTUBE_IFRAME_ERROR_CODES.contains(errorCode.trim());
+    }
+
     private long requiredVotes(long totalParticipants) {
         if (totalParticipants <= 0) {
             return 0;
         }
         return (totalParticipants + 1) / 2;
+    }
+
+    private long requiredPlaybackErrorReports(long totalParticipants) {
+        if (totalParticipants <= 1) {
+            return totalParticipants;
+        }
+        return Math.max(2, (totalParticipants + 1) / 2);
     }
 
     private record VoteState(long votes, long requiredVotes, long totalParticipants) {

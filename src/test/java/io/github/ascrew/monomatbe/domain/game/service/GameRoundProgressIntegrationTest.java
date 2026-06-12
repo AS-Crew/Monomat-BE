@@ -5,7 +5,9 @@ import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.repository.GuestSessionRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundEndReason;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundMetadataDto;
+import io.github.ascrew.monomatbe.domain.game.dto.RoundSkippedDto;
 import io.github.ascrew.monomatbe.domain.game.dto.RoundStartDto;
 import io.github.ascrew.monomatbe.domain.game.dto.GameChatMessageDto;
 import io.github.ascrew.monomatbe.domain.game.entity.GameSession;
@@ -203,6 +205,9 @@ class GameRoundProgressIntegrationTest {
         redisTemplate.delete(RedisKeys.gameSessionNextRoundLockKey(LOBBY_CODE, 2));
         redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionRoundDataKey(LOBBY_CODE, 3));
+        redisTemplate.delete(RedisKeys.lobbyParticipantsKey(LOBBY_CODE));
+        redisTemplate.delete(RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, 1));
+        redisTemplate.delete(RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, 1));
         redisTemplate.delete(RedisKeys.gameSessionKey(LOBBY_CODE));
     }
 
@@ -239,7 +244,24 @@ class GameRoundProgressIntegrationTest {
         assertThat(redisTemplate.opsForHash().get(playersKey, USER_ID_3)).isEqualTo("0");
 
         // Event publish check
-        verify(gameRealtimeNotifier, times(1)).notifyRoundEnd(eq(LOBBY_CODE), any(RoundMetadataDto.class));
+        ArgumentCaptor<RoundMetadataDto> metadataCaptor = ArgumentCaptor.forClass(RoundMetadataDto.class);
+        verify(gameRealtimeNotifier, times(1)).notifyRoundEnd(eq(LOBBY_CODE), metadataCaptor.capture());
+        assertThat(metadataCaptor.getValue().endReason()).isEqualTo(RoundEndReason.TIMEOUT);
+        verify(gameRealtimeNotifier, never()).notifyRoundSkipped(eq(LOBBY_CODE), any(RoundSkippedDto.class));
+    }
+
+    @Test
+    @DisplayName("스킵 사유로 라운드 종료 시 ROUND_SKIPPED와 종료 사유가 한 번만 브로드캐스트된다")
+    void skipReasonBroadcastsRoundSkippedOnce() {
+        // when
+        gameRoundEndService.endRound(LOBBY_CODE, 1, RoundEndReason.SKIP_VOTE);
+        gameRoundEndService.endRound(LOBBY_CODE, 1, RoundEndReason.SKIP_VOTE);
+
+        // then
+        ArgumentCaptor<RoundMetadataDto> metadataCaptor = ArgumentCaptor.forClass(RoundMetadataDto.class);
+        verify(gameRealtimeNotifier, times(1)).notifyRoundSkipped(eq(LOBBY_CODE), any(RoundSkippedDto.class));
+        verify(gameRealtimeNotifier, times(1)).notifyRoundEnd(eq(LOBBY_CODE), metadataCaptor.capture());
+        assertThat(metadataCaptor.getValue().endReason()).isEqualTo(RoundEndReason.SKIP_VOTE);
     }
 
     @Test
@@ -302,8 +324,8 @@ class GameRoundProgressIntegrationTest {
     }
 
     @Test
-    @DisplayName("플레이어 이탈 시 남은 플레이어들이 모두 정답 상태이면 라운드가 조기 종료된다")
-    void playerLeaveTriggersEarlyRoundEndIfAllRemainingCorrect() {
+    @DisplayName("플레이어 이탈 후 남은 플레이어들이 모두 정답 상태여도 라운드가 자동 종료되지 않는다")
+    void playerLeaveDoesNotTriggerEarlyRoundEndIfAllRemainingCorrect() {
         // given
         String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
         redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
@@ -323,9 +345,38 @@ class GameRoundProgressIntegrationTest {
 
         // then
         String endedLockKey = RedisKeys.gameSessionRoundEndedLockKey(LOBBY_CODE, 1);
-        assertThat(redisTemplate.hasKey(endedLockKey)).isTrue();
-        
-        verify(gameRealtimeNotifier, times(1)).notifyRoundEnd(eq(LOBBY_CODE), any(RoundMetadataDto.class));
+        assertThat(redisTemplate.hasKey(endedLockKey)).isFalse();
+
+        verify(gameRealtimeNotifier, never()).notifyRoundEnd(eq(LOBBY_CODE), any(RoundMetadataDto.class));
+    }
+
+    @Test
+    @DisplayName("플레이어 이탈 시 현재 라운드의 스킵 투표와 재생 오류 보고에서 이탈자를 제거한다")
+    void playerLeaveRemovesRoundSkipSignals() {
+        // given
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+        redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "round_phase", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "current_round_no", "1");
+
+        String participantsKey = RedisKeys.lobbyParticipantsKey(LOBBY_CODE);
+        redisTemplate.opsForSet().add(participantsKey, USER_ID_1, USER_ID_2, "remaining-player");
+
+        String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, 1);
+        String playbackErrorsKey = RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, 1);
+        redisTemplate.opsForSet().add(skipVotesKey, USER_ID_1, USER_ID_3);
+        redisTemplate.opsForSet().add(playbackErrorsKey, USER_ID_2, USER_ID_3);
+
+        PlayerLeaveEvent leaveEvent = new PlayerLeaveEvent(LOBBY_CODE, USER_ID_3);
+
+        // when
+        gameLeaveEventHandler.handlePlayerLeave(leaveEvent);
+
+        // then
+        assertThat(redisTemplate.opsForSet().isMember(skipVotesKey, USER_ID_3)).isFalse();
+        assertThat(redisTemplate.opsForSet().isMember(playbackErrorsKey, USER_ID_3)).isFalse();
+        assertThat(redisTemplate.opsForSet().isMember(skipVotesKey, USER_ID_1)).isTrue();
+        assertThat(redisTemplate.opsForSet().isMember(playbackErrorsKey, USER_ID_2)).isTrue();
     }
 
     @Test

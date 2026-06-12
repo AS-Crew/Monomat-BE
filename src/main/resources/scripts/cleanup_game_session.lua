@@ -4,8 +4,9 @@
 -- [책임]
 -- 하나의 로비 코드에 속한 모든 game:session:{code}* 키를 원자적으로 정리한다.
 --   - base 키 3종      : game:session:{code}, :rounds, :players
---   - 라운드별 키 7종   : :round:{n}:ready, :playback_lock, :data,
---                        :correct_players, :correct_times, :ended_lock, :next_lock
+--   - 라운드별 키 9종   : :round:{n}:ready, :playback_lock, :data,
+--                        :correct_players, :correct_times, :ended_lock, :next_lock,
+--                        :skip_votes, :playback_errors
 --
 -- [정리 모드]
 --   - DELETE : 모든 키 즉시 삭제 (로비 폭파 / 게임 시작 DB 롤백 보상)
@@ -53,9 +54,9 @@ if totalRounds == nil then
     totalRounds = 0
 end
 
--- 정리 대상 키 수집 (base 3종 + 라운드별 7종)
+-- 정리 대상 키 수집 (base 3종 + 라운드별 9종)
 local keys = { sessionKey, roundsKey, playersKey }
-local roundSuffixes = { ':ready', ':playback_lock', ':data', ':correct_players', ':correct_times', ':ended_lock', ':next_lock' }
+local roundSuffixes = { ':ready', ':playback_lock', ':data', ':correct_players', ':correct_times', ':ended_lock', ':next_lock', ':skip_votes', ':playback_errors' }
 for n = 1, totalRounds do
     local roundBase = sessionKey .. ':round:' .. n
     for _, suffix in ipairs(roundSuffixes) do

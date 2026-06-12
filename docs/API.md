@@ -1060,6 +1060,33 @@ Content-Type: application/json
 
 ## 게임 및 인게임 (Game & In-Game)
 
+### 인게임 STOMP 송신/수신 계약
+
+#### 클라이언트 송신
+
+| 목적지 | Payload | 설명 |
+| --- | --- | --- |
+| `SEND /app/game/{code}/chat` | `{ "roundNo": 1, "content": "..." }` | 인게임 일반 채팅, 정답 제출, 스킵 명령(`/k`, `/p`)을 처리합니다. |
+| `SEND /app/game/{code}/ready-to-play` | `{ "roundNo": 1 }` | 라운드 비디오 로딩 완료를 서버에 알립니다. |
+| `SEND /app/game/{code}/playback-error` | `{ "roundNo": 1, "errorCode": "150", "message": "..." }` | 클라이언트 재생 불가를 보고합니다. YouTube IFrame 오류 코드 `2`, `5`, `100`, `101`, `150`만 집계하며, 기준 도달 시 해당 라운드를 자동 스킵합니다. |
+
+#### 스킵 명령
+
+- `/k`: 현재 라운드 스킵 투표입니다. 정답자 포함 모든 현재 참가자가 1인 1표로 투표할 수 있으며, 중복 입력은 1표로 유지됩니다.
+- `/p`: 방장만 사용할 수 있는 강제 스킵입니다. 방장이 아닌 사용자의 `/p`도 명령으로 소비되지만 라운드 종료나 일반 채팅으로 이어지지 않습니다.
+- 명령은 메시지를 `trim()`한 결과가 정확히 `/k`, `/p`일 때만 인식합니다.
+- 모든 플레이어가 정답을 맞춰도 더 이상 자동으로 라운드가 종료되지 않습니다.
+
+#### 서버 브로드캐스트
+
+| 구독 경로 | 이벤트 타입 | 설명 |
+| --- | --- | --- |
+| `/topic/game/{code}/round` | `ROUND_SKIP_VOTE` | 스킵 투표 현황입니다. `roundNo`, `votes`, `requiredVotes`, `totalParticipants`를 포함합니다. |
+| `/topic/game/{code}/round` | `ROUND_SKIPPED` | 스킵 투표, 방장 강제 스킵, 재생 오류 기준으로 라운드 종료가 확정되었음을 알립니다. |
+| `/topic/game/{code}/round-end` | `ROUND_END` | 라운드 결과입니다. `endReason`은 `TIMEOUT`, `SKIP_VOTE`, `HOST_SKIP`, `PLAYBACK_ERROR` 중 하나입니다. |
+
+재생 오류 자동 스킵 기준은 참가자 1명 방에서는 1명, 2명 이상 방에서는 `max(2, ceil(참가자수/2))`입니다.
+
 ### 현재 게임 및 라운드 상태 복구 조회
 
 ```http

@@ -16,7 +16,7 @@ import java.util.List;
  *
  * [책임]
  * cleanup_game_session.lua를 실행하여 하나의 로비 코드에 속한 모든 게임 세션 키를
- * 원자적으로 정리한다. (base 3종 + 라운드별 6종)
+ * 원자적으로 정리한다. (base 3종 + 라운드별 9종)
  *
  * [정리 시점]
  * - 게임 정상 종료      : expireWithGracePeriod() — 300초 짧은 TTL 전환

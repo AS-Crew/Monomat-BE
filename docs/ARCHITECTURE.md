@@ -242,13 +242,13 @@ LobbyRepositoryImpl
     └── Redis 저장에 필요한 mapId, mapTitle, mapCategory만 사용
 ```
 
-또한, 인게임 플레이 중에 이루어지는 채팅 및 정답 제출은 대기실/로비를 다루는 `chat` 도메인과의 순환 의존을 방지하기 위해 완전히 격리되어 있습니다. 인게임 채팅 엔드포인트 `/app/game/{code}/chat`은 `game` 도메인의 `GameEventController`가 수용하여 `GameAnswerService`로 직접 제어를 위임합니다.
+또한, 인게임 플레이 중에 이루어지는 채팅, 정답 제출, 스킵 명령, 재생 오류 보고는 대기실/로비를 다루는 `chat` 도메인과의 순환 의존을 방지하기 위해 완전히 격리되어 있습니다. 인게임 채팅 엔드포인트 `/app/game/{code}/chat`과 재생 오류 보고 엔드포인트 `/app/game/{code}/playback-error`는 `game` 도메인의 `GameEventController`가 수용합니다.
 
 ```text
 GameEventController (인게임 채팅 송신 수용)
      │
      ▼
-GameAnswerService (정답 여부 검증 및 라우팅)
+GameAnswerService / GameSkipVoteService (정답 여부 검증 및 스킵 라우팅)
      ├── (최초 정답자) -> Redis 정답자 Set 등록 및 SYSTEM 공지 발행 + 개별 성공 통지(/user/queue/game/answers)
      └── (오답 및 정답자 채팅) -> CHAT 타입 브로드캐스트 (스포일러 방지를 위해 정답 키워드 포함 시 *** 마스킹)
 ```
@@ -552,6 +552,26 @@ KICK:
       │ 2. 마스킹된 일반 채팅 수신 (CHAT 타입)        │
       │◄───────────────────────────────────────────────┤
 ```
+
+#### 3. 스킵 투표 및 재생 오류 Fail-over 흐름 (#166)
+라운드는 더 이상 모든 참가자가 정답을 맞췄다는 이유만으로 자동 종료되지 않습니다. 종료는 타임아웃, 스킵 투표 기준 도달, 방장 강제 스킵, 재생 오류 기준 도달 중 하나로만 발생합니다.
+
+```text
+클라이언트                                      서버
+      │                                         │
+      │ SEND /app/game/{code}/chat "/k"         │
+      ├────────────────────────────────────────►│ skip_votes SADD, 1인 1표
+      │                                         │ ceil(참가자수/2) 도달 여부 확인
+      │ [ROUND_SKIP_VOTE]                       │
+      │◄────────────────────────────────────────┤
+      │                                         │ 기준 도달 시 endRound(SKIP_VOTE)
+      │ [ROUND_SKIPPED] / [ROUND_END]           │
+      │◄────────────────────────────────────────┤
+```
+
+- `/p`는 `lobby:{code}` hash의 `host_user_id`와 발신자가 일치할 때만 `endRound(HOST_SKIP)`으로 이어집니다.
+- `SEND /app/game/{code}/playback-error`는 YouTube IFrame 오류 코드 `2`, `5`, `100`, `101`, `150`만 `playback_errors` Set에 적재하고, 기준 도달 시 `[MONITORING_REQUIRED]` 로그를 남긴 뒤 `endRound(PLAYBACK_ERROR)`를 호출합니다. 기준은 참가자 1명 방에서는 1명, 2명 이상 방에서는 `max(2, ceil(참가자수/2))`입니다.
+- 모든 종료 경로는 `GameRoundEndService.endRound()`의 `ended_lock`을 공유하므로 중복 종료 이벤트가 발생하지 않습니다.
 
 ---
 
@@ -1095,12 +1115,21 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
   - `CHAT`: 일반 사용자의 채팅 내용입니다. 본문 `content`가 `"***"`로 왔다면 이는 **정답을 맞춘 사용자가 정답 키워드를 누설하지 않도록 서버에서 마스킹한 스포일러 방지 본문**이므로, 그대로 화면에 출력합니다.
   - `SYSTEM`: 누군가 새로 정답을 맞췄을 때 브로드캐스트되는 공지입니다. (예: `"닉네임님이 정답을 맞췄습니다!"`)
 - **송신 규칙**: 사용자가 텍스트를 입력하고 전송할 때는 모두 `SEND /app/game/{code}/chat`으로 단일하게 송신합니다.
+- **스킵 명령**: 메시지를 `trim()`한 결과가 정확히 `/k`이면 스킵 투표, 정확히 `/p`이면 방장 강제 스킵 후보로 처리합니다. `/K`, `/ p`, `/p test` 등은 명령이 아닙니다.
 - **개별 결과 수신**: 자신이 제출한 채팅이 정답에 해당할 경우, 서버는 일반 채팅 브로드캐스트를 중단(Drop)하고, 해당 사용자에게 `/user/queue/game/answers` 채널로 개별 정답 성공 통지(`ROUND_CORRECT`)를 보냅니다.
   - 이 통지에는 오타 허용으로 정답 처리되었는지를 알 수 있는 `isFuzzy` 필드가 포함되어 있으므로, FE는 이를 활용하여 사용자에게 "오타 허용 정답!" 같은 전용 연출을 표시할 수 있습니다.
+  - 모든 참가자가 정답을 맞춰도 라운드는 자동 종료되지 않습니다.
+
+#### 2-1) 스킵 투표 및 재생 오류 Fail-over
+- `/k` 스킵 투표는 정답자 포함 모든 현재 참가자가 사용할 수 있고, Redis `skip_votes` Set으로 1인 1표 멱등 처리합니다.
+- 투표 수가 `ceil(참가자수/2)`에 도달하면 `GameRoundEndService.endRound(..., SKIP_VOTE)`를 호출합니다.
+- 방장의 `/p`는 즉시 `endRound(..., HOST_SKIP)`를 호출합니다. 비방장의 `/p`는 명령으로 소비하되 라운드 종료나 일반 채팅으로 이어지지 않습니다.
+- FE가 YouTube 지역 제한 등으로 재생 불가를 감지하면 `SEND /app/game/{code}/playback-error`로 보고합니다. 서버는 YouTube IFrame 오류 코드 `2`, `5`, `100`, `101`, `150`만 `playback_errors` Set에 보고자를 적재하고, 참가자 1명 방에서는 1명, 2명 이상 방에서는 `max(2, ceil(참가자수/2))` 기준 도달 시 `[MONITORING_REQUIRED]` 로그와 함께 `endRound(..., PLAYBACK_ERROR)`를 호출합니다.
+- 스킵 투표 현황은 `/topic/game/{code}/round`의 `ROUND_SKIP_VOTE`로 브로드캐스트하고, 스킵 종료가 확정되면 같은 채널의 `ROUND_SKIPPED`와 `/topic/game/{code}/round-end`의 `ROUND_END`가 이어집니다.
 
 #### 3) 라운드 종료 결과 노출 및 랭킹 갱신 (핵심 계약)
 - **라운드 종료 수신**: FE는 `/topic/game/{code}/round-end` 채널을 구독하여 라운드 종료 이벤트를 수신합니다.
-  - 이 이벤트는 각 라운드의 제한 시간이 종료되거나 모든 플레이어가 정답을 입력했을 때 서버에 의해 자동으로 트리거됩니다.
+  - 이 이벤트는 각 라운드의 제한 시간이 종료되거나 스킵 투표/방장 강제 스킵/재생 오류 기준 도달 시 서버에 의해 트리거됩니다.
 - **결과 노출 데이터**: 수신된 `RoundMetadataDto`에는 정답 곡 정보(`title`, `artist`, `answer`, `thumbnailUrl`)와 함께 플레이어들의 득점 및 실시간 순위 정보인 `rankings` 리스트가 포함되어 있습니다.
 - **랭킹 및 가점 연출**: `rankings` 리스트 내부의 각 객체는 `PlayerRankingDto` 타입으로, 플레이어의 현재 총점(`score`), 순위(`rank`), 그리고 해당 라운드에서 획득한 가점(`scoreAdded` - 1등 140점, 그 외 정답자 100점, 오답자 0점)을 가지고 있습니다. FE는 `scoreAdded`를 활용하여 "+140" 등 가점 애니메이션을 UI상에 연출하고 랭킹 리스트를 갱신합니다.
 - **자동 전환**: 라운드가 종료된 후 10초간 결과 화면을 노출한 뒤, 서버에 의해 자동으로 다음 라운드가 준비 상태(`ROUND_READY`)로 넘어가게 되므로 FE는 이에 맞춰 인게임 화면으로 복귀하여 비디오 재생 준비 신호를 다시 송신해야 합니다. 마지막 라운드인 경우에는 로비 및 게임 상태가 `FINISHED`로 변경되며 결과화면으로 자동 전환됩니다.
@@ -1144,7 +1173,7 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - **유예 기간 초과(영구 퇴장) 정책**:
   - 5초 유예 기간 동안 복귀하지 못하면 영구 퇴장으로 판정되어 로비 참여자 목록(`participants`, `order`)에서 최종 제거되고, `{nickname}님이 퇴장하셨습니다.` (type: `LEAVE`) 메시지가 브로드캐스트됩니다.
   - 퇴장 유저의 획득 점수 및 순위 기록은 게임 결과 집계의 신뢰성을 위해 점수판(`game:session:{code}:players` 및 DB)에 그대로 유지됩니다.
-  - 영구 퇴장 처리와 동시에 남은 활성 참여자 중 모든 플레이어가 해당 라운드의 정답을 맞춘 상태가 되면, 라운드를 즉시 조기 종료합니다.
+  - 영구 퇴장 처리 후에는 기존 정답자 수로 라운드를 자동 종료하지 않습니다. 다만 누적된 스킵 투표나 재생 오류 보고가 변경된 참가자 수 기준에 도달하면 라운드를 스킵 종료할 수 있습니다.
   - 퇴장한 유저가 방장인 경우, 다음 순번 참여자에게 방장 권한이 위임됩니다. 로비 내 모든 사용자가 퇴장하여 남은 인원이 0명이 되면 로비는 즉시 폭파되며 인게임 세션 키도 즉시 삭제(deleteNow)됩니다.
 
 ## 게임 세션 Redis 키 정리 정책
@@ -1164,6 +1193,8 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 | `game:session:{code}:round:{n}:correct_players` | Set | 정답자 |
 | `game:session:{code}:round:{n}:correct_times` | Hash | 정답 제출 시각 |
 | `game:session:{code}:round:{n}:ended_lock` | String | 라운드 종료 중복 방지 락 |
+| `game:session:{code}:round:{n}:skip_votes` | Set | 라운드 스킵 투표자 |
+| `game:session:{code}:round:{n}:playback_errors` | Set | 라운드 재생 오류 보고자 |
 
 ### 생명주기와 정리 트리거
 
@@ -1178,7 +1209,7 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 
 ### 정리 메커니즘
 
-- `cleanup_game_session.lua` 단일 스크립트가 base 3종 + 라운드별 6종 키를 **원자적**으로 `DELETE` 또는 `EXPIRE`한다.
+- `cleanup_game_session.lua` 단일 스크립트가 base 3종 + 라운드별 9종 키를 **원자적**으로 `DELETE` 또는 `EXPIRE`한다.
 - 라운드 수는 `total_question_count` 해시 필드(없으면 `:rounds` LLEN)로 판별하고, 모든 하위 키 이름을 `sessionKey`로부터 **결정적으로 조립**한다. → 운영 비용·블로킹 위험이 있는 `SCAN`/`KEYS` 패턴 매칭을 사용하지 않는다.
 - **전제: 단일(standalone) Redis.** 라운드별 키는 KEYS로 선언하지 않고 직접 접근하므로, Redis Cluster 도입 시 `{code}` hash-tag 적용이 필요하다.
 
@@ -1191,4 +1222,3 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - 2시간 TTL 자동 만료에 의존 (별도 재처리 스케줄러를 두지 않음)
 
 성공 시 `metric:game:session:cleanup:success`를 증가시켜 정리 처리량을 관측한다.
-

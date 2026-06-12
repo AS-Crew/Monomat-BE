@@ -108,6 +108,11 @@ public final class StompDestinations {
         return PUBLISH_PREFIX + "/game/" + code + "/ready-to-play";
     }
 
+    /** @return "/app/game/{code}/playback-error" */
+    public static String publishGamePlaybackError(String code) {
+        return PUBLISH_PREFIX + "/game/" + code + "/playback-error";
+    }
+
     /** 인게임 정답 개별 통지 서버 전송용 User Queue 경로 (convertAndSendToUser 인자용) */
     public static final String SERVER_USER_GAME_ANSWERS = "/queue/game/answers";
 

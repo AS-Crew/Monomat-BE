@@ -232,7 +232,7 @@ public class RedisScriptConfig {
      * 게임 세션 Redis 키 통합 정리 Lua 스크립트
      *
      * [처리 내용]
-     * - game:session:{code}* 의 base 3종 + 라운드별 6종 키를 원자적으로 정리
+     * - game:session:{code}* 의 base 3종 + 라운드별 9종 키를 원자적으로 정리
      * - DELETE 모드: 즉시 삭제 (로비 폭파 / 게임 시작 DB 롤백 보상)
      * - EXPIRE 모드: 존재하는 키만 짧은 TTL로 전환 (게임 정상 종료 후 grace period)
      */

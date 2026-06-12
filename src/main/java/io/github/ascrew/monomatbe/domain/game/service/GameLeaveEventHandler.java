@@ -9,9 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 
 @Slf4j
 @Component
@@ -19,10 +17,25 @@ import java.util.Set;
 public class GameLeaveEventHandler {
 
     private final StringRedisTemplate redisTemplate;
-    private final GameRoundEndService gameRoundEndService;
+    private final GameSkipVoteService gameSkipVoteService;
 
     @EventListener
     public void handlePlayerLeave(PlayerLeaveEvent event) {
+        try {
+            handlePlayerLeaveSafely(event);
+        } catch (RuntimeException e) {
+            log.warn("인게임 퇴장 후처리 실패 - code: {}, user: {}",
+                    event != null ? event.lobbyCode() : null,
+                    event != null ? event.userIdentifier() : null,
+                    e);
+        }
+    }
+
+    private void handlePlayerLeaveSafely(PlayerLeaveEvent event) {
+        if (event == null) {
+            return;
+        }
+
         String code = event.lobbyCode();
         String userIdentifier = event.userIdentifier();
 
@@ -32,7 +45,16 @@ public class GameLeaveEventHandler {
 
         // 1. 게임 세션 존재 여부 및 status/round_phase 검증
         String sessionKey = RedisKeys.gameSessionKey(code);
-        List<Object> hashValues = redisTemplate.opsForHash().multiGet(sessionKey, List.of(RedisKeys.FIELD_STATUS, RedisKeys.FIELD_ROUND_PHASE, RedisKeys.FIELD_CURRENT_ROUND_NO));
+        List<Object> hashValues = redisTemplate.opsForHash().multiGet(sessionKey, List.of(
+                RedisKeys.FIELD_STATUS,
+                RedisKeys.FIELD_ROUND_PHASE,
+                RedisKeys.FIELD_CURRENT_ROUND_NO
+        ));
+        if (hashValues == null || hashValues.size() < 3) {
+            log.warn("게임 세션 상태 조회 실패 - code: {}", code);
+            return;
+        }
+
         String status = (String) hashValues.get(0);
         String roundPhase = (String) hashValues.get(1);
         if (status == null || !"PLAYING".equals(status) || !"PLAYING".equals(roundPhase)) {
@@ -43,36 +65,16 @@ public class GameLeaveEventHandler {
         if (currentRoundNoStr == null) {
             return;
         }
-        int currentRoundNo = Integer.parseInt(currentRoundNoStr);
 
-        // 2. 남은 참가자가 모두 정답을 맞췄는지 확인
-        String participantsKey = RedisKeys.lobbyParticipantsKey(code);
-        String correctPlayersKey = RedisKeys.gameSessionRoundCorrectPlayersKey(code, currentRoundNo);
-
-        Set<String> participants = redisTemplate.opsForSet().members(participantsKey);
-        if (participants == null || participants.isEmpty()) {
+        int currentRoundNo;
+        try {
+            currentRoundNo = Integer.parseInt(currentRoundNoStr);
+        } catch (NumberFormatException e) {
+            log.warn("현재 라운드 번호 파싱 실패 - code: {}, value: {}", code, currentRoundNoStr);
             return;
         }
 
-        // 이미 나간 유저는 제외하고 체크해야 하므로, participants에서 현재 나간 userIdentifier는 제외
-        participants.remove(userIdentifier);
-
-        if (participants.isEmpty()) {
-            return;
-        }
-
-        Set<String> correctPlayers = redisTemplate.opsForSet().members(correctPlayersKey);
-        if (correctPlayers == null) {
-            correctPlayers = Collections.emptySet();
-        }
-
-        if (correctPlayers.containsAll(participants)) {
-            log.info("GameLeaveEventHandler: 이탈 발생 후 남은 모든 참가자가 정답을 맞췄습니다. 라운드를 즉시 조기 종료합니다. - code: {}, roundNo: {}", code, currentRoundNo);
-            try {
-                gameRoundEndService.endRound(code, currentRoundNo);
-            } catch (Exception e) {
-                log.error("GameLeaveEventHandler: 이탈 처리 중 라운드 조기 종료 실패 - code: {}, roundNo: {}", code, currentRoundNo, e);
-            }
-        }
+        gameSkipVoteService.removeParticipantRoundSignals(code, userIdentifier, currentRoundNo);
+        gameSkipVoteService.reevaluateSkipThresholds(code, currentRoundNo);
     }
 }

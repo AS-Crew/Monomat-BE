@@ -972,6 +972,28 @@ public final class RedisKeys {
     }
 
     /**
+     * 특정 라운드에서 스킵 투표를 한 유저 식별자 Set 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:skip_votes"
+     */
+    public static String gameSessionRoundSkipVotesKey(String lobbyCode, int roundNo) {
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":skip_votes";
+    }
+
+    /**
+     * 특정 라운드에서 재생 오류를 보고한 유저 식별자 Set 키를 반환합니다.
+     *
+     * @param lobbyCode 로비 초대 코드
+     * @param roundNo 라운드 번호
+     * @return "game:session:{lobbyCode}:round:{roundNo}:playback_errors"
+     */
+    public static String gameSessionRoundPlaybackErrorsKey(String lobbyCode, int roundNo) {
+        return gameSessionBase(lobbyCode) + ":round:" + roundNo + ":playback_errors";
+    }
+
+    /**
      * 특정 라운드의 재생 시작 시각 필드명을 반환합니다.
      *
      * @param roundNo 라운드 번호

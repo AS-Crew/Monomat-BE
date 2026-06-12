@@ -216,7 +216,7 @@ public class GameSessionCreateService {
                 if (status == STATUS_ROLLED_BACK) {
                     log.warn("DB 트랜잭션 롤백 감지 - Redis 세션 잔여 데이터 정리. code: {}", code);
                     /*
-                     * 통합 정리 스크립트로 base 3종 + 라운드별 6종 키를 원자적으로 삭제한다.
+                     * 통합 정리 스크립트로 base 3종 + 라운드별 9종 키를 원자적으로 삭제한다.
                      * (기존 개별 delete는 ready/playback_lock/correct_times/ended_lock 등을 누락할 수 있었다)
                      */
                     gameSessionCleanupService.deleteNow(code);

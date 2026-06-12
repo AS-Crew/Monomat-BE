@@ -149,6 +149,24 @@ public final class RedisKeys {
     public static final String LOBBY_ALL = "lobby:all";
 
     /**
+     * 빈 로비 reaper가 lobby:all SSCAN 진행 위치를 저장하는 키.
+     *
+     * [사용 목적]
+     * 매 스케줄 실행마다 cursor 0부터 시작하면 특정 구간만 반복 검사할 수 있으므로,
+     * 마지막 SSCAN cursor를 저장해 다음 실행에서 이어서 순회한다.
+     */
+    public static final String LOBBY_ALL_REAPER_SCAN_CURSOR = "lobby:all:reaper:scan-cursor";
+
+    /**
+     * 빈 로비 reaper가 SSCAN batch limit을 초과해 받은 후보를 임시 보관하는 List 키.
+     *
+     * [필요 이유]
+     * Redis SCAN COUNT는 정확한 반환 개수가 아니라 hint이므로, 한 번에 limit보다 많은
+     * member가 반환될 수 있다. 초과 후보를 버리지 않고 다음 스케줄 실행에서 먼저 처리한다.
+     */
+    public static final String LOBBY_ALL_REAPER_SCAN_BUFFER = "lobby:all:reaper:scan-buffer";
+
+    /**
      * 공개 로비 최신순 정렬 인덱스 ZSET 키
      *
      * 저장 구조 :

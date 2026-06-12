@@ -153,6 +153,7 @@ class LobbyLeaveLifecycleRepositoryTest {
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyKickedKey(LOBBY_CODE))).isFalse();
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyReadyKey(LOBBY_CODE))).isFalse();
 
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isFalse();
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_PUBLIC, LOBBY_CODE)).isFalse();
         assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_LATEST, LOBBY_CODE)).isNull();
         assertThat(redisTemplate.opsForZSet().score(RedisKeys.LOBBY_PUBLIC_MOST_PLAYERS, LOBBY_CODE)).isNull();

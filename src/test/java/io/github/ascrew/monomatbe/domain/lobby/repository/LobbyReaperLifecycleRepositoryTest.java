@@ -75,6 +75,11 @@ class LobbyReaperLifecycleRepositoryTest {
     void reapsLobbyWhenNoValidSessionForThisLobby() {
         // given: 참여자는 있으나 로비별 세션 키가 없는(=유효 세션 없음) 10분 전 생성 로비
         givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
+        redisTemplate.opsForHash().put(
+                RedisKeys.lobbyKey(LOBBY_CODE),
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                "0"
+        );
         addPublicIndexes(LOBBY_CODE, 2, 2);
 
         // when
@@ -116,6 +121,27 @@ class LobbyReaperLifecycleRepositoryTest {
         // given: 참여자 2명 중 1명이 이 로비에 대한 유효 세션 보유
         givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
         markValidSessionForLobby(LOBBY_CODE, SECOND_USER_ID, WS_SECOND);
+
+        // when
+        ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);
+
+        // then
+        assertThat(result).isEqualTo(ReapLobbyResult.ALIVE);
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
+    }
+
+    @Test
+    @DisplayName("current_players가 0이어도 참여자에게 유효 세션이 있으면 삭제하지 않는다")
+    void keepsLobbyWhenCurrentPlayersCacheIsZeroButParticipantHasValidSession() {
+        // given: 표시/정렬용 current_players 캐시가 0으로 어긋났지만 실제 source of truth에는 유효 참여자가 있음
+        givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID);
+        redisTemplate.opsForHash().put(
+                RedisKeys.lobbyKey(LOBBY_CODE),
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                "0"
+        );
+        markValidSessionForLobby(LOBBY_CODE, HOST_ID, WS_HOST);
 
         // when
         ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);

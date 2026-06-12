@@ -13,13 +13,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.data.redis.core.Cursor;
-import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.data.redis.connection.ReturnType;
 
+import java.lang.reflect.Array;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -51,6 +54,10 @@ public class LobbyRedisQueryRepository {
 
     private static final String ERROR_INVALID_LOBBY_DATA =
             "로비 정보가 유효하지 않습니다.";
+
+    private static final String REDIS_SCAN_CURSOR_INITIAL = "0";
+    private static final String LOBBY_ALL_SSCAN_SCRIPT =
+            "return redis.call('SSCAN', KEYS[1], ARGV[1], 'COUNT', ARGV[2])";
 
     private final StringRedisTemplate redisTemplate;
 
@@ -320,17 +327,24 @@ public class LobbyRedisQueryRepository {
     }
 
     /**
-     * 빈 로비 reaper용으로 lobby:all Set에서 임의의 로비 코드 후보를 조회한다.
+     * 빈 로비 reaper용으로 lobby:all Set을 cursor 기반으로 순회해 후보를 조회한다.
      *
      * [사용 목적]
      * reaper 스케줄러가 공개·비공개를 포함한 전체 로비를 제한된 개수만큼 검사하기 위해 사용한다.
      *
-     * [SRANDMEMBER(distinctRandomMembers) 사용 이유]
-     * SSCAN을 매 실행마다 cursor 0부터 새로 시작하면 항상 앞쪽 구간만 보게 되어
-     * 뒤쪽 stale 로비가 정리되지 않고 누적될 수 있다(cursor를 영속하지 않으면 재개 불가).
-     * reaper는 정렬이 불필요하고, 유령 로비는 폭파될 때까지 후보 풀에 남으므로
-     * 매 실행 임의 표본을 뽑으면 확률적으로 전체가 수렴 정리된다.
-     * 동일 API를 {@link #addPublicSetCleanupCandidates}에서도 사용한다.
+     * [SSCAN cursor 저장 이유]
+     * 랜덤 샘플링은 특정 stale 로비를 장기간 놓칠 수 있고, 매번 cursor 0부터 SSCAN을
+     * 시작하면 앞쪽 구간만 반복 검사할 수 있다. 따라서 마지막 cursor를 Redis에 저장해
+     * 다음 실행에서 이어서 순회한다.
+     *
+     * [batch limit 보존]
+     * Redis SCAN COUNT는 hint라서 limit보다 많은 member가 반환될 수 있다. 초과 후보는
+     * Redis buffer에 보관해 다음 호출에서 먼저 반환함으로써 scheduler batch size를 지킨다.
+     *
+     * [주의]
+     * 이 reaper는 lobby:all 인덱스에 들어 있는 code만 후보로 볼 수 있다. lobby:{code} Hash는
+     * 있지만 lobby:all에서 누락된 로비는 keyspace scan 없이는 발견할 수 없으므로, 운영상
+     * 발견되면 별도 보정 작업 또는 follow-up cleanup을 추가해야 한다.
      *
      * @param limit 조회할 최대 code 수
      * @return reaper 검사 후보 로비 코드 목록
@@ -340,23 +354,187 @@ public class LobbyRedisQueryRepository {
             return List.of();
         }
 
-        Set<String> codes = redisTemplate.opsForSet()
-                .distinctRandomMembers(RedisKeys.LOBBY_ALL, limit);
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        drainReaperScanBuffer(candidates, limit);
 
-        if (codes == null || codes.isEmpty()) {
-            return List.of();
+        if (candidates.size() >= limit) {
+            return new ArrayList<>(candidates);
         }
 
-        List<String> candidates = new ArrayList<>(codes.size());
+        scanAllLobbyCodesForReaping(candidates, limit);
 
-        for (String code : codes) {
-            if (code == null || code.isBlank()) {
-                continue;
+        return new ArrayList<>(candidates);
+    }
+
+    private void drainReaperScanBuffer(
+            Set<String> candidates,
+            int limit
+    ) {
+        while (candidates.size() < limit) {
+            String bufferedCode = redisTemplate.opsForList()
+                    .leftPop(RedisKeys.LOBBY_ALL_REAPER_SCAN_BUFFER);
+
+            if (bufferedCode == null) {
+                return;
             }
-            candidates.add(code);
+
+            addCleanupCandidate(candidates, bufferedCode, limit);
+        }
+    }
+
+    private void scanAllLobbyCodesForReaping(
+            Set<String> candidates,
+            int limit
+    ) {
+        try {
+            redisTemplate.execute((RedisCallback<Void>) connection -> {
+                String cursor = getStoredReaperScanCursor(connection);
+                int scanCount = 0;
+                int maxScanCount = Math.max(1, limit);
+
+                while (candidates.size() < limit && scanCount < maxScanCount) {
+                    int remainingLimit = limit - candidates.size();
+                    SScanResult scanResult = executeLobbyAllSScan(connection, cursor, remainingLimit);
+                    scanCount++;
+
+                    for (String code : scanResult.members()) {
+                        if (candidates.size() < limit) {
+                            addCleanupCandidate(candidates, code, limit);
+                        } else {
+                            pushReaperScanBuffer(connection, code);
+                        }
+                    }
+
+                    cursor = scanResult.nextCursor();
+                    storeReaperScanCursor(connection, cursor);
+
+                    if (REDIS_SCAN_CURSOR_INITIAL.equals(cursor)) {
+                        break;
+                    }
+                }
+
+                return null;
+            });
+        } catch (Exception e) {
+            log.warn("빈 로비 reaper lobby:all SSCAN 후보 조회 실패", e);
+        }
+    }
+
+    private SScanResult executeLobbyAllSScan(
+            RedisConnection connection,
+            String cursor,
+            int count
+    ) {
+        Object rawResult = connection.scriptingCommands().eval(
+                rawKey(LOBBY_ALL_SSCAN_SCRIPT),
+                ReturnType.MULTI,
+                1,
+                rawKey(RedisKeys.LOBBY_ALL),
+                rawKey(normalizeScanCursor(cursor)),
+                rawKey(String.valueOf(Math.max(1, count)))
+        );
+
+        return parseSScanResult(rawResult);
+    }
+
+    private SScanResult parseSScanResult(Object rawResult) {
+        List<?> result = toObjectList(rawResult);
+        if (result.size() < 2) {
+            return new SScanResult(REDIS_SCAN_CURSOR_INITIAL, List.of());
         }
 
-        return candidates;
+        String nextCursor = normalizeScanCursor(decodeRedisValue(result.get(0)));
+        List<String> members = new ArrayList<>();
+
+        for (Object rawMember : toObjectList(result.get(1))) {
+            String member = decodeRedisValue(rawMember);
+            if (member != null && !member.isBlank()) {
+                members.add(member);
+            }
+        }
+
+        return new SScanResult(nextCursor, members);
+    }
+
+    private List<?> toObjectList(Object value) {
+        if (value instanceof List<?> list) {
+            return list;
+        }
+
+        if (value instanceof Collection<?> collection) {
+            return new ArrayList<>(collection);
+        }
+
+        if (value != null && value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            List<Object> result = new ArrayList<>(length);
+
+            for (int i = 0; i < length; i++) {
+                result.add(Array.get(value, i));
+            }
+
+            return result;
+        }
+
+        return List.of();
+    }
+
+    private String getStoredReaperScanCursor(RedisConnection connection) {
+        byte[] cursor = connection.stringCommands().get(
+                rawKey(RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR)
+        );
+
+        return normalizeScanCursor(decodeRedisValue(cursor));
+    }
+
+    private void storeReaperScanCursor(
+            RedisConnection connection,
+            String cursor
+    ) {
+        connection.stringCommands().set(
+                rawKey(RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR),
+                rawKey(normalizeScanCursor(cursor))
+        );
+    }
+
+    private void pushReaperScanBuffer(
+            RedisConnection connection,
+            String code
+    ) {
+        if (code == null || code.isBlank()) {
+            return;
+        }
+
+        connection.listCommands().rPush(
+                rawKey(RedisKeys.LOBBY_ALL_REAPER_SCAN_BUFFER),
+                rawKey(code)
+        );
+    }
+
+    private String normalizeScanCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return REDIS_SCAN_CURSOR_INITIAL;
+        }
+
+        return cursor;
+    }
+
+    private String decodeRedisValue(Object value) {
+        if (value instanceof byte[] bytes) {
+            return new String(bytes, StandardCharsets.UTF_8);
+        }
+
+        if (value == null) {
+            return null;
+        }
+
+        return String.valueOf(value);
+    }
+
+    private record SScanResult(
+            String nextCursor,
+            List<String> members
+    ) {
     }
 
     /**

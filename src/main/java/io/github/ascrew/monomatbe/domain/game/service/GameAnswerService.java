@@ -100,7 +100,11 @@ public class GameAnswerService {
             gameSkipVoteService.voteSkip(code, userIdentifier, currentRoundNo);
             return;
         }
-        if ("/p".equals(trimmedContent) && gameSkipVoteService.forceSkipByHost(code, userIdentifier, currentRoundNo)) {
+        if ("/p".equals(trimmedContent)) {
+            boolean handled = gameSkipVoteService.forceSkipByHost(code, userIdentifier, currentRoundNo);
+            if (!handled) {
+                log.info("비방장 강제 스킵 명령 무시 - code: {}, user: {}", code, userIdentifier);
+            }
             return;
         }
 

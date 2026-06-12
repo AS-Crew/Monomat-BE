@@ -206,8 +206,8 @@ class GameChatAnswerIntegrationTest {
     }
 
     @Test
-    @DisplayName("비방장 /p는 명령으로 처리하지 않고 기존 채팅 흐름에 태운다")
-    void nonHostForceSkipCommandFallsBackToChatFlow() {
+    @DisplayName("비방장 /p는 명령으로 소비되고 일반 채팅으로 흐르지 않는다")
+    void nonHostForceSkipCommandIsConsumed() {
         // given
         givenGameSession("PLAYING", 1, 30, System.currentTimeMillis());
         when(gameSkipVoteService.forceSkipByHost(LOBBY_CODE, USER_ID, 1)).thenReturn(false);
@@ -218,9 +218,8 @@ class GameChatAnswerIntegrationTest {
 
         // then
         verify(gameSkipVoteService).forceSkipByHost(LOBBY_CODE, USER_ID, 1);
-        ArgumentCaptor<ChatMessageDto> chatCaptor = ArgumentCaptor.forClass(ChatMessageDto.class);
-        verify(messagingTemplate).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), chatCaptor.capture());
-        assertThat(chatCaptor.getValue().getContent()).isEqualTo("/p");
+        verify(messagingTemplate, never()).convertAndSend(eq(StompDestinations.subscribeGameChat(LOBBY_CODE)), any(ChatMessageDto.class));
+        verify(messagingTemplate, never()).convertAndSendToUser(anyString(), anyString(), any());
     }
 
     @Test

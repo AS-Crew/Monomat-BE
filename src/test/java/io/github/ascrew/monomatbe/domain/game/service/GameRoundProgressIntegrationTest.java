@@ -351,6 +351,35 @@ class GameRoundProgressIntegrationTest {
     }
 
     @Test
+    @DisplayName("플레이어 이탈 시 현재 라운드의 스킵 투표와 재생 오류 보고에서 이탈자를 제거한다")
+    void playerLeaveRemovesRoundSkipSignals() {
+        // given
+        String sessionKey = RedisKeys.gameSessionKey(LOBBY_CODE);
+        redisTemplate.opsForHash().put(sessionKey, "status", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "round_phase", "PLAYING");
+        redisTemplate.opsForHash().put(sessionKey, "current_round_no", "1");
+
+        String participantsKey = RedisKeys.lobbyParticipantsKey(LOBBY_CODE);
+        redisTemplate.opsForSet().add(participantsKey, USER_ID_1, USER_ID_2, "remaining-player");
+
+        String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, 1);
+        String playbackErrorsKey = RedisKeys.gameSessionRoundPlaybackErrorsKey(LOBBY_CODE, 1);
+        redisTemplate.opsForSet().add(skipVotesKey, USER_ID_1, USER_ID_3);
+        redisTemplate.opsForSet().add(playbackErrorsKey, USER_ID_2, USER_ID_3);
+
+        PlayerLeaveEvent leaveEvent = new PlayerLeaveEvent(LOBBY_CODE, USER_ID_3);
+
+        // when
+        gameLeaveEventHandler.handlePlayerLeave(leaveEvent);
+
+        // then
+        assertThat(redisTemplate.opsForSet().isMember(skipVotesKey, USER_ID_3)).isFalse();
+        assertThat(redisTemplate.opsForSet().isMember(playbackErrorsKey, USER_ID_3)).isFalse();
+        assertThat(redisTemplate.opsForSet().isMember(skipVotesKey, USER_ID_1)).isTrue();
+        assertThat(redisTemplate.opsForSet().isMember(playbackErrorsKey, USER_ID_2)).isTrue();
+    }
+
+    @Test
     @DisplayName("라운드가 이미 종료되어 round_ended_at 필드가 존재하면 정답을 제출해도 ROUND_ALREADY_ENDED 처리되어 정답자로 등록되지 않고 마스킹 채팅으로 전파된다")
     void answerSubmissionBlockedIfRoundAlreadyEnded() {
         // given

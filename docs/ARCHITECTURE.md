@@ -570,7 +570,7 @@ KICK:
 ```
 
 - `/p`는 `lobby:{code}` hash의 `host_user_id`와 발신자가 일치할 때만 `endRound(HOST_SKIP)`으로 이어집니다.
-- `SEND /app/game/{code}/playback-error`는 `playback_errors` Set에 보고자를 적재하고, 기준 도달 시 `[MONITORING_REQUIRED]` 로그를 남긴 뒤 `endRound(PLAYBACK_ERROR)`를 호출합니다.
+- `SEND /app/game/{code}/playback-error`는 YouTube IFrame 오류 코드 `2`, `5`, `100`, `101`, `150`만 `playback_errors` Set에 적재하고, 기준 도달 시 `[MONITORING_REQUIRED]` 로그를 남긴 뒤 `endRound(PLAYBACK_ERROR)`를 호출합니다. 기준은 참가자 1명 방에서는 1명, 2명 이상 방에서는 `max(2, ceil(참가자수/2))`입니다.
 - 모든 종료 경로는 `GameRoundEndService.endRound()`의 `ended_lock`을 공유하므로 중복 종료 이벤트가 발생하지 않습니다.
 
 ---
@@ -1123,8 +1123,8 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 #### 2-1) 스킵 투표 및 재생 오류 Fail-over
 - `/k` 스킵 투표는 정답자 포함 모든 현재 참가자가 사용할 수 있고, Redis `skip_votes` Set으로 1인 1표 멱등 처리합니다.
 - 투표 수가 `ceil(참가자수/2)`에 도달하면 `GameRoundEndService.endRound(..., SKIP_VOTE)`를 호출합니다.
-- 방장의 `/p`는 즉시 `endRound(..., HOST_SKIP)`를 호출합니다. 비방장의 `/p`는 명령으로 처리하지 않습니다.
-- FE가 YouTube 지역 제한 등으로 재생 불가를 감지하면 `SEND /app/game/{code}/playback-error`로 보고합니다. 서버는 `playback_errors` Set에 보고자를 적재하고 기준 도달 시 `[MONITORING_REQUIRED]` 로그와 함께 `endRound(..., PLAYBACK_ERROR)`를 호출합니다.
+- 방장의 `/p`는 즉시 `endRound(..., HOST_SKIP)`를 호출합니다. 비방장의 `/p`는 명령으로 소비하되 라운드 종료나 일반 채팅으로 이어지지 않습니다.
+- FE가 YouTube 지역 제한 등으로 재생 불가를 감지하면 `SEND /app/game/{code}/playback-error`로 보고합니다. 서버는 YouTube IFrame 오류 코드 `2`, `5`, `100`, `101`, `150`만 `playback_errors` Set에 보고자를 적재하고, 참가자 1명 방에서는 1명, 2명 이상 방에서는 `max(2, ceil(참가자수/2))` 기준 도달 시 `[MONITORING_REQUIRED]` 로그와 함께 `endRound(..., PLAYBACK_ERROR)`를 호출합니다.
 - 스킵 투표 현황은 `/topic/game/{code}/round`의 `ROUND_SKIP_VOTE`로 브로드캐스트하고, 스킵 종료가 확정되면 같은 채널의 `ROUND_SKIPPED`와 `/topic/game/{code}/round-end`의 `ROUND_END`가 이어집니다.
 
 #### 3) 라운드 종료 결과 노출 및 랭킹 갱신 (핵심 계약)
@@ -1222,4 +1222,3 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - 2시간 TTL 자동 만료에 의존 (별도 재처리 스케줄러를 두지 않음)
 
 성공 시 `metric:game:session:cleanup:success`를 증가시켜 정리 처리량을 관측한다.
-

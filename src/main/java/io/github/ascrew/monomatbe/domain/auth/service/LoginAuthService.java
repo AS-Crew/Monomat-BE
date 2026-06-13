@@ -70,7 +70,7 @@ public class LoginAuthService {
      * DB 조회 실패 또는 비밀번호 불일치는 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
      */
     @Transactional(noRollbackFor = AuthLoginFailureException.class)
-    public LoginResponse login(String rawLoginId, String rawPassword, String ipAddress, String userAgent) {
+    public LoginResponse login(String rawLoginId, String rawPassword, boolean force, String ipAddress, String userAgent) {
         String loginId = normalizeLoginId(rawLoginId);
         String password = normalizePassword(rawPassword);
 
@@ -99,6 +99,9 @@ public class LoginAuthService {
         user.updateLastLoginAt(now);
 
         UserType userType = user.getUserType();
+
+        enforceConcurrentLoginPolicy(user.getId(), userType, force, now);
+
         String userIdentifier = UUID.randomUUID().toString();
 
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
@@ -174,6 +177,42 @@ public class LoginAuthService {
                 .refreshToken(refreshToken.token())
                 .refreshTokenExpiresAt(refreshToken.expiresAt())
                 .build();
+    }
+
+    /**
+     * 회원 중복 로그인 정책을 적용한다. (#204)
+     *
+     * [정책: 기존 세션 우선(block-new-login)]
+     * 회원(REGISTERED)이 이미 만료되지 않은 활성 세션을 보유하고 있으면 신규 로그인을 거부한다.
+     * 단, force=true이면 기존 활성 세션을 모두 revoke한 뒤 로그인을 진행한다.(lockout 방지용 강제 로그인)
+     *
+     * [게스트 예외]
+     * 게스트(GUEST)는 다중 세션을 허용하므로(max-active-per-user-guest) 이 정책에서 제외하고,
+     * 기존 newest-wins 동작(enforceActiveSessionLimit)을 그대로 유지한다.
+     *
+     * [만료 세션 처리]
+     * status는 ACTIVE이지만 expiresAt이 지난(아직 정리 스케줄러가 처리하지 않은) 세션은
+     * 차단 대상에서 제외하여, 비정상 종료 후 만료된 세션이 재로그인을 막는 lockout을 완화한다.
+     */
+    private void enforceConcurrentLoginPolicy(Long userId, UserType userType, boolean force, LocalDateTime now) {
+        if (userType != UserType.REGISTERED) {
+            return;
+        }
+
+        boolean hasLiveSession = userSessionRepository
+                .findByUser_IdAndStatusOrderByCreatedAtAsc(userId, UserSessionStatus.ACTIVE)
+                .stream()
+                .anyMatch(session -> session.getExpiresAt() != null && session.getExpiresAt().isAfter(now));
+
+        if (!hasLiveSession) {
+            return;
+        }
+
+        if (!force) {
+            throw new AuthException(AuthErrorCode.AUTH_CONCURRENT_LOGIN_REJECTED);
+        }
+
+        userSessionLifecycleService.revokeAllActiveSessions(userId, now);
     }
 
     private String normalizeLoginId(String value) {

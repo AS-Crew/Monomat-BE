@@ -92,6 +92,19 @@ class StompErrorCodeContractTest {
     }
 
     @Test
+    @DisplayName("revoke된 세션의 CONNECT는 재로그인 후 재접속 대상이며 복구 가능한 에러다")
+    void connectSessionRevoked_contract() {
+        // given
+        StompErrorCode code = StompErrorCode.CONNECT_SESSION_REVOKED;
+
+        // then
+        assertThat(code.getAction()).isEqualTo(StompErrorAction.RETRY_CONNECT);
+        assertThat(code.isRecoverable()).isTrue();
+        assertThat(code.getDefaultMessage())
+                .isEqualTo("세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.");
+    }
+
+    @Test
     @DisplayName("서버 내부 STOMP 오류는 새로고침 후 재시도 대상이다")
     void internalStompError_contract() {
         // given

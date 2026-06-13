@@ -222,17 +222,30 @@ POST /api/auth/login
 ```json
 {
   "loginId": "testuser01",
-  "password": "password1234"
+  "password": "password1234",
+  "force": false
 }
 ```
 
-| 필드         | 타입     | 필수 | 제약       |
-| ---------- | ------ | -- | -------- |
-| `loginId`  | string | O  | blank 불가 |
-| `password` | string | O  | blank 불가 |
+| 필드         | 타입      | 필수 | 제약                          |
+| ---------- | ------- | -- | --------------------------- |
+| `loginId`  | string  | O  | blank 불가                    |
+| `password` | string  | O  | blank 불가                    |
+| `force`    | boolean | X  | 기본값 `false`. 강제 로그인 여부(아래 참고) |
 
 로그인 API에서는 기존 회원 호환성을 위해 `loginId` 포맷 검증을 수행하지 않는다.
 존재하지 않는 계정, 비밀번호 불일치 등은 모두 `AUTH_INVALID_CREDENTIALS`로 처리한다.
+
+#### 중복 로그인 정책 (회원 전용)
+
+회원 계정은 동시에 한 기기에서만 로그인할 수 있다. 이미 활성 세션이 있는 회원이
+다른 기기에서 로그인하면 `409 AUTH_CONCURRENT_LOGIN_REJECTED`로 거부된다.
+
+- FE는 이 에러를 받으면 "이미 다른 기기에서 로그인되어 있습니다" 안내를 띄우고,
+  사용자가 강제 로그인을 선택하면 `force: true`로 동일 요청을 재전송한다.
+- `force: true`로 로그인하면 기존 활성 세션이 모두 즉시 종료(revoke)되고 신규 세션이 발급된다.
+  종료된 기존 세션의 토큰은 이후 요청부터 거부되며, 해당 세션의 WebSocket 재연결도 차단된다.
+- 게스트 계정은 이 정책의 대상이 아니다(다중 세션 허용, 현행 유지).
 
 ### 5.3 Success Response
 
@@ -259,6 +272,7 @@ HTTP Status: `200 OK`
 | 400         | `AUTH_LOGIN_ID_REQUIRED`     | `loginId`  | 로그인 ID를 입력해주세요.                   |
 | 400         | `AUTH_PASSWORD_REQUIRED`     | `password` | 비밀번호는 비어 있을 수 없습니다.               |
 | 401         | `AUTH_INVALID_CREDENTIALS`   | `null`     | 로그인 ID 또는 비밀번호가 올바르지 않습니다.        |
+| 409         | `AUTH_CONCURRENT_LOGIN_REJECTED` | `null` | 이미 다른 기기에서 로그인되어 있습니다. 기존 기기에서 로그아웃하거나 강제 로그인을 진행해주세요. |
 | 423         | `AUTH_ACCOUNT_LOCKED`        | `null`     | 로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요. |
 | 400         | `AUTH_INVALID_REQUEST_BODY`  | `null`     | 요청 본문 형식이 올바르지 않습니다.              |
 | 503         | `AUTH_TEMPORARY_UNAVAILABLE` | `null`     | 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.  |

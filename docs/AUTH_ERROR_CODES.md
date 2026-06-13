@@ -88,6 +88,7 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 | code | message | field | HTTP Status |
 |---|---|---|---:|
 | `AUTH_INVALID_CREDENTIALS` | 로그인 ID 또는 비밀번호가 올바르지 않습니다. | `null` | 401 |
+| `AUTH_CONCURRENT_LOGIN_REJECTED` | 이미 다른 기기에서 로그인되어 있습니다. 기존 기기에서 로그아웃하거나 강제 로그인을 진행해주세요. | `null` | 409 |
 | `AUTH_ACCOUNT_LOCKED` | 로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요. | `null` | 423 |
 | `AUTH_UNAUTHENTICATED` | 인증 정보가 없습니다. | `null` | 401 |
 | `AUTH_INVALID_AUTHORIZATION` | Authorization 헤더가 유효하지 않습니다. | `null` | 401 |
@@ -126,6 +127,7 @@ if (error.message === '이미 사용 중인 로그인 ID입니다.') {
 | 비밀번호 누락 | `AUTH_PASSWORD_REQUIRED` |
 | 비밀번호 길이 오류 | `AUTH_PASSWORD_INVALID_LENGTH` |
 | 로그인 ID 또는 비밀번호 불일치 | `AUTH_INVALID_CREDENTIALS` |
+| 회원 중복 로그인(이미 활성 세션 존재, `force=false`) | `AUTH_CONCURRENT_LOGIN_REJECTED` |
 | 계정 잠금 | `AUTH_ACCOUNT_LOCKED` |
 
 ---

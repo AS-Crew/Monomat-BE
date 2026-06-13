@@ -17,6 +17,19 @@ public record LoginRequest(
         String loginId,
 
         @NotBlank(message = "AUTH_PASSWORD_REQUIRED")
-        String password
+        String password,
+
+        /**
+         * 강제 로그인 여부
+         *
+         * [정책]
+         * 회원 계정은 동시에 한 기기에서만 로그인할 수 있다.
+         * 이미 활성 세션이 있는 경우 기본 로그인(force=false)은 AUTH_CONCURRENT_LOGIN_REJECTED(409)로 거부된다.
+         * FE가 사용자에게 안내한 뒤 force=true로 재요청하면 기존 세션을 강제 종료하고 로그인한다.
+         *
+         * [기본값]
+         * JSON 본문에 force 필드가 없으면 false로 처리된다.
+         */
+        boolean force
 ) {
 }

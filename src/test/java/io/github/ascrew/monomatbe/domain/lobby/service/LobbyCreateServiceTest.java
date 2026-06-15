@@ -11,9 +11,6 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyDefaults;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
-import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
-import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
-import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -55,29 +52,26 @@ class LobbyCreateServiceTest {
     @Mock
     private LobbyMapPolicy lobbyMapPolicy;
 
-    @Mock
-    private QuizMapJpaRepository quizMapJpaRepository;
-
     @InjectMocks
     private LobbyCreateService lobbyCreateService;
 
     @Test
-    @DisplayName("맵 선택 상태에서 questionCount를 생략하고 맵 곡 수가 10개 이상이면 기본값 10개로 로비를 생성한다")
-    void createsLobbyWithDefaultQuestionCountWhenSelectedMapHasEnoughSongs() {
+    @DisplayName("맵 선택 상태에서 questionCount를 생략하면 맵 곡 수를 기본 문제 수로 사용한다")
+    void createsLobbyWithMapSongCountWhenQuestionCountIsNull() {
+        int mapSongCount = 15;
+
         CreateLobbyRequest request = createRequest(MAP_ID, null);
         CustomPrincipal principal = createPrincipal();
         User host = createHost();
-        LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP");
-        QuizMap map = createMap(LobbyDefaults.DEFAULT_QUESTION_COUNT);
+        LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP", mapSongCount);
 
         when(userRepository.findById(HOST_USER_ID)).thenReturn(Optional.of(host));
         when(lobbyMapPolicy.resolveLobbyMapMetadata(MAP_ID, HOST_USER_ID)).thenReturn(mapMetadata);
-        when(quizMapJpaRepository.findById(MAP_ID)).thenReturn(Optional.of(map));
         when(lobbyRepository.saveToRedis(
                 eq(request),
                 eq(HOST_IDENTIFIER),
                 eq(mapMetadata),
-                eq(LobbyDefaults.DEFAULT_QUESTION_COUNT),
+                eq(mapSongCount),
                 eq(LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS)
         )).thenReturn(INVITE_CODE);
         when(gameLobbyJpaRepository.save(any(GameLobby.class))).thenAnswer(invocation -> {
@@ -92,25 +86,23 @@ class LobbyCreateServiceTest {
         verify(gameLobbyJpaRepository).save(gameLobbyCaptor.capture());
 
         GameLobby savedLobby = gameLobbyCaptor.getValue();
-        assertThat(savedLobby.getQuestionCount()).isEqualTo(LobbyDefaults.DEFAULT_QUESTION_COUNT);
+        assertThat(savedLobby.getQuestionCount()).isEqualTo(mapSongCount);
         assertThat(savedLobby.getMaxPlayers()).isEqualTo(LobbyDefaults.DEFAULT_MAX_PLAYERS);
         assertThat(savedLobby.getTimeLimitSeconds()).isEqualTo(LobbyDefaults.DEFAULT_TIME_LIMIT_SECONDS);
     }
 
     @Test
-    @DisplayName("맵 선택 상태에서 questionCount를 생략하고 맵 곡 수가 10개보다 적으면 맵 곡 수로 보정해 생성한다")
-    void createsLobbyWithMapSongCountWhenDefaultQuestionCountExceedsSelectedMapSongCount() {
+    @DisplayName("맵 선택 상태에서 questionCount를 생략하고 맵 곡 수가 기본값보다 적어도 맵 곡 수를 그대로 사용한다")
+    void createsLobbyWithMapSongCountEvenWhenMapSongCountIsLessThanDefault() {
         int mapSongCount = LobbyDefaults.DEFAULT_QUESTION_COUNT - 1;
 
         CreateLobbyRequest request = createRequest(MAP_ID, null);
         CustomPrincipal principal = createPrincipal();
         User host = createHost();
-        LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP");
-        QuizMap map = createMap(mapSongCount);
+        LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP", mapSongCount);
 
         when(userRepository.findById(HOST_USER_ID)).thenReturn(Optional.of(host));
         when(lobbyMapPolicy.resolveLobbyMapMetadata(MAP_ID, HOST_USER_ID)).thenReturn(mapMetadata);
-        when(quizMapJpaRepository.findById(MAP_ID)).thenReturn(Optional.of(map));
         when(lobbyRepository.saveToRedis(
                 eq(request),
                 eq(HOST_IDENTIFIER),
@@ -144,12 +136,10 @@ class LobbyCreateServiceTest {
         CreateLobbyRequest request = createRequest(MAP_ID, requestedQuestionCount);
         CustomPrincipal principal = createPrincipal();
         User host = createHost();
-        LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP");
-        QuizMap map = createMap(mapSongCount);
+        LobbyMapMetadata mapMetadata = new LobbyMapMetadata(MAP_ID, "테스트 맵", "K-POP", mapSongCount);
 
         when(userRepository.findById(HOST_USER_ID)).thenReturn(Optional.of(host));
         when(lobbyMapPolicy.resolveLobbyMapMetadata(MAP_ID, HOST_USER_ID)).thenReturn(mapMetadata);
-        when(quizMapJpaRepository.findById(MAP_ID)).thenReturn(Optional.of(map));
 
         assertThatThrownBy(() -> lobbyCreateService.createLobby(request, principal))
                 .isInstanceOf(ResponseStatusException.class)
@@ -193,21 +183,6 @@ class LobbyCreateServiceTest {
                 .userType(UserType.REGISTERED)
                 .status(UserStatus.ACTIVE)
                 .role(UserRole.USER)
-                .build();
-    }
-
-    private static QuizMap createMap(int numOfSong) {
-        return QuizMap.builder()
-                .id(MAP_ID)
-                .owner(createHost())
-                .title("테스트 맵")
-                .description("테스트 맵 설명")
-                .category(MapCategory.KPOP)
-                .numOfSong(numOfSong)
-                .totalPlayTime(300)
-                .isPublic(true)
-                .pendingPublic(false)
-                .isDeleted(false)
                 .build();
     }
 }

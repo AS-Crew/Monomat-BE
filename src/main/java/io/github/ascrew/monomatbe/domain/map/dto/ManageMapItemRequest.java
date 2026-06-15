@@ -25,10 +25,6 @@ public record ManageMapItemRequest(
         @Min(value = 0, message = "시작 시간은 0 이상이어야 합니다.")
         Integer startTime,
 
-        @NotNull(message = "종료 시간은 필수입니다.")
-        @Min(value = 1, message = "종료 시간은 1 이상이어야 합니다.")
-        Integer endTime,
-
         @NotNull(message = "정답 목록은 필수입니다.")
         @Size(min = 1, max = 5, message = "정답은 1개 이상 5개 이하로 입력해야 합니다.")
         List<@NotBlank(message = "정답 값은 비어 있을 수 없습니다.")

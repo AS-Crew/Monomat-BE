@@ -54,9 +54,6 @@ public class MapItem {
     @Column(name = "start_time", nullable = false)
     private Integer startTime;
 
-    @Column(name = "end_time", nullable = false)
-    private Integer endTime;
-
     @Column(name = "title", length = 255)
     private String title;
 
@@ -119,7 +116,6 @@ public class MapItem {
             String youtubeUrl,
             String videoId,
             int startTime,
-            int endTime,
             String title,
             String artist,
             String thumbnailUrl,
@@ -131,7 +127,6 @@ public class MapItem {
         this.youtubeUrl = youtubeUrl;
         this.videoId = videoId;
         this.startTime = startTime;
-        this.endTime = endTime;
         this.title = title;
         this.artist = artist;
         this.thumbnailUrl = thumbnailUrl;

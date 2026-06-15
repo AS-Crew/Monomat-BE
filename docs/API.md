@@ -264,7 +264,7 @@ HTTP/1.1 200 OK
       "description": "인기 K-POP 문제 모음",
       "category": "K-POP",
       "numOfSong": 10,
-      "totalPlayTime": 300,
+      "totalPlayTime": 0,
       "isPublic": true,
       "pendingPublic": false,
       "ownerId": 10,
@@ -289,7 +289,7 @@ HTTP/1.1 200 OK
 | `description` | string \| null | 맵 설명 |
 | `category` | string | 맵 카테고리 |
 | `numOfSong` | number | 맵에 등록된 곡/문제 수 |
-| `totalPlayTime` | number | 맵 전체 재생 시간(초). 플레이 횟수가 아님 |
+| `totalPlayTime` | number | (사용 중단) 항상 0. 재생 시간은 로비의 `timeLimitSeconds`로 결정됨 |
 | `isPublic` | boolean | 공개 여부 |
 | `pendingPublic` | boolean | 공개 의도 보존 여부 |
 | `ownerId` | number | 맵 소유자 ID |
@@ -356,7 +356,7 @@ AND category 조건
       "description": "내가 만든 OST 퀴즈",
       "category": "OST",
       "numOfSong": 10,
-      "totalPlayTime": 300,
+      "totalPlayTime": 0,
       "isPublic": false,
       "pendingPublic": true,
       "ownerId": 10,
@@ -407,7 +407,7 @@ HTTP/1.1 200 OK
   "description": "J-POP 중심 퀴즈 맵",
   "category": "J-POP",
   "numOfSong": 10,
-  "totalPlayTime": 300,
+  "totalPlayTime": 0,
   "isPublic": false,
   "pendingPublic": false,
   "playCount": 0,
@@ -427,7 +427,7 @@ HTTP/1.1 200 OK
 | `description` | string \| null | 맵 설명 |
 | `category` | string | 맵 카테고리 |
 | `numOfSong` | number | 맵에 등록된 곡/문제 수 |
-| `totalPlayTime` | number | 맵 전체 재생 시간 |
+| `totalPlayTime` | number | (사용 중단) 항상 0. 재생 시간은 로비의 `timeLimitSeconds`로 결정됨 |
 | `isPublic` | boolean | 공개 여부 |
 | `pendingPublic` | boolean | 공개 의도 보존 여부 |
 | `playCount` | number | 맵이 실제 게임 시작에 사용된 누적 횟수 |
@@ -475,7 +475,6 @@ Content-Type: application/json
       "orderNum": 1,
       "youtubeUrl": "https://www.youtube.com/watch?v=example",
       "startTime": 30,
-      "endTime": 60,
       "answers": ["ditto"],
       "hint": "ㄷㅌ",
       "hintTime": 15
@@ -485,7 +484,6 @@ Content-Type: application/json
       "orderNum": 2,
       "youtubeUrl": "https://www.youtube.com/watch?v=example2",
       "startTime": 0,
-      "endTime": 30,
       "answers": ["omg"],
       "hint": "ㅇㅇㅈ",
       "hintTime": 15
@@ -507,7 +505,7 @@ Content-Type: application/json
     "description": "J-POP 중심 퀴즈 맵",
     "category": "J-POP",
     "numOfSong": 2,
-    "totalPlayTime": 60,
+    "totalPlayTime": 0,
     "isPublic": false,
     "pendingPublic": false,
     "playCount": 0,
@@ -522,7 +520,6 @@ Content-Type: application/json
       "youtubeUrl": "https://www.youtube.com/watch?v=example",
       "videoId": "example",
       "startTime": 30,
-      "endTime": 60,
       "title": "YouTube title",
       "artist": "YouTube author",
       "thumbnailUrl": "https://...",
@@ -669,7 +666,7 @@ HTTP/1.1 200 OK
   "description": "인기 K-POP 문제 모음",
   "category": "K-POP",
   "numOfSong": 10,
-  "totalPlayTime": 300,
+  "totalPlayTime": 0,
   "isPublic": true,
   "pendingPublic": false,
   "playCount": 42,
@@ -689,7 +686,7 @@ HTTP/1.1 200 OK
 | `description` | string \| null | 맵 설명 |
 | `category` | string | 맵 카테고리 |
 | `numOfSong` | number | 맵에 등록된 곡/문제 수 |
-| `totalPlayTime` | number | 맵 전체 재생 시간(초). 플레이 횟수가 아님 |
+| `totalPlayTime` | number | (사용 중단) 항상 0. 재생 시간은 로비의 `timeLimitSeconds`로 결정됨 |
 | `isPublic` | boolean | 공개 여부 |
 | `pendingPublic` | boolean | 공개 의도 보존 여부 |
 | `playCount` | number | 맵이 실제 게임 시작에 사용된 누적 횟수 |
@@ -727,7 +724,6 @@ HTTP/1.1 200 OK
       "orderNum": 1,
       "youtubeUrl": "https://www.youtube.com/watch?v=video1",
       "startTime": 30,
-      "endTime": 60,
       "answers": ["ditto"],
       "hint": "ㄷㅌ",
       "hintTime": 15
@@ -736,7 +732,6 @@ HTTP/1.1 200 OK
       "orderNum": 2,
       "youtubeUrl": "https://www.youtube.com/watch?v=video2",
       "startTime": 0,
-      "endTime": 30,
       "answers": ["omg"],
       "hint": "ㅇㅇㅈ",
       "hintTime": 15
@@ -757,7 +752,6 @@ HTTP/1.1 200 OK
 | `items[].orderNum`   |   number |  O | 문제 순서. 1부터 items 개수까지 중복 없이 지정 |
 | `items[].youtubeUrl` |   string |  O | YouTube URL                    |
 | `items[].startTime`  |   number |  O | 재생 시작 시간, 초 단위                 |
-| `items[].endTime`    |   number |  O | 재생 종료 시간, 초 단위                 |
 | `items[].answers`    | string[] |  O | 정답 목록                          |
 | `items[].hint`       |   string |  O | 힌트                             |
 | `items[].hintTime`   |   number |  X | 힌트 공개 시간. null이면 기본값 15초 적용    |
@@ -774,7 +768,7 @@ HTTP/1.1 200 OK
     "description": "J-POP 중심 퀴즈 맵",
     "category": "J-POP",
     "numOfSong": 2,
-    "totalPlayTime": 60,
+    "totalPlayTime": 0,
     "isPublic": false,
     "pendingPublic": false,
     "playCount": 0,
@@ -789,7 +783,6 @@ HTTP/1.1 200 OK
       "youtubeUrl": "https://www.youtube.com/watch?v=video1",
       "videoId": "video1",
       "startTime": 30,
-      "endTime": 60,
       "title": "YouTube title 1",
       "artist": "YouTube author 1",
       "thumbnailUrl": "https://thumbnail/1",
@@ -807,7 +800,7 @@ HTTP/1.1 200 OK
 
 |                       상태 코드 | 상황                                                 |
 | --------------------------: | -------------------------------------------------- |
-|           `400 Bad Request` | 요청 값 검증 실패, 중복 orderNum, orderNum 순서 불연속, 재생 구간 오류 |
+|           `400 Bad Request` | 요청 값 검증 실패, 중복 orderNum, orderNum 순서 불연속 |
 |          `401 Unauthorized` | 미인증                                                |
 |             `403 Forbidden` | 게스트 또는 정식 회원이 아닌 사용자                               |
 |              `409 Conflict` | 맵 최대 문제 수 초과, DB 저장 충돌                             |
@@ -818,7 +811,7 @@ HTTP/1.1 200 OK
 * 맵 기본 정보와 문제 목록은 하나의 트랜잭션으로 저장됩니다.
 * 아이템 중 하나라도 검증 또는 저장에 실패하면 `map`, `map_item` 모두 rollback됩니다.
 * YouTube URL/oEmbed 검증 정책은 기존 문제 생성 API와 동일합니다.
-* 생성 완료 후 `numOfSong`, `totalPlayTime`이 생성된 items 기준으로 반영됩니다.
+* 생성 완료 후 `numOfSong`이 생성된 items 기준으로 반영됩니다. (`totalPlayTime`은 사용 중단되어 항상 0)
 
 ---
 

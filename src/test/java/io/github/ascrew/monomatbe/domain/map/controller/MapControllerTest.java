@@ -155,7 +155,6 @@ class MapControllerTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=video1")
                 .videoId("video1")
                 .startTime(30)
-                .endTime(60)
                 .title("YouTube title 1")
                 .artist("YouTube author 1")
                 .thumbnailUrl("https://thumbnail/1")
@@ -173,7 +172,6 @@ class MapControllerTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=video2")
                 .videoId("video2")
                 .startTime(0)
-                .endTime(30)
                 .title("YouTube title 2")
                 .artist("YouTube author 2")
                 .thumbnailUrl("https://thumbnail/2")
@@ -204,7 +202,6 @@ class MapControllerTest {
                                   "orderNum": 1,
                                   "youtubeUrl": "https://www.youtube.com/watch?v=video1",
                                   "startTime": 30,
-                                  "endTime": 60,
                                   "answers": ["ditto"],
                                   "hint": "ㄷㅌ",
                                   "hintTime": 15
@@ -213,7 +210,6 @@ class MapControllerTest {
                                   "orderNum": 2,
                                   "youtubeUrl": "https://www.youtube.com/watch?v=video2",
                                   "startTime": 0,
-                                  "endTime": 30,
                                   "answers": ["omg"],
                                   "hint": "ㅇㅇㅈ",
                                   "hintTime": 15
@@ -294,7 +290,6 @@ class MapControllerTest {
                                   "orderNum": 1,
                                   "youtubeUrl": "https://www.youtube.com/watch?v=video1",
                                   "startTime": 30,
-                                  "endTime": 60,
                                   "answers": ["ditto"],
                                   "hint": "ㄷㅌ",
                                   "hintTime": 15
@@ -335,7 +330,6 @@ class MapControllerTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=video1")
                 .videoId("video1")
                 .startTime(30)
-                .endTime(60)
                 .title("YouTube title")
                 .artist("YouTube author")
                 .thumbnailUrl("https://thumbnail")
@@ -367,7 +361,6 @@ class MapControllerTest {
                                       "orderNum": 1,
                                       "youtubeUrl": "https://www.youtube.com/watch?v=video1",
                                       "startTime": 30,
-                                      "endTime": 60,
                                       "answers": ["ditto"],
                                       "hint": "ㄷㅌ",
                                       "hintTime": 15
@@ -377,7 +370,6 @@ class MapControllerTest {
                                       "orderNum": 2,
                                       "youtubeUrl": "https://www.youtube.com/watch?v=video2",
                                       "startTime": 0,
-                                      "endTime": 30,
                                       "answers": ["omg"],
                                       "hint": "ㅇㅇㅈ",
                                       "hintTime": 15

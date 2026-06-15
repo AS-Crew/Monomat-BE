@@ -74,7 +74,6 @@ public class MapItemPersistenceService {
                 .youtubeUrl(request.youtubeUrl().trim())
                 .videoId(metadata.videoId())
                 .startTime(request.startTime())
-                .endTime(request.endTime())
                 .title(metadata.title())
                 .artist(metadata.artist())
                 .thumbnailUrl(metadata.thumbnailUrl())
@@ -110,7 +109,6 @@ public class MapItemPersistenceService {
                 request.youtubeUrl().trim(),
                 metadata.videoId(),
                 request.startTime(),
-                request.endTime(),
                 metadata.title(),
                 metadata.artist(),
                 metadata.thumbnailUrl(),
@@ -158,9 +156,8 @@ public class MapItemPersistenceService {
 
     private void recalculateMapMetadata(QuizMap quizMap) {
         int numOfSong = Math.toIntExact(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(quizMap.getId()));
-        Long sum = mapItemJpaRepository.sumPlayTimeByMapId(quizMap.getId());
-        int totalPlayTime = sum == null ? 0 : Math.toIntExact(sum);
-        quizMap.updateMetadata(numOfSong, totalPlayTime);
+        // 재생시간은 로비의 time_limit_seconds로 통일되어 문제별 길이가 없으므로 totalPlayTime은 0으로 고정한다.
+        quizMap.updateMetadata(numOfSong, 0);
 
         applyPublicationAutoFlip(quizMap);
     }

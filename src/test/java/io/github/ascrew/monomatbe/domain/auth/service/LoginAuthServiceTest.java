@@ -20,7 +20,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -356,6 +363,64 @@ class LoginAuthServiceTest {
         LoginResponse response = loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
 
         assertNotNull(response.accessToken());
+    }
+
+    @Test
+    void login_concurrentRequests_keepsSingleActiveSession() throws InterruptedException {
+        String loginId = uniqueLoginId();
+        String password = "password123";
+
+        UserCredential credential = createCredential(loginId, password, uniqueNickname());
+        Long userId = credential.getUser().getId();
+
+        int threads = 2;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch readyLatch = new CountDownLatch(threads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threads);
+
+        AtomicInteger successCount = new AtomicInteger();
+        AtomicInteger rejectedCount = new AtomicInteger();
+        List<Throwable> unexpected = new CopyOnWriteArrayList<>();
+
+        for (int i = 0; i < threads; i++) {
+            executor.submit(() -> {
+                readyLatch.countDown();
+                try {
+                    startLatch.await();
+                    loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
+                    successCount.incrementAndGet();
+                } catch (AuthException e) {
+                    if (e.getErrorCode() == AuthErrorCode.AUTH_CONCURRENT_LOGIN_REJECTED) {
+                        rejectedCount.incrementAndGet();
+                    } else {
+                        unexpected.add(e);
+                    }
+                } catch (Throwable t) {
+                    unexpected.add(t);
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        // 두 스레드가 모두 진입 준비된 뒤 동시에 출발시킨다.
+        assertTrue(readyLatch.await(5, TimeUnit.SECONDS));
+        startLatch.countDown();
+        assertTrue(doneLatch.await(20, TimeUnit.SECONDS));
+        executor.shutdownNow();
+
+        // 예기치 못한 예외(락 타임아웃 등)가 없어야 한다.
+        assertTrue(unexpected.isEmpty(), () -> "unexpected exceptions: " + unexpected);
+
+        // 동시 진입이더라도 ACTIVE 세션은 정확히 1개여야 한다. (#204 단일 세션 보장)
+        long activeCount = userSessionRepository
+                .findByUser_IdAndStatusOrderByCreatedAtAsc(userId, UserSessionStatus.ACTIVE).size();
+        assertEquals(1, activeCount);
+
+        // 계정 단위 직렬화 결과: 한쪽만 성공하고 나머지는 중복 로그인으로 거부된다.
+        assertEquals(1, successCount.get());
+        assertEquals(threads - 1, rejectedCount.get());
     }
 
     private void createSession(

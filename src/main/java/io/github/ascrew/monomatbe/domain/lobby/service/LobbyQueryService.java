@@ -31,6 +31,7 @@ import io.github.ascrew.monomatbe.domain.lobby.entity.GameLobby;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -73,6 +74,7 @@ public class LobbyQueryService {
     private final GameLobbyJpaRepository gameLobbyJpaRepository;
     private final LobbyCanStartPolicy lobbyCanStartPolicy;
     private final LobbyPlayerNicknameResolver lobbyPlayerNicknameResolver;
+    private final QuizMapJpaRepository quizMapJpaRepository;
 
     /**
      * ZSET 기반 페이징 중 stale index를 감안해 추가 스캔할 배수.
@@ -753,11 +755,38 @@ public class LobbyQueryService {
                 .mapId(lobbyInfo.mapId())
                 .mapTitle(lobbyInfo.mapTitle())
                 .mapCategory(lobbyInfo.mapCategory())
+                .mapNumOfSong(resolveMapNumOfSong(lobbyInfo, gameLobby))
                 .questionCount(lobbyInfo.questionCount())
                 .timeLimitSeconds(lobbyInfo.timeLimitSeconds())
                 .players(players)
                 .canStart(canStart)
                 .build();
+    }
+
+    /**
+     * 로비 상세 응답에 사용할 현재 선택 맵의 등록 곡 수를 조회한다.
+     *
+     * Redis 로비 Hash에는 맵 제목/카테고리/문제 수만 저장되어 있으므로,
+     * FE가 라운드 수 범위를 안정적으로 계산할 수 있게 DB의 QuizMap 기준 numOfSong을 함께 내려준다.
+     *
+     * 로비 상세 응답의 mapId/mapTitle/mapCategory는 Redis 조회 결과인 lobbyInfo를 기준으로 내려간다.
+     * 따라서 mapNumOfSong도 응답 내부 정합성을 위해 lobbyInfo.mapId()를 우선 기준으로 계산한다.
+     *
+     * DB GAME_LOBBY 스냅샷은 Redis mapId가 없는 과거/손상 데이터에 대한 fallback으로만 사용한다.
+     */
+    private Integer resolveMapNumOfSong(JoinLobbyResponse lobbyInfo, GameLobby gameLobby) {
+        Long mapId = lobbyInfo.mapId() != null
+                ? lobbyInfo.mapId()
+                : gameLobby != null ? gameLobby.getMapId() : null;
+
+        if (mapId == null) {
+            return null;
+        }
+
+        return quizMapJpaRepository.findById(mapId)
+                .filter(map -> !Boolean.TRUE.equals(map.getIsDeleted()))
+                .map(map -> map.getNumOfSong())
+                .orElse(null);
     }
 
     /**

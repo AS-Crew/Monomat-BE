@@ -13,6 +13,7 @@ import java.util.List;
  * - 로비 기본 정보
  * - 방장 식별자 및 표시 닉네임
  * - 선택된 맵 정보
+ * - 선택된 맵의 등록 곡 수
  * - 룰 정보 (questionCount, timeLimitSeconds)
  * - 참여자별 nickname / ready / host 상태
  * - 현재 게임 시작 버튼 활성화 가능 여부 (canStart)
@@ -29,6 +30,7 @@ public record LobbyDetailResponse(
         Long mapId,
         String mapTitle,
         String mapCategory,
+        Integer mapNumOfSong,
         Integer questionCount,
         Integer timeLimitSeconds,
         List<LobbyPlayerResponse> players,

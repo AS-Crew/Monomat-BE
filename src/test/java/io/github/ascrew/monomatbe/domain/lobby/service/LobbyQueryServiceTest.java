@@ -10,6 +10,9 @@ import io.github.ascrew.monomatbe.domain.lobby.dto.LobbySearchCondition;
 import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.domain.lobby.repository.GameLobbyJpaRepository;
 import io.github.ascrew.monomatbe.domain.lobby.repository.LobbyRepository;
+import io.github.ascrew.monomatbe.domain.map.entity.MapCategory;
+import io.github.ascrew.monomatbe.domain.map.entity.QuizMap;
+import io.github.ascrew.monomatbe.domain.map.repository.QuizMapJpaRepository;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,12 +57,14 @@ class LobbyQueryServiceTest {
     private final GameLobbyJpaRepository gameLobbyJpaRepository = mock(GameLobbyJpaRepository.class);
     private final LobbyCanStartPolicy lobbyCanStartPolicy = mock(LobbyCanStartPolicy.class);
     private final LobbyPlayerNicknameResolver lobbyPlayerNicknameResolver = mock(LobbyPlayerNicknameResolver.class);
+    private final QuizMapJpaRepository quizMapJpaRepository = mock(QuizMapJpaRepository.class);
 
     private final LobbyQueryService lobbyQueryService = new LobbyQueryService(
             lobbyRepository,
             gameLobbyJpaRepository,
             lobbyCanStartPolicy,
-            lobbyPlayerNicknameResolver
+            lobbyPlayerNicknameResolver,
+            quizMapJpaRepository
     );
 
     @Test
@@ -986,6 +991,23 @@ class LobbyQueryServiceTest {
 
         when(lobbyCanStartPolicy.calculateCanStart(any(), any(), any()))
                 .thenReturn(false);
+
+        if (lobbyInfo.mapId() != null) {
+            when(quizMapJpaRepository.findById(lobbyInfo.mapId()))
+                    .thenReturn(Optional.of(quizMap(lobbyInfo.mapId(), 10)));
+        }
+    }
+
+    private QuizMap quizMap(Long mapId, int numOfSong) {
+        return QuizMap.builder()
+                .id(mapId)
+                .title("테스트 맵")
+                .category(MapCategory.KPOP)
+                .numOfSong(numOfSong)
+                .totalPlayTime(300)
+                .isPublic(true)
+                .isDeleted(false)
+                .build();
     }
 
     private CustomPrincipal registeredPrincipal(String userIdentifier) {

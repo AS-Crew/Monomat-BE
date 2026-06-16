@@ -24,14 +24,6 @@ import static org.mockito.Mockito.when;
 
 /**
  * LobbyQueryService의 로비 상세 조회 응답 중 canStart 계산을 검증한다.
- *
- * [변경 배경]
- * Issue #78에서 LobbyService facade를 제거하고,
- * 로비 상세 조회 책임을 LobbyQueryService로 분리했다.
- *
- * canStart 계산 자체는 LobbyCanStartPolicy가 담당하지만,
- * 이 테스트는 "로비 상세 조회 결과에 canStart가 올바르게 반영되는지"를 검증하므로
- * LobbyQueryService 기준으로 유지한다.
  */
 class LobbyQueryServiceCanStartTest {
 
@@ -56,7 +48,8 @@ class LobbyQueryServiceCanStartTest {
                 lobbyRepository,
                 gameLobbyJpaRepository,
                 lobbyCanStartPolicy,
-                lobbyPlayerNicknameResolver
+                lobbyPlayerNicknameResolver,
+                quizMapJpaRepository
         );
     }
 
@@ -83,6 +76,7 @@ class LobbyQueryServiceCanStartTest {
         );
 
         assertThat(response.canStart()).isTrue();
+        assertThat(response.mapNumOfSong()).isEqualTo(5);
     }
 
     @Test
@@ -108,6 +102,7 @@ class LobbyQueryServiceCanStartTest {
         );
 
         assertThat(response.canStart()).isFalse();
+        assertThat(response.mapNumOfSong()).isEqualTo(5);
     }
 
     @Test
@@ -133,6 +128,7 @@ class LobbyQueryServiceCanStartTest {
         );
 
         assertThat(response.canStart()).isFalse();
+        assertThat(response.mapNumOfSong()).isEqualTo(4);
     }
 
     private JoinLobbyResponse lobbyInfo(String code, String hostId) {

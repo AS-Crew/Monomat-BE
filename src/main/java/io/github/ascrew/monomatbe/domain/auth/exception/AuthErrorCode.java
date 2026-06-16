@@ -170,6 +170,18 @@ public enum AuthErrorCode {
             null
     ),
 
+    AUTH_CONCURRENT_LOGIN_REJECTED(
+            HttpStatus.CONFLICT,
+            "이미 다른 기기에서 로그인되어 있습니다. 기존 기기에서 로그아웃하거나 강제 로그인을 진행해주세요.",
+            null
+    ),
+
+    AUTH_USER_NOT_FOUND(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "사용자를 찾을 수 없습니다.",
+            null
+    ),
+
     AUTH_UNAUTHENTICATED(
             HttpStatus.UNAUTHORIZED,
             "인증 정보가 없습니다.",

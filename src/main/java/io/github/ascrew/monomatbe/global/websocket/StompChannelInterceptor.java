@@ -154,6 +154,12 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_INVALID);
         }
 
+        if (!isActiveAuthSession(userIdentifier)) {
+            log.warn("STOMP CONNECT 거부: revoke되었거나 만료된 세션 - userIdentifier: {}",
+                    sanitizeForLog(userIdentifier));
+            throw new StompErrorException(StompErrorCode.CONNECT_SESSION_REVOKED);
+        }
+
         Long sessionSequence = stringRedisTemplate.opsForValue()
                 .increment(RedisKeys.WS_SESSION_SEQUENCE);
 
@@ -187,6 +193,29 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     }
 
     /**
+     * 인증 세션이 여전히 활성 상태인지 검증한다. (#204)
+     *
+     * [목적]
+     * 회원 중복 로그인 차단/force 재로그인 또는 로그아웃으로 revoke된 세션은
+     * Redis active session 마커(auth:session:active:{id})가 삭제된다.
+     * revoke된 세션 식별자로 들어오는 WebSocket (재)연결을 CONNECT 단계에서 차단한다.
+     *
+     * [fail-closed]
+     * Redis 조회 실패 시 JwtAuthenticationFilter와 동일하게 인증을 신뢰하지 않고 연결을 거부한다.
+     */
+    private boolean isActiveAuthSession(String userIdentifier) {
+        try {
+            return Boolean.TRUE.equals(
+                    stringRedisTemplate.hasKey(RedisKeys.activeSessionKey(userIdentifier))
+            );
+        } catch (RuntimeException e) {
+            log.warn("STOMP CONNECT active session 조회 실패 - fail-closed 적용. userIdentifier: {}",
+                    sanitizeForLog(userIdentifier), e);
+            return false;
+        }
+    }
+
+    /**
      * CONNECT 이후 명령에 대해 인증 세션 존재 여부를 검증한다.
      */
     private void validateSession(
@@ -200,6 +229,18 @@ public class StompChannelInterceptor implements ChannelInterceptor {
         if (userIdentifier == null) {
             log.warn("[{}] 인증되지 않은 세션 접근 차단", accessor.getCommand());
             throw new StompErrorException(StompErrorCode.SESSION_UNAUTHENTICATED);
+        }
+
+        // 중복 로그인/로그아웃으로 revoke된 세션이 이미 연결된 상태에서 SEND/SUBSCRIBE를 계속
+        // 통과하는 것을 막는다. (#204) CONNECT 시점 검증만으로는 연결 이후 revoke를 차단할 수 없으므로
+        // 실제 동작을 수반하는 SEND/SUBSCRIBE 처리 전에 active session 마커를 재검증한다.
+        // UNSUBSCRIBE는 정리 동작이므로 재검증 대상에서 제외한다.
+        StompCommand command = accessor.getCommand();
+        if ((command == StompCommand.SUBSCRIBE || command == StompCommand.SEND)
+                && !isActiveAuthSession(userIdentifier)) {
+            log.warn("[{}] revoke된 세션 접근 차단 - userIdentifier: {}",
+                    command, sanitizeForLog(userIdentifier));
+            throw new StompErrorException(StompErrorCode.SESSION_REVOKED);
         }
 
         switch (accessor.getCommand()) {

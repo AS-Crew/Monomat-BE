@@ -89,6 +89,7 @@ public class AuthController {
         LoginResponse response = loginAuthService.login(
                 request.loginId(),
                 request.password(),
+                request.force(),
                 resolveClientIp(httpServletRequest),
                 httpServletRequest.getHeader("User-Agent")
         );

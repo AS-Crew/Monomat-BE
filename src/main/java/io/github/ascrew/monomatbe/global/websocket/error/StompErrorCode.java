@@ -41,7 +41,7 @@ public enum StompErrorCode {
 
     CONNECT_SESSION_REVOKED(
             "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
-            StompErrorAction.RETRY_CONNECT,
+            StompErrorAction.RELOGIN,
             true
     ),
 
@@ -53,7 +53,7 @@ public enum StompErrorCode {
 
     SESSION_REVOKED(
             "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
-            StompErrorAction.RETRY_CONNECT,
+            StompErrorAction.RELOGIN,
             true
     ),
 

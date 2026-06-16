@@ -119,6 +119,12 @@ public final class StompDestinations {
     /** 인게임 정답 개별 통지 클라이언트 구독 경로 */
     public static final String SUBSCRIBE_USER_GAME_ANSWERS = "/user/queue/game/answers";
 
+    /** 세션 종료(중복 로그인 revoke) 통지 서버 전송용 User Queue 경로 (convertAndSendToUser 인자용) */
+    public static final String SERVER_USER_SESSION_REVOKED = "/queue/auth";
+
+    /** 세션 종료(중복 로그인 revoke) 통지 클라이언트 구독 경로 */
+    public static final String SUBSCRIBE_USER_SESSION_REVOKED = "/user/queue/auth";
+
     /** @return "/app/chat/lobby/{code}" */
     public static String publishLobbyChat(String code) {
         return PUBLISH_PREFIX + "/chat/lobby/" + code;

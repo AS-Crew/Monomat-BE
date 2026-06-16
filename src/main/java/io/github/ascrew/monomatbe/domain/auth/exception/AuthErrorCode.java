@@ -176,6 +176,12 @@ public enum AuthErrorCode {
             null
     ),
 
+    AUTH_USER_NOT_FOUND(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "사용자를 찾을 수 없습니다.",
+            null
+    ),
+
     AUTH_UNAUTHENTICATED(
             HttpStatus.UNAUTHORIZED,
             "인증 정보가 없습니다.",

@@ -209,8 +209,10 @@ public class LoginAuthService {
         }
 
         // 계정 단위 직렬화: User row를 잠가 동일 계정의 '활성 세션 판정 → force 처리 → 신규 세션 저장' 구간을 보호한다.
-        // 이미 영속성 컨텍스트에 로드된 User row에 FOR UPDATE 락만 추가로 건다.(반환값은 사용하지 않는다)
-        userRepository.findByIdForUpdate(userId);
+        // 이미 영속성 컨텍스트에 로드된 User row에 FOR UPDATE 락을 건다.
+        // FK 구조상 발생하면 안 되는 상황이지만, 락 대상 row를 반드시 확인했다는 의도를 명시적으로 드러낸다.
+        userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new AuthException(AuthErrorCode.AUTH_USER_NOT_FOUND));
 
         boolean hasLiveSession = userSessionRepository
                 .findByUser_IdAndStatusOrderByCreatedAtAsc(userId, UserSessionStatus.ACTIVE)

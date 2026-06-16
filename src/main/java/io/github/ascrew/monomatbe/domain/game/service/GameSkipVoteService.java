@@ -253,7 +253,9 @@ public class GameSkipVoteService {
         if (totalParticipants <= 0) {
             return 0;
         }
-        return (totalParticipants + 1) / 2;
+        // 과반 기준: 절반 이상((total+1)/2)으로 하면 2인 게임에서 1표로 스킵되어 진행권이 한 명에게 쏠린다.
+        // 2인은 둘 다 동의해야 스킵되도록 과반((total/2)+1)을 적용한다.
+        return (totalParticipants / 2) + 1;
     }
 
     private long requiredPlaybackErrorReports(long totalParticipants) {

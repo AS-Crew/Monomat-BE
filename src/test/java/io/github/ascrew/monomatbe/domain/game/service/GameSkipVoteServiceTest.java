@@ -114,6 +114,29 @@ class GameSkipVoteServiceTest {
     }
 
     @Test
+    @DisplayName("2인 게임은 과반(2표) 기준이므로 1표로는 스킵되지 않고 2표째에 종료한다")
+    void twoPlayerSkipRequiresUnanimousVotes() {
+        // given
+        String skipVotesKey = RedisKeys.gameSessionRoundSkipVotesKey(LOBBY_CODE, ROUND_NO);
+        when(setOperations.add(skipVotesKey, USER_1)).thenReturn(1L);
+        when(setOperations.add(skipVotesKey, USER_2)).thenReturn(1L);
+        when(setOperations.members(skipVotesKey)).thenReturn(Set.of(USER_1), Set.of(USER_1, USER_2));
+        when(setOperations.members(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).thenReturn(Set.of(USER_1, USER_2));
+
+        // when - 1표
+        gameSkipVoteService.voteSkip(LOBBY_CODE, USER_1, ROUND_NO);
+
+        // then - 아직 종료되지 않음
+        verify(gameRoundEndService, never()).endRound(anyString(), anyInt(), any(RoundEndReason.class));
+
+        // when - 2표
+        gameSkipVoteService.voteSkip(LOBBY_CODE, USER_2, ROUND_NO);
+
+        // then - 둘 다 동의했으므로 종료
+        verify(gameRoundEndService).endRound(LOBBY_CODE, ROUND_NO, RoundEndReason.SKIP_VOTE);
+    }
+
+    @Test
     @DisplayName("방장 /p는 HOST_SKIP 사유로 라운드를 종료한다")
     void hostForceSkipEndsRound() {
         // given

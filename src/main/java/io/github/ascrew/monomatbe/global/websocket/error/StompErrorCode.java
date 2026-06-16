@@ -39,9 +39,21 @@ public enum StompErrorCode {
             true
     ),
 
+    CONNECT_SESSION_REVOKED(
+            "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
+            StompErrorAction.RELOGIN,
+            true
+    ),
+
     SESSION_UNAUTHENTICATED(
             "인증 정보가 존재하지 않습니다. 다시 접속해주세요.",
             StompErrorAction.RETRY_CONNECT,
+            true
+    ),
+
+    SESSION_REVOKED(
+            "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
+            StompErrorAction.RELOGIN,
             true
     ),
 

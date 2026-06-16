@@ -10,6 +10,7 @@ import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthException;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthLoginFailureException;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserCredentialRepository;
+import io.github.ascrew.monomatbe.domain.auth.repository.UserRepository;
 import io.github.ascrew.monomatbe.domain.auth.repository.UserSessionRepository;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -39,6 +41,7 @@ public class LoginAuthService {
     private static final Duration LOCK_DURATION = Duration.ofMinutes(15);
 
     private final UserCredentialRepository userCredentialRepository;
+    private final UserRepository userRepository;
     private final UserSessionRepository userSessionRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
@@ -68,9 +71,15 @@ public class LoginAuthService {
      *
      * 따라서 loginId는 null/blank만 차단하고,
      * DB 조회 실패 또는 비밀번호 불일치는 AUTH_INVALID_CREDENTIALS로 통합 처리한다.
+     *
+     * [동시성 정책 - READ_COMMITTED]
+     * 회원 중복 로그인 직렬화를 위해 enforceConcurrentLoginPolicy()에서 User row를 PESSIMISTIC_WRITE로 잠근다.(#204)
+     * 다만 MySQL 기본 격리수준(REPEATABLE_READ)에서는 일반 조회 스냅샷이 트랜잭션 첫 조회 시점(findByLoginId)에 고정되어,
+     * 락 획득 이후에도 다른 트랜잭션이 커밋한 활성 세션을 보지 못할 수 있다.
+     * 따라서 login 트랜잭션은 READ_COMMITTED로 명시하여, 락 획득 이후의 활성 세션 판정이 최신 커밋을 보도록 보장한다.
      */
-    @Transactional(noRollbackFor = AuthLoginFailureException.class)
-    public LoginResponse login(String rawLoginId, String rawPassword, String ipAddress, String userAgent) {
+    @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = AuthLoginFailureException.class)
+    public LoginResponse login(String rawLoginId, String rawPassword, boolean force, String ipAddress, String userAgent) {
         String loginId = normalizeLoginId(rawLoginId);
         String password = normalizePassword(rawPassword);
 
@@ -99,6 +108,9 @@ public class LoginAuthService {
         user.updateLastLoginAt(now);
 
         UserType userType = user.getUserType();
+
+        enforceConcurrentLoginPolicy(user.getId(), userType, force, now);
+
         String userIdentifier = UUID.randomUUID().toString();
 
         TokenWithExpiry accessToken = jwtTokenProvider.createAccessToken(
@@ -174,6 +186,48 @@ public class LoginAuthService {
                 .refreshToken(refreshToken.token())
                 .refreshTokenExpiresAt(refreshToken.expiresAt())
                 .build();
+    }
+
+    /**
+     * 회원 중복 로그인 정책을 적용한다. (#204)
+     *
+     * [정책: 기존 세션 우선(block-new-login)]
+     * 회원(REGISTERED)이 이미 만료되지 않은 활성 세션을 보유하고 있으면 신규 로그인을 거부한다.
+     * 단, force=true이면 기존 활성 세션을 모두 revoke한 뒤 로그인을 진행한다.(lockout 방지용 강제 로그인)
+     *
+     * [게스트 예외]
+     * 게스트(GUEST)는 다중 세션을 허용하므로(max-active-per-user-guest) 이 정책에서 제외하고,
+     * 기존 newest-wins 동작(enforceActiveSessionLimit)을 그대로 유지한다.
+     *
+     * [만료 세션 처리]
+     * status는 ACTIVE이지만 expiresAt이 지난(아직 정리 스케줄러가 처리하지 않은) 세션은
+     * 차단 대상에서 제외하여, 비정상 종료 후 만료된 세션이 재로그인을 막는 lockout을 완화한다.
+     */
+    private void enforceConcurrentLoginPolicy(Long userId, UserType userType, boolean force, LocalDateTime now) {
+        if (userType != UserType.REGISTERED) {
+            return;
+        }
+
+        // 계정 단위 직렬화: User row를 잠가 동일 계정의 '활성 세션 판정 → force 처리 → 신규 세션 저장' 구간을 보호한다.
+        // 이미 영속성 컨텍스트에 로드된 User row에 FOR UPDATE 락을 건다.
+        // FK 구조상 발생하면 안 되는 상황이지만, 락 대상 row를 반드시 확인했다는 의도를 명시적으로 드러낸다.
+        userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new AuthException(AuthErrorCode.AUTH_USER_NOT_FOUND));
+
+        boolean hasLiveSession = userSessionRepository
+                .findByUser_IdAndStatusOrderByCreatedAtAsc(userId, UserSessionStatus.ACTIVE)
+                .stream()
+                .anyMatch(session -> session.getExpiresAt() != null && session.getExpiresAt().isAfter(now));
+
+        if (!hasLiveSession) {
+            return;
+        }
+
+        if (!force) {
+            throw new AuthException(AuthErrorCode.AUTH_CONCURRENT_LOGIN_REJECTED);
+        }
+
+        userSessionLifecycleService.revokeAllActiveSessions(userId, now);
     }
 
     private String normalizeLoginId(String value) {

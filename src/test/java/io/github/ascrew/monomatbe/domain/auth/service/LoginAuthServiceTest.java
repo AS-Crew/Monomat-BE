@@ -3,6 +3,8 @@ package io.github.ascrew.monomatbe.domain.auth.service;
 import io.github.ascrew.monomatbe.domain.auth.dto.LoginResponse;
 import io.github.ascrew.monomatbe.domain.auth.entity.User;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserCredential;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserSession;
+import io.github.ascrew.monomatbe.domain.auth.entity.UserSessionStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserStatus;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
 import io.github.ascrew.monomatbe.domain.auth.exception.AuthErrorCode;
@@ -18,7 +20,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -65,6 +74,7 @@ class LoginAuthServiceTest {
         LoginResponse response = loginAuthService.login(
                 loginId,
                 password,
+                false,
                 "127.0.0.1",
                 "JUnit-Agent"
         );
@@ -101,6 +111,7 @@ class LoginAuthServiceTest {
         LoginResponse response = loginAuthService.login(
                 loginId,
                 password,
+                false,
                 "127.0.0.1",
                 "JUnit-Agent"
         );
@@ -122,6 +133,7 @@ class LoginAuthServiceTest {
         LoginResponse response = loginAuthService.login(
                 loginId,
                 password,
+                false,
                 "127.0.0.1",
                 "JUnit-Agent"
         );
@@ -135,7 +147,7 @@ class LoginAuthServiceTest {
     @Test
     void login_unknownLoginId_returnsInvalidCredentials() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login("unknown!", "password123", null, null)
+                loginAuthService.login("unknown!", "password123", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
@@ -148,7 +160,7 @@ class LoginAuthServiceTest {
         createCredential(loginId, "password123", uniqueNickname());
 
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(loginId, "wrong-password", null, null)
+                loginAuthService.login(loginId, "wrong-password", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
@@ -166,7 +178,7 @@ class LoginAuthServiceTest {
 
         for (int i = 0; i < 5; i++) {
             AuthException exception = assertThrows(AuthException.class, () ->
-                    loginAuthService.login(loginId, "wrong-password", null, null)
+                    loginAuthService.login(loginId, "wrong-password", false, null, null)
             );
 
             assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
@@ -178,7 +190,7 @@ class LoginAuthServiceTest {
         assertTrue(savedCredential.getLockedUntil().isAfter(LocalDateTime.now()));
 
         AuthException lockedException = assertThrows(AuthException.class, () ->
-                loginAuthService.login(loginId, "password123", null, null)
+                loginAuthService.login(loginId, "password123", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_ACCOUNT_LOCKED, lockedException.getErrorCode());
@@ -193,7 +205,7 @@ class LoginAuthServiceTest {
         userCredentialRepository.saveAndFlush(credential);
 
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(loginId, "password123", null, null)
+                loginAuthService.login(loginId, "password123", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_ACCOUNT_LOCKED, exception.getErrorCode());
@@ -210,7 +222,7 @@ class LoginAuthServiceTest {
         credential.lockUntil(LocalDateTime.now().minusMinutes(1));
         userCredentialRepository.saveAndFlush(credential);
 
-        loginAuthService.login(loginId, password, null, null);
+        loginAuthService.login(loginId, password, false, null, null);
 
         UserCredential savedCredential = userCredentialRepository.findByLoginId(loginId).orElseThrow();
         assertEquals(0, savedCredential.getFailedLoginCount());
@@ -220,7 +232,7 @@ class LoginAuthServiceTest {
     @Test
     void login_blankLoginId_throwsLoginIdRequiredError() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login("   ", "password123", null, null)
+                loginAuthService.login("   ", "password123", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_LOGIN_ID_REQUIRED, exception.getErrorCode());
@@ -229,7 +241,7 @@ class LoginAuthServiceTest {
     @Test
     void login_nullLoginId_throwsLoginIdRequiredError() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(null, "password123", null, null)
+                loginAuthService.login(null, "password123", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_LOGIN_ID_REQUIRED, exception.getErrorCode());
@@ -238,7 +250,7 @@ class LoginAuthServiceTest {
     @Test
     void login_blankPassword_throwsPasswordRequiredError() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(uniqueLoginId(), "   ", null, null)
+                loginAuthService.login(uniqueLoginId(), "   ", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
@@ -247,7 +259,7 @@ class LoginAuthServiceTest {
     @Test
     void login_nullPassword_throwsPasswordRequiredError() {
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(uniqueLoginId(), null, null, null)
+                loginAuthService.login(uniqueLoginId(), null, false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_PASSWORD_REQUIRED, exception.getErrorCode());
@@ -260,7 +272,7 @@ class LoginAuthServiceTest {
         createCredential(loginId, "password123", uniqueNickname());
 
         AuthLoginFailureException exception = assertThrows(AuthLoginFailureException.class, () ->
-                loginAuthService.login(loginId, "wrong-password", null, null)
+                loginAuthService.login(loginId, "wrong-password", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
@@ -273,10 +285,161 @@ class LoginAuthServiceTest {
         createCredential(loginId, "password123", uniqueNickname());
 
         AuthException exception = assertThrows(AuthException.class, () ->
-                loginAuthService.login(loginId, "pass word123", null, null)
+                loginAuthService.login(loginId, "pass word123", false, null, null)
         );
 
         assertEquals(AuthErrorCode.AUTH_INVALID_CREDENTIALS, exception.getErrorCode());
+    }
+
+    @Test
+    void login_withExistingActiveSession_rejectsConcurrentLogin() {
+        String loginId = uniqueLoginId();
+        String password = "password123";
+
+        createCredential(loginId, password, uniqueNickname());
+
+        // 첫 로그인으로 활성 세션을 생성한다.
+        loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
+
+        // 활성 세션이 있는 상태에서 두 번째 로그인은 거부되어야 한다.
+        AuthException exception = assertThrows(AuthException.class, () ->
+                loginAuthService.login(loginId, password, false, "127.0.0.2", "JUnit-Agent-2")
+        );
+
+        assertEquals(AuthErrorCode.AUTH_CONCURRENT_LOGIN_REJECTED, exception.getErrorCode());
+    }
+
+    @Test
+    void login_forceWithExistingActiveSession_revokesPreviousAndSucceeds() {
+        String loginId = uniqueLoginId();
+        String password = "password123";
+
+        UserCredential credential = createCredential(loginId, password, uniqueNickname());
+        Long userId = credential.getUser().getId();
+
+        LoginResponse first = loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
+
+        // force=true 재로그인은 기존 세션을 revoke하고 신규 로그인에 성공해야 한다.
+        LoginResponse second = loginAuthService.login(loginId, password, true, "127.0.0.2", "JUnit-Agent-2");
+
+        assertNotNull(second.accessToken());
+        assertEquals(UserSessionStatus.REVOKED,
+                userSessionRepository.findBySessionId(first.userIdentifier()).orElseThrow().getStatus());
+        assertEquals(UserSessionStatus.ACTIVE,
+                userSessionRepository.findBySessionId(second.userIdentifier()).orElseThrow().getStatus());
+
+        long activeCount = userSessionRepository
+                .findByUser_IdAndStatusOrderByCreatedAtAsc(userId, UserSessionStatus.ACTIVE).size();
+        assertEquals(1, activeCount);
+    }
+
+    @Test
+    void login_afterLogout_allowsReLogin() {
+        String loginId = uniqueLoginId();
+        String password = "password123";
+
+        UserCredential credential = createCredential(loginId, password, uniqueNickname());
+        LocalDateTime now = LocalDateTime.now();
+
+        // 로그아웃(LOGOUT) 상태 세션만 존재하면 재로그인이 허용되어야 한다.
+        createSession(credential.getUser(), UserSessionStatus.LOGOUT, now.plusDays(30), now);
+
+        LoginResponse response = loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
+
+        assertNotNull(response.accessToken());
+    }
+
+    @Test
+    void login_afterSessionExpired_allowsReLogin() {
+        String loginId = uniqueLoginId();
+        String password = "password123";
+
+        UserCredential credential = createCredential(loginId, password, uniqueNickname());
+        LocalDateTime now = LocalDateTime.now();
+
+        // status는 ACTIVE이지만 만료된(아직 정리되지 않은) 세션은 차단 대상이 아니다.
+        createSession(credential.getUser(), UserSessionStatus.ACTIVE, now.minusMinutes(1), now.minusDays(31));
+
+        LoginResponse response = loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
+
+        assertNotNull(response.accessToken());
+    }
+
+    @Test
+    void login_concurrentRequests_keepsSingleActiveSession() throws InterruptedException {
+        String loginId = uniqueLoginId();
+        String password = "password123";
+
+        UserCredential credential = createCredential(loginId, password, uniqueNickname());
+        Long userId = credential.getUser().getId();
+
+        int threads = 2;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch readyLatch = new CountDownLatch(threads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threads);
+
+        AtomicInteger successCount = new AtomicInteger();
+        AtomicInteger rejectedCount = new AtomicInteger();
+        List<Throwable> unexpected = new CopyOnWriteArrayList<>();
+
+        for (int i = 0; i < threads; i++) {
+            executor.submit(() -> {
+                readyLatch.countDown();
+                try {
+                    startLatch.await();
+                    loginAuthService.login(loginId, password, false, "127.0.0.1", "JUnit-Agent");
+                    successCount.incrementAndGet();
+                } catch (AuthException e) {
+                    if (e.getErrorCode() == AuthErrorCode.AUTH_CONCURRENT_LOGIN_REJECTED) {
+                        rejectedCount.incrementAndGet();
+                    } else {
+                        unexpected.add(e);
+                    }
+                } catch (Throwable t) {
+                    unexpected.add(t);
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        // 두 스레드가 모두 진입 준비된 뒤 동시에 출발시킨다.
+        assertTrue(readyLatch.await(5, TimeUnit.SECONDS));
+        startLatch.countDown();
+        assertTrue(doneLatch.await(20, TimeUnit.SECONDS));
+        executor.shutdownNow();
+
+        // 예기치 못한 예외(락 타임아웃 등)가 없어야 한다.
+        assertTrue(unexpected.isEmpty(), () -> "unexpected exceptions: " + unexpected);
+
+        // 동시 진입이더라도 ACTIVE 세션은 정확히 1개여야 한다. (#204 단일 세션 보장)
+        long activeCount = userSessionRepository
+                .findByUser_IdAndStatusOrderByCreatedAtAsc(userId, UserSessionStatus.ACTIVE).size();
+        assertEquals(1, activeCount);
+
+        // 계정 단위 직렬화 결과: 한쪽만 성공하고 나머지는 중복 로그인으로 거부된다.
+        assertEquals(1, successCount.get());
+        assertEquals(threads - 1, rejectedCount.get());
+    }
+
+    private void createSession(
+            User user,
+            UserSessionStatus status,
+            LocalDateTime expiresAt,
+            LocalDateTime createdAt
+    ) {
+        userSessionRepository.saveAndFlush(UserSession.builder()
+                .user(user)
+                .sessionId(UUID.randomUUID().toString())
+                .sessionToken(UUID.randomUUID().toString())
+                .ipAddress("127.0.0.1")
+                .userAgent("JUnit-Agent")
+                .expiresAt(expiresAt)
+                .createdAt(createdAt)
+                .updatedAt(createdAt)
+                .status(status)
+                .build());
     }
 
     private UserCredential createCredential(String loginId, String rawPassword, String nickname) {

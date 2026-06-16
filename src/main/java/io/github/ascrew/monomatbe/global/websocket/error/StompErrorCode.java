@@ -51,6 +51,12 @@ public enum StompErrorCode {
             true
     ),
 
+    SESSION_REVOKED(
+            "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
+            StompErrorAction.RETRY_CONNECT,
+            true
+    ),
+
     LOBBY_ENTER_WS_SESSION_MISSING(
             "로비 입장에 필요한 WebSocket 세션 ID가 없습니다. 다시 접속해주세요.",
             StompErrorAction.RECONNECT,

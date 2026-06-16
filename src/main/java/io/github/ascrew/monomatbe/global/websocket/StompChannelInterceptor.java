@@ -231,6 +231,18 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             throw new StompErrorException(StompErrorCode.SESSION_UNAUTHENTICATED);
         }
 
+        // 중복 로그인/로그아웃으로 revoke된 세션이 이미 연결된 상태에서 SEND/SUBSCRIBE를 계속
+        // 통과하는 것을 막는다. (#204) CONNECT 시점 검증만으로는 연결 이후 revoke를 차단할 수 없으므로
+        // 실제 동작을 수반하는 SEND/SUBSCRIBE 처리 전에 active session 마커를 재검증한다.
+        // UNSUBSCRIBE는 정리 동작이므로 재검증 대상에서 제외한다.
+        StompCommand command = accessor.getCommand();
+        if ((command == StompCommand.SUBSCRIBE || command == StompCommand.SEND)
+                && !isActiveAuthSession(userIdentifier)) {
+            log.warn("[{}] revoke된 세션 접근 차단 - userIdentifier: {}",
+                    command, sanitizeForLog(userIdentifier));
+            throw new StompErrorException(StompErrorCode.SESSION_REVOKED);
+        }
+
         switch (accessor.getCommand()) {
             case SUBSCRIBE -> handleSubscribe(accessor, sessionAttributes, userIdentifier);
             case SEND -> log.info("[SEND] 메시지 발송 - 식별자: {}, 경로: {}",

@@ -79,7 +79,6 @@ class GameSessionControllerMockMvcTest {
                 "vid123",
                 "https://youtube.com/watch?v=vid123",
                 0,
-                30,
                 15,
                 false
         );

@@ -225,13 +225,11 @@ public class GameSessionCreateService {
         });
 
         MapItem firstItem = selectedItems.get(0);
-        int effectiveEndTime = firstItem.getStartTime() + lobby.getTimeLimitSeconds();
         return RoundStartDto.builder()
                 .type(GameEventTypes.ROUND_READY)
                 .videoId(firstItem.getVideoId())
                 .youtubeUrl(firstItem.getYoutubeUrl())
                 .startTime(firstItem.getStartTime())
-                .endTime(effectiveEndTime)
                 .timeLimitSeconds(lobby.getTimeLimitSeconds())
                 .roundNo(1)
                 .serverStartedAt(serverStartedAt)

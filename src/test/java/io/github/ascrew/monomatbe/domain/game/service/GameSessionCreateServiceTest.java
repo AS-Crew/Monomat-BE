@@ -178,7 +178,6 @@ class GameSessionCreateServiceTest {
         assertThat(result.videoId()).isEqualTo("vId");
         assertThat(result.youtubeUrl()).isEqualTo("https://youtube.com/vId");
         assertThat(result.startTime()).isEqualTo(10);
-        assertThat(result.endTime()).isEqualTo(40);
         assertThat(result.timeLimitSeconds()).isEqualTo(30);
         assertThat(result.roundNo()).isEqualTo(1);
         assertThat(result.serverStartedAt()).isGreaterThan(0L);

@@ -94,7 +94,6 @@ class MapItemPersistenceServiceTest {
                     .youtubeUrl(input.getYoutubeUrl())
                     .videoId(input.getVideoId())
                     .startTime(input.getStartTime())
-                    .endTime(input.getEndTime())
                     .title(input.getTitle())
                     .artist(input.getArtist())
                     .thumbnailUrl(input.getThumbnailUrl())
@@ -104,7 +103,6 @@ class MapItemPersistenceServiceTest {
                     .build();
         });
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
 
         CreateMapItemRequest request = createRequest(1);
         YoutubeMetadata metadata = new YoutubeMetadata("v", "t", "a", "th");
@@ -116,7 +114,7 @@ class MapItemPersistenceServiceTest {
         assertThat(saved.getId()).isEqualTo(100L);
         assertThat(saved.getVideoId()).isEqualTo("v");
         assertThat(quizMap.getNumOfSong()).isEqualTo(1);
-        assertThat(quizMap.getTotalPlayTime()).isEqualTo(30);
+        assertThat(quizMap.getTotalPlayTime()).isZero();
     }
 
     @Test
@@ -131,7 +129,6 @@ class MapItemPersistenceServiceTest {
                 .youtubeUrl("u")
                 .videoId("v")
                 .startTime(0)
-                .endTime(30)
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
@@ -142,7 +139,6 @@ class MapItemPersistenceServiceTest {
                 .build();
         when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(50L, 1L)).thenReturn(Optional.of(mapItem));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(0L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(0L);
 
         persistenceService.delete(1L, 50L, 10L);
 
@@ -160,7 +156,6 @@ class MapItemPersistenceServiceTest {
         when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
         when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
         when(publicationValidator.isPublishable(1L)).thenReturn(true);
 
         persistenceService.create(
@@ -182,7 +177,6 @@ class MapItemPersistenceServiceTest {
         when(mapItemJpaRepository.existsByMapIdAndOrderNumAndIsDeletedFalse(1L, 1)).thenReturn(false);
         when(mapItemJpaRepository.save(any(MapItem.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
         when(publicationValidator.isPublishable(1L)).thenReturn(false);
 
         persistenceService.create(
@@ -208,7 +202,6 @@ class MapItemPersistenceServiceTest {
                 .youtubeUrl("u")
                 .videoId("v")
                 .startTime(0)
-                .endTime(30)
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
@@ -219,7 +212,6 @@ class MapItemPersistenceServiceTest {
                 .build();
         when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(50L, 1L)).thenReturn(Optional.of(mapItem));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(0L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(0L);
         when(publicationValidator.isPublishable(1L)).thenReturn(false);
 
         persistenceService.delete(1L, 50L, 10L);
@@ -241,7 +233,6 @@ class MapItemPersistenceServiceTest {
                 .youtubeUrl("u")
                 .videoId("v")
                 .startTime(0)
-                .endTime(30)
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
@@ -252,7 +243,6 @@ class MapItemPersistenceServiceTest {
                 .build();
         when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(51L, 1L)).thenReturn(Optional.of(mapItem));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
         when(publicationValidator.isPublishable(1L)).thenReturn(true);
 
         persistenceService.delete(1L, 51L, 10L);
@@ -276,7 +266,6 @@ class MapItemPersistenceServiceTest {
                 .youtubeUrl("u")
                 .videoId("v")
                 .startTime(0)
-                .endTime(30)
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
@@ -287,7 +276,6 @@ class MapItemPersistenceServiceTest {
                 .build();
         when(mapItemJpaRepository.findByIdAndMapIdAndIsDeletedFalse(60L, 1L)).thenReturn(Optional.of(mapItem));
         when(mapItemJpaRepository.countByMapIdAndIsDeletedFalse(1L)).thenReturn(1L);
-        when(mapItemJpaRepository.sumPlayTimeByMapId(1L)).thenReturn(30L);
         // 아이템이 남아있어도(numOfSong=1) 검증기가 실패를 알리면 자동 비공개되어야 한다.
         when(publicationValidator.isPublishable(1L)).thenReturn(false);
 
@@ -395,7 +383,6 @@ class MapItemPersistenceServiceTest {
                 .youtubeUrl("u")
                 .videoId("v")
                 .startTime(0)
-                .endTime(30)
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
@@ -411,7 +398,6 @@ class MapItemPersistenceServiceTest {
                 orderNum,
                 "https://www.youtube.com/watch?v=abcde123456",
                 10,
-                40,
                 List.of("정답"),
                 "힌트",
                 null

@@ -59,7 +59,6 @@ class MapCreateWithItemsTransactionIntegrationTest {
                 1,
                 "https://www.youtube.com/watch?v=video1",
                 30,
-                60,
                 List.of("ditto"),
                 "ㄷㅌ",
                 15
@@ -68,7 +67,6 @@ class MapCreateWithItemsTransactionIntegrationTest {
                 2,
                 "https://www.youtube.com/watch?v=video2",
                 0,
-                30,
                 List.of("omg"),
                 "ㅇㅇㅈ",
                 15
@@ -120,7 +118,7 @@ class MapCreateWithItemsTransactionIntegrationTest {
         assertThat(response.map().description()).isEqualTo("J-POP 중심 퀴즈 맵");
         assertThat(response.map().category()).isEqualTo(MapCategory.JPOP);
         assertThat(response.map().numOfSong()).isEqualTo(2);
-        assertThat(response.map().totalPlayTime()).isEqualTo(60);
+        assertThat(response.map().totalPlayTime()).isZero();
         assertThat(response.map().isPublic()).isFalse();
         assertThat(response.map().pendingPublic()).isFalse();
         assertThat(response.map().playCount()).isZero();
@@ -139,7 +137,7 @@ class MapCreateWithItemsTransactionIntegrationTest {
         assertThat(savedMap.getDescription()).isEqualTo("J-POP 중심 퀴즈 맵");
         assertThat(savedMap.getCategory()).isEqualTo(MapCategory.JPOP);
         assertThat(savedMap.getNumOfSong()).isEqualTo(2);
-        assertThat(savedMap.getTotalPlayTime()).isEqualTo(60);
+        assertThat(savedMap.getTotalPlayTime()).isZero();
         assertThat(savedMap.getIsPublic()).isFalse();
         assertThat(savedMap.getPendingPublic()).isFalse();
         assertThat(savedMap.getPlayCount()).isZero();
@@ -160,7 +158,6 @@ class MapCreateWithItemsTransactionIntegrationTest {
                 1,
                 "https://www.youtube.com/watch?v=video1",
                 30,
-                60,
                 List.of("ditto"),
                 "ㄷㅌ",
                 15
@@ -181,7 +178,6 @@ class MapCreateWithItemsTransactionIntegrationTest {
                 null,
                 "https://www.youtube.com/watch?v=video2",
                 0,
-                30,
                 List.of("omg"),
                 "ㅇㅇㅈ",
                 15
@@ -277,7 +273,6 @@ class MapCreateWithItemsTransactionIntegrationTest {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()

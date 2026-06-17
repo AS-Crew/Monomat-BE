@@ -7,7 +7,6 @@ record MapItemPrepareSource(
         Integer orderNum,
         String youtubeUrl,
         Integer startTime,
-        Integer endTime,
         List<String> answers,
         String hint,
         Integer hintTime

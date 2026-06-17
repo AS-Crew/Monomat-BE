@@ -118,7 +118,6 @@ class GameSessionCreateServiceTest {
                 .videoId("vId")
                 .youtubeUrl("https://youtube.com/vId")
                 .startTime(10)
-                .endTime(20)
                 .title("Secret Title")
                 .artist("Secret Artist")
                 .answers("[\"정답\"]")
@@ -179,7 +178,6 @@ class GameSessionCreateServiceTest {
         assertThat(result.videoId()).isEqualTo("vId");
         assertThat(result.youtubeUrl()).isEqualTo("https://youtube.com/vId");
         assertThat(result.startTime()).isEqualTo(10);
-        assertThat(result.endTime()).isEqualTo(40);
         assertThat(result.timeLimitSeconds()).isEqualTo(30);
         assertThat(result.roundNo()).isEqualTo(1);
         assertThat(result.serverStartedAt()).isGreaterThan(0L);
@@ -303,7 +301,6 @@ class GameSessionCreateServiceTest {
                 .videoId("vId")
                 .youtubeUrl("https://youtube.com/vId")
                 .startTime(10)
-                .endTime(20)
                 .title("t")
                 .artist("a")
                 .answers("[\"정답\"]")

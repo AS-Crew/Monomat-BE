@@ -125,7 +125,6 @@ public class MapManageTransactionService {
                             .youtubeUrl(source.youtubeUrl().trim())
                             .videoId(preparedItem.metadata().videoId())
                             .startTime(source.startTime())
-                            .endTime(source.endTime())
                             .title(preparedItem.metadata().title())
                             .artist(preparedItem.metadata().artist())
                             .thumbnailUrl(preparedItem.metadata().thumbnailUrl())
@@ -148,7 +147,6 @@ public class MapManageTransactionService {
                         source.youtubeUrl().trim(),
                         preparedItem.metadata().videoId(),
                         source.startTime(),
-                        source.endTime(),
                         preparedItem.metadata().title(),
                         preparedItem.metadata().artist(),
                         preparedItem.metadata().thumbnailUrl(),
@@ -211,7 +209,6 @@ public class MapManageTransactionService {
                         .youtubeUrl(source.youtubeUrl().trim())
                         .videoId(preparedItem.metadata().videoId())
                         .startTime(source.startTime())
-                        .endTime(source.endTime())
                         .title(preparedItem.metadata().title())
                         .artist(preparedItem.metadata().artist())
                         .thumbnailUrl(preparedItem.metadata().thumbnailUrl())
@@ -263,7 +260,6 @@ public class MapManageTransactionService {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()
@@ -291,7 +287,6 @@ public class MapManageTransactionService {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()
@@ -356,12 +351,8 @@ public class MapManageTransactionService {
 
     private void recalculateMapMetadata(QuizMap quizMap, List<PreparedManageItem> preparedItems) {
         int numOfSong = preparedItems.size();
-        int totalPlayTime = preparedItems.stream()
-                .map(PreparedManageItem::source)
-                .mapToInt(item -> item.endTime() - item.startTime())
-                .sum();
-
-        quizMap.updateMetadata(numOfSong, totalPlayTime);
+        // 재생시간은 로비의 time_limit_seconds로 통일되어 문제별 길이가 없으므로 totalPlayTime은 0으로 고정한다.
+        quizMap.updateMetadata(numOfSong, 0);
     }
 
     private void applyPublicationChange(QuizMap quizMap, boolean requestedPublic) {
@@ -416,7 +407,6 @@ public class MapManageTransactionService {
                 .youtubeUrl(mapItem.getYoutubeUrl())
                 .videoId(mapItem.getVideoId())
                 .startTime(mapItem.getStartTime())
-                .endTime(mapItem.getEndTime())
                 .title(mapItem.getTitle())
                 .artist(mapItem.getArtist())
                 .thumbnailUrl(mapItem.getThumbnailUrl())

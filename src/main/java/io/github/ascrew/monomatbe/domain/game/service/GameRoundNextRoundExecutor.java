@@ -102,14 +102,12 @@ public class GameRoundNextRoundExecutor {
 
             // 6. 다음 라운드 DTO 구성
             long serverStartedAt = System.currentTimeMillis();
-            int effectiveEndTime = mapItem.getStartTime() + gameSession.getLobby().getTimeLimitSeconds();
 
             RoundStartDto nextRoundDto = RoundStartDto.builder()
                       .type(GameEventTypes.ROUND_READY)
                       .videoId(mapItem.getVideoId())
                       .youtubeUrl(mapItem.getYoutubeUrl())
                       .startTime(mapItem.getStartTime())
-                      .endTime(effectiveEndTime)
                       .timeLimitSeconds(gameSession.getLobby().getTimeLimitSeconds())
                       .roundNo(nextRoundNo)
                       .serverStartedAt(serverStartedAt)

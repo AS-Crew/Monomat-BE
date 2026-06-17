@@ -83,7 +83,6 @@ class MapManageTransactionServiceTest {
                 "https://www.youtube.com/watch?v=old1",
                 "old1",
                 0,
-                30,
                 "[\"old1\"]"
         );
         MapItem item2 = mapItem(
@@ -93,7 +92,6 @@ class MapManageTransactionServiceTest {
                 "https://www.youtube.com/watch?v=old2",
                 "old2",
                 30,
-                60,
                 "[\"old2\"]"
         );
         MapItem savedNewItem = savedNewItem(quizMap);
@@ -103,7 +101,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=new1",
                 10,
-                40,
                 List.of("ditto"),
                 "ㄷㅌ",
                 15
@@ -113,7 +110,6 @@ class MapManageTransactionServiceTest {
                 2,
                 "https://www.youtube.com/watch?v=new2",
                 0,
-                30,
                 List.of("omg"),
                 "ㅇㅇㅈ",
                 15
@@ -160,7 +156,7 @@ class MapManageTransactionServiceTest {
         assertThat(response.map().description()).isEqualTo("J-POP 중심 퀴즈 맵");
         assertThat(response.map().category()).isEqualTo(MapCategory.JPOP);
         assertThat(response.map().numOfSong()).isEqualTo(2);
-        assertThat(response.map().totalPlayTime()).isEqualTo(60);
+        assertThat(response.map().totalPlayTime()).isZero();
         assertThat(response.map().isPublic()).isFalse();
         assertThat(response.items()).hasSize(2);
         assertThat(response.items().get(0).id()).isEqualTo(100L);
@@ -170,12 +166,11 @@ class MapManageTransactionServiceTest {
         assertThat(quizMap.getDescription()).isEqualTo("J-POP 중심 퀴즈 맵");
         assertThat(quizMap.getCategory()).isEqualTo(MapCategory.JPOP);
         assertThat(quizMap.getNumOfSong()).isEqualTo(2);
-        assertThat(quizMap.getTotalPlayTime()).isEqualTo(60);
+        assertThat(quizMap.getTotalPlayTime()).isZero();
 
         assertThat(item1.getYoutubeUrl()).isEqualTo("https://www.youtube.com/watch?v=new1");
         assertThat(item1.getVideoId()).isEqualTo("new1");
         assertThat(item1.getStartTime()).isEqualTo(10);
-        assertThat(item1.getEndTime()).isEqualTo(40);
         assertThat(item1.getAnswers()).isEqualTo("[\"ditto\"]");
 
         assertThat(item2.getIsDeleted()).isTrue();
@@ -190,14 +185,13 @@ class MapManageTransactionServiceTest {
     void updateManagedMapInTransaction_requestItemAndDeletedItemDuplicated_returns400() {
         User owner = registeredUser(10L, "owner");
         QuizMap quizMap = quizMap(owner);
-        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, 30, "[\"old\"]");
+        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, "[\"old\"]");
 
         ManageMapItemRequest itemRequest = new ManageMapItemRequest(
                 100L,
                 1,
                 "https://www.youtube.com/watch?v=new",
                 0,
-                30,
                 List.of("new"),
                 "n",
                 15
@@ -240,14 +234,13 @@ class MapManageTransactionServiceTest {
     void updateManagedMapInTransaction_dataIntegrityViolation_returns409() {
         User owner = registeredUser(10L, "owner");
         QuizMap quizMap = quizMap(owner);
-        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, 30, "[\"old\"]");
+        MapItem item = mapItem(100L, quizMap, 1, "https://www.youtube.com/watch?v=old", "old", 0, "[\"old\"]");
 
         ManageMapItemRequest itemRequest = new ManageMapItemRequest(
                 100L,
                 1,
                 "https://www.youtube.com/watch?v=new",
                 0,
-                30,
                 List.of("answer"),
                 "hint",
                 15
@@ -299,7 +292,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=new",
                 0,
-                30,
                 List.of("answer"),
                 "hint",
                 15
@@ -336,7 +328,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=request",
                 0,
-                30,
                 List.of("answer"),
                 "hint",
                 15
@@ -347,7 +338,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=prepared",
                 0,
-                30,
                 List.of("answer"),
                 "hint",
                 15
@@ -389,7 +379,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=video1",
                 30,
-                60,
                 List.of("ditto"),
                 "ㄷㅌ",
                 15
@@ -398,7 +387,6 @@ class MapManageTransactionServiceTest {
                 2,
                 "https://www.youtube.com/watch?v=video2",
                 0,
-                30,
                 List.of("omg"),
                 "ㅇㅇㅈ",
                 15
@@ -433,7 +421,6 @@ class MapManageTransactionServiceTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=video1")
                 .videoId("video1")
                 .startTime(30)
-                .endTime(60)
                 .title("YouTube title 1")
                 .artist("YouTube author 1")
                 .thumbnailUrl("https://thumbnail/1")
@@ -450,7 +437,6 @@ class MapManageTransactionServiceTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=video2")
                 .videoId("video2")
                 .startTime(0)
-                .endTime(30)
                 .title("YouTube title 2")
                 .artist("YouTube author 2")
                 .thumbnailUrl("https://thumbnail/2")
@@ -493,7 +479,7 @@ class MapManageTransactionServiceTest {
         assertThat(response.map().description()).isEqualTo("J-POP 중심 퀴즈 맵");
         assertThat(response.map().category()).isEqualTo(MapCategory.JPOP);
         assertThat(response.map().numOfSong()).isEqualTo(2);
-        assertThat(response.map().totalPlayTime()).isEqualTo(60);
+        assertThat(response.map().totalPlayTime()).isZero();
         assertThat(response.map().isPublic()).isFalse();
         assertThat(response.map().pendingPublic()).isFalse();
         assertThat(response.map().playCount()).isEqualTo(0L);
@@ -512,7 +498,7 @@ class MapManageTransactionServiceTest {
         assertThat(response.items().get(1).answers()).containsExactly("omg");
 
         assertThat(savedMap.getNumOfSong()).isEqualTo(2);
-        assertThat(savedMap.getTotalPlayTime()).isEqualTo(60);
+        assertThat(savedMap.getTotalPlayTime()).isZero();
 
         verify(quizMapJpaRepository).save(any(QuizMap.class));
         verify(mapItemJpaRepository, times(2)).save(any(MapItem.class));
@@ -528,7 +514,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=video1",
                 30,
-                60,
                 List.of("ditto"),
                 "ㄷㅌ",
                 15
@@ -537,7 +522,6 @@ class MapManageTransactionServiceTest {
                 2,
                 "https://www.youtube.com/watch?v=video2",
                 0,
-                30,
                 List.of("omg"),
                 "ㅇㅇㅈ",
                 15
@@ -572,7 +556,6 @@ class MapManageTransactionServiceTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=video1")
                 .videoId("video1")
                 .startTime(30)
-                .endTime(60)
                 .title("YouTube title 1")
                 .artist("YouTube author 1")
                 .thumbnailUrl("https://thumbnail/1")
@@ -621,7 +604,6 @@ class MapManageTransactionServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=video1",
                 30,
-                60,
                 List.of("ditto"),
                 "ㄷㅌ",
                 15
@@ -670,7 +652,6 @@ class MapManageTransactionServiceTest {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()
@@ -709,7 +690,6 @@ class MapManageTransactionServiceTest {
             String youtubeUrl,
             String videoId,
             int startTime,
-            int endTime,
             String answers
     ) {
         return MapItem.builder()
@@ -719,7 +699,6 @@ class MapManageTransactionServiceTest {
                 .youtubeUrl(youtubeUrl)
                 .videoId(videoId)
                 .startTime(startTime)
-                .endTime(endTime)
                 .title("old title")
                 .artist("old artist")
                 .thumbnailUrl("old thumbnail")
@@ -738,7 +717,6 @@ class MapManageTransactionServiceTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=new2")
                 .videoId("new2")
                 .startTime(0)
-                .endTime(30)
                 .title("YouTube title 2")
                 .artist("YouTube author 2")
                 .thumbnailUrl("https://thumbnail/2")
@@ -769,7 +747,6 @@ class MapManageTransactionServiceTest {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()

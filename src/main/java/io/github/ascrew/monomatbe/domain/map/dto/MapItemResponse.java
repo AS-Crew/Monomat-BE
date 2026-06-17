@@ -13,7 +13,6 @@ public record MapItemResponse(
         String youtubeUrl,
         String videoId,
         int startTime,
-        int endTime,
         String title,
         String artist,
         String thumbnailUrl,

@@ -119,7 +119,6 @@ public class GameSessionQueryService {
         String videoId = null;
         String youtubeUrl = null;
         Integer startTime = null;
-        Integer endTime = null;
         Integer remainingSeconds = null;
         boolean isCorrect = false;
 
@@ -136,7 +135,6 @@ public class GameSessionQueryService {
                         videoId = mapItem.getVideoId();
                         youtubeUrl = mapItem.getYoutubeUrl();
                         startTime = mapItem.getStartTime();
-                        endTime = mapItem.getStartTime() + timeLimitSeconds;
                     }
                 } catch (Exception e) {
                     log.error("getCurrentRoundStatus: MapItem 조회 중 예외 발생 - code: {}, roundNo: {}, mapItemIdStr: {}",
@@ -165,7 +163,6 @@ public class GameSessionQueryService {
                 .videoId(videoId)
                 .youtubeUrl(youtubeUrl)
                 .startTime(startTime)
-                .endTime(endTime)
                 .remainingSeconds(remainingSeconds)
                 .isCorrect(isCorrect)
                 .build();

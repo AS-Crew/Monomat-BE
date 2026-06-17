@@ -13,7 +13,6 @@ public record RoundStartDto(
         String videoId,
         String youtubeUrl,
         int startTime,
-        int endTime,
         int timeLimitSeconds,
         int roundNo,
         long serverStartedAt

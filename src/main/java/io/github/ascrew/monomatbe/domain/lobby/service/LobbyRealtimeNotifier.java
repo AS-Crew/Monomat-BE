@@ -46,6 +46,7 @@ public class LobbyRealtimeNotifier {
     private static final Pattern LOBBY_CODE_PATTERN = Pattern.compile("^[A-Z0-9]{6,12}$");
 
     private static final String KICK_MESSAGE_FORMAT = "%s님이 강퇴되었습니다.";
+    private static final String LEAVE_MESSAGE_FORMAT = "%s님이 퇴장하셨습니다.";
     private static final String READY_CHANGED_MESSAGE_FORMAT = "%s님이 %s 상태로 변경했습니다.";
     private static final String HOST_CHANGED_MESSAGE_FORMAT = "%s님이 새로운 방장이 되었습니다.";
 
@@ -171,6 +172,29 @@ public class LobbyRealtimeNotifier {
                 targetUserIdentifier,
                 String.format(KICK_MESSAGE_FORMAT, targetUserIdentifier),
                 "KICK"
+        );
+    }
+
+    /**
+     * LEAVE 시스템 메시지를 로비 채팅 채널로 발행한다.
+     *
+     * [사용 시점]
+     * 클라이언트의 명시적 퇴장 요청으로 참여자가 로비를 나간 직후 호출한다.
+     *
+     * [주의]
+     * 퇴장 상태 변경은 leave_lobby.lua에서 이미 완료된 상태다.
+     * 메시지 발행 실패가 퇴장 자체를 롤백해서는 안 되므로 boolean 결과만 반환한다.
+     */
+    public boolean notifyLeaveMessage(
+            String lobbyCode,
+            String userIdentifier
+    ) {
+        return notifySystemChatMessage(
+                lobbyCode,
+                ChatMessageDto.MessageType.LEAVE,
+                userIdentifier,
+                String.format(LEAVE_MESSAGE_FORMAT, userIdentifier),
+                "LEAVE"
         );
     }
 

@@ -21,13 +21,6 @@ public interface MapItemJpaRepository extends JpaRepository<MapItem, Long> {
 
     long countByMapIdAndIsDeletedFalse(Long mapId);
 
-    @Query("""
-            select coalesce(sum(mi.endTime - mi.startTime), 0)
-            from MapItem mi
-            where mi.map.id = :mapId and mi.isDeleted = false
-            """)
-    Long sumPlayTimeByMapId(@Param("mapId") Long mapId);
-
     // 순서 재배치 시 UNIQUE(map_id, active_order_num) 제약 충돌을 피하기 위해
     // 1단계에서 기존 양수 orderNum을 음수로 일괄 변경한다.
     // id(Long)를 사용하지 않고 orderNum(Integer)을 그대로 음수화하여 타입 범위 초과 위험을 제거한다.

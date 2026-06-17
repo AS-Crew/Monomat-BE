@@ -37,11 +37,10 @@ public class MapManageService {
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵을 관리할 수 있습니다.";
     private static final String ERROR_MAP_NOT_FOUND = "맵을 찾을 수 없습니다.";
     private static final String ERROR_MAP_FORBIDDEN = "본인 소유의 맵만 수정할 수 있습니다.";
-    private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
+    private static final String ERROR_MISSING_START_TIME = "재생 시작 시간은 필수입니다.";
     private static final String ERROR_NEGATIVE_START_TIME = "재생 시작 시간은 0초 이상이어야 합니다.";
     private static final String ERROR_INVALID_VIDEO_DURATION = "YouTube 영상 길이 정보가 올바르지 않습니다.";
     private static final String ERROR_START_TIME_EXCEEDS_DURATION = "재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.";
-    private static final String ERROR_END_TIME_EXCEEDS_DURATION = "재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.";
     private static final String ERROR_DUPLICATE_ORDER = "중복된 문제 순서가 있습니다.";
     private static final String ERROR_INVALID_ORDER_SEQUENCE = "문제 순서는 1부터 문제 수까지 중복 없이 지정해야 합니다.";
     private static final String ERROR_DUPLICATE_ITEM_ID = "중복된 문제 ID가 있습니다.";
@@ -224,7 +223,6 @@ public class MapManageService {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()
@@ -237,7 +235,6 @@ public class MapManageService {
                 item.orderNum(),
                 item.youtubeUrl(),
                 item.startTime(),
-                item.endTime(),
                 item.answers(),
                 item.hint(),
                 item.hintTime()
@@ -248,10 +245,10 @@ public class MapManageService {
         List<PreparedManageItem> preparedItems = new ArrayList<>();
 
         for (MapItemPrepareSource source : sources) {
-            validateBasicTimeRange(source.startTime(), source.endTime());
+            validateStartTime(source.startTime());
 
             YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(source.youtubeUrl());
-            validateTimeRangeWithinDuration(source.startTime(), source.endTime(), metadata.durationSeconds());
+            validateStartTimeWithinDuration(source.startTime(), metadata.durationSeconds());
 
             preparedItems.add(new PreparedManageItem(
                     source,
@@ -265,21 +262,17 @@ public class MapManageService {
         return preparedItems;
     }
 
-    private void validateBasicTimeRange(Integer startTime, Integer endTime) {
-        if (startTime == null || endTime == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TIME_RANGE);
+    private void validateStartTime(Integer startTime) {
+        if (startTime == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_MISSING_START_TIME);
         }
 
         if (startTime < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_NEGATIVE_START_TIME);
         }
-
-        if (endTime <= startTime) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TIME_RANGE);
-        }
     }
 
-    private void validateTimeRangeWithinDuration(Integer startTime, Integer endTime, Integer durationSeconds) {
+    private void validateStartTimeWithinDuration(Integer startTime, Integer durationSeconds) {
         if (durationSeconds == null) {
             return;
         }
@@ -290,10 +283,6 @@ public class MapManageService {
 
         if (startTime >= durationSeconds) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_START_TIME_EXCEEDS_DURATION);
-        }
-
-        if (endTime > durationSeconds) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_END_TIME_EXCEEDS_DURATION);
         }
     }
 

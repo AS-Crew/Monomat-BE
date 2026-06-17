@@ -38,10 +38,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class MapItemServiceTest {
 
-    private static final String ERROR_INVALID_TIME_RANGE = "재생 구간은 시작 시간보다 종료 시간이 커야 합니다.";
     private static final String ERROR_NEGATIVE_START_TIME = "재생 시작 시간은 0초 이상이어야 합니다.";
     private static final String ERROR_START_TIME_EXCEEDS_DURATION = "재생 시작 시간은 YouTube 영상 길이보다 작아야 합니다.";
-    private static final String ERROR_END_TIME_EXCEEDS_DURATION = "재생 종료 시간은 YouTube 영상 길이를 초과할 수 없습니다.";
 
     @Mock
     private MapItemPersistenceService persistenceService;
@@ -65,35 +63,11 @@ class MapItemServiceTest {
     }
 
     @Test
-    void createMapItem_invalidTimeRange_skipsExternalCallsAndPersistence() {
-        CreateMapItemRequest request = new CreateMapItemRequest(
-                1,
-                "https://www.youtube.com/watch?v=abcde123456",
-                20,
-                10,
-                List.of("정답"),
-                "힌트",
-                15
-        );
-
-        assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
-                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
-                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-                    assertThat(e.getReason()).isEqualTo(ERROR_INVALID_TIME_RANGE);
-                });
-
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
-        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
-        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
-    }
-
-    @Test
     void createMapItem_negativeStartTime_skipsExternalCallsAndPersistence() {
         CreateMapItemRequest request = new CreateMapItemRequest(
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 -1,
-                30,
                 List.of("정답"),
                 "힌트",
                 15
@@ -116,7 +90,6 @@ class MapItemServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 10_000,
-                10_030,
                 List.of("정답"),
                 "힌트",
                 15
@@ -134,7 +107,6 @@ class MapItemServiceTest {
                 request.youtubeUrl(),
                 metadata,
                 request.startTime(),
-                request.endTime(),
                 "[\"정답\"]",
                 request.hint(),
                 request.hintTime()
@@ -154,7 +126,6 @@ class MapItemServiceTest {
 
         assertThat(response.id()).isEqualTo(100L);
         assertThat(response.startTime()).isEqualTo(10_000);
-        assertThat(response.endTime()).isEqualTo(10_030);
 
         verify(persistenceService).create(
                 eq(1L),
@@ -174,7 +145,6 @@ class MapItemServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 180,
-                181,
                 List.of("정답"),
                 "힌트",
                 15
@@ -194,37 +164,11 @@ class MapItemServiceTest {
     }
 
     @Test
-    void createMapItem_endTimeGreaterThanDuration_throwsBadRequest() {
+    void createMapItem_startTimeWithinDuration_success() throws Exception {
         CreateMapItemRequest request = new CreateMapItemRequest(
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 170,
-                181,
-                List.of("정답"),
-                "힌트",
-                15
-        );
-
-        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
-        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
-
-        assertThatThrownBy(() -> mapItemService.createMapItem(1L, request, principal(10L)))
-                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
-                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-                    assertThat(e.getReason()).isEqualTo(ERROR_END_TIME_EXCEEDS_DURATION);
-                });
-
-        verify(persistenceService, never()).create(any(), any(), any(), any(), any(), any(), anyInt());
-        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
-    }
-
-    @Test
-    void createMapItem_endTimeEqualsDuration_success() throws Exception {
-        CreateMapItemRequest request = new CreateMapItemRequest(
-                1,
-                "https://www.youtube.com/watch?v=abcde123456",
-                170,
-                180,
                 List.of("정답"),
                 "힌트",
                 15
@@ -242,7 +186,6 @@ class MapItemServiceTest {
                 request.youtubeUrl(),
                 metadata,
                 request.startTime(),
-                request.endTime(),
                 "[\"정답\"]",
                 request.hint(),
                 request.hintTime()
@@ -261,7 +204,6 @@ class MapItemServiceTest {
         var response = mapItemService.createMapItem(1L, request, principal(10L));
 
         assertThat(response.startTime()).isEqualTo(170);
-        assertThat(response.endTime()).isEqualTo(180);
         verify(mapCacheEvictor).evictPublicMapCaches(1L);
     }
 
@@ -271,7 +213,6 @@ class MapItemServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 -1,
-                30,
                 List.of("정답"),
                 "힌트",
                 15
@@ -294,7 +235,6 @@ class MapItemServiceTest {
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 180,
-                181,
                 List.of("정답"),
                 "힌트",
                 15
@@ -314,38 +254,12 @@ class MapItemServiceTest {
     }
 
     @Test
-    void updateMapItem_endTimeGreaterThanDuration_throwsBadRequest() {
-        UpdateMapItemRequest request = new UpdateMapItemRequest(
-                1,
-                "https://www.youtube.com/watch?v=abcde123456",
-                170,
-                181,
-                List.of("정답"),
-                "힌트",
-                15
-        );
-
-        YoutubeMetadata metadata = new YoutubeMetadata("abcde123456", "title", "artist", "thumb", 180);
-        when(youtubeValidationService.validateYoutubeUrl(request.youtubeUrl())).thenReturn(metadata);
-
-        assertThatThrownBy(() -> mapItemService.updateMapItem(1L, 100L, request, principal(10L)))
-                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
-                    assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-                    assertThat(e.getReason()).isEqualTo(ERROR_END_TIME_EXCEEDS_DURATION);
-                });
-
-        verify(persistenceService, never()).update(any(), any(), any(), any(), any(), any(), any(), anyInt());
-        verify(mapCacheEvictor, never()).evictPublicMapCaches(any());
-    }
-
-    @Test
     void createMapItem_success_callsYoutubeBeforePersistenceAndEvictsCacheAfter() throws Exception {
         // "좋은날"과 "좋은 날"은 정규화 후 동일 → dedup되어 단일 정답으로 저장된다.
         CreateMapItemRequest request = new CreateMapItemRequest(
                 1,
                 "https://www.youtube.com/watch?v=abcde123456",
                 10,
-                40,
                 List.of("좋은날", "좋은 날"),
                 "  좋은날 힌트  ",
                 null
@@ -363,7 +277,6 @@ class MapItemServiceTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=abcde123456")
                 .videoId("abcde123456")
                 .startTime(10)
-                .endTime(40)
                 .title("title")
                 .artist("artist")
                 .thumbnailUrl("thumb")
@@ -407,7 +320,6 @@ class MapItemServiceTest {
                 .youtubeUrl("https://www.youtube.com/watch?v=abcde123456")
                 .videoId("abcde123456")
                 .startTime(0)
-                .endTime(30)
                 .title("t")
                 .artist("a")
                 .thumbnailUrl("th")
@@ -490,7 +402,6 @@ class MapItemServiceTest {
             String youtubeUrl,
             YoutubeMetadata metadata,
             Integer startTime,
-            Integer endTime,
             String answers,
             String hint,
             Integer hintTime
@@ -502,7 +413,6 @@ class MapItemServiceTest {
                 .youtubeUrl(youtubeUrl)
                 .videoId(metadata.videoId())
                 .startTime(startTime)
-                .endTime(endTime)
                 .title(metadata.title())
                 .artist(metadata.artist())
                 .thumbnailUrl(metadata.thumbnailUrl())

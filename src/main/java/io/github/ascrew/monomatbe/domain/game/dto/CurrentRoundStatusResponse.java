@@ -12,7 +12,6 @@ public record CurrentRoundStatusResponse(
         String videoId,
         String youtubeUrl,
         Integer startTime,
-        Integer endTime,
         Integer remainingSeconds,
         boolean isCorrect
 ) {

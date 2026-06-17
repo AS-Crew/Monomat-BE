@@ -155,7 +155,6 @@ class GameSessionQueryServiceTest {
         assertThat(response.videoId()).isEqualTo("vid_123");
         assertThat(response.youtubeUrl()).isEqualTo("https://youtube.com/watch?v=vid_123");
         assertThat(response.startTime()).isEqualTo(15);
-        assertThat(response.endTime()).isEqualTo(45);
         assertThat(response.remainingSeconds()).isNull();
         assertThat(response.isCorrect()).isFalse();
     }
@@ -203,7 +202,6 @@ class GameSessionQueryServiceTest {
         assertThat(response.roundPhase()).isEqualTo("PLAYING");
         assertThat(response.videoId()).isEqualTo("vid_123");
         assertThat(response.startTime()).isEqualTo(15);
-        assertThat(response.endTime()).isEqualTo(45);
         assertThat(response.serverStartedAt()).isEqualTo(startTimeMillis);
         assertThat(response.remainingSeconds()).isLessThanOrEqualTo(20);
         assertThat(response.isCorrect()).isTrue();

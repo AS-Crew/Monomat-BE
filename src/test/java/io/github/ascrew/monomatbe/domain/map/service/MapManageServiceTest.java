@@ -86,7 +86,6 @@ class MapManageServiceTest {
                                 1,
                                 "https://www.youtube.com/watch?v=new1",
                                 10,
-                                40,
                                 List.of(" Ditto ", "ditto"),
                                 "ㄷㅌ",
                                 15
@@ -200,8 +199,8 @@ class MapManageServiceTest {
                 MapCategory.JPOP,
                 false,
                 List.of(
-                        new ManageMapItemRequest(null, 1, "https://www.youtube.com/watch?v=a", 0, 30, List.of("a"), "a", 15),
-                        new ManageMapItemRequest(null, 1, "https://www.youtube.com/watch?v=b", 0, 30, List.of("b"), "b", 15)
+                        new ManageMapItemRequest(null, 1, "https://www.youtube.com/watch?v=a", 0, List.of("a"), "a", 15),
+                        new ManageMapItemRequest(null, 1, "https://www.youtube.com/watch?v=b", 0, List.of("b"), "b", 15)
                 ),
                 List.of()
         );
@@ -254,7 +253,6 @@ class MapManageServiceTest {
                         1,
                         "https://www.youtube.com/watch?v=invalid",
                         0,
-                        30,
                         List.of("answer"),
                         "hint",
                         15
@@ -352,7 +350,6 @@ class MapManageServiceTest {
                         1,
                         "https://www.youtube.com/watch?v=video1",
                         30,
-                        60,
                         List.of("ditto"),
                         "ㄷㅌ",
                         15

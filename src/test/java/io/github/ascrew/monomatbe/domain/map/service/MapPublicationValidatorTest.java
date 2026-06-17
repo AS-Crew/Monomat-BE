@@ -49,61 +49,18 @@ class MapPublicationValidatorTest {
     @Test
     void requirePublishable_startTimeNegative_throwsConflict() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, -1, 30, "정답")));
+                .thenReturn(List.of(item(1, -1, "정답")));
 
         assertThatThrownBy(() -> validator.requirePublishable(1L))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
                 .hasMessageContaining("1번 문제");
-    }
-
-    @Test
-    void requirePublishable_endTimeNotGreaterThanStartTime_throwsConflict() {
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(2, 30, 30, "정답")));
-
-        assertThatThrownBy(() -> validator.requirePublishable(1L))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("2번 문제");
-    }
-
-    @Test
-    void requirePublishable_segmentTooShort_throwsConflict() {
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 2, "정답")));
-
-        assertThatThrownBy(() -> validator.requirePublishable(1L))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("최소")
-                .hasMessageContaining("1번 문제");
-    }
-
-    @Test
-    void requirePublishable_segmentTooLong_throwsConflict() {
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 31, "정답")));
-
-        assertThatThrownBy(() -> validator.requirePublishable(1L))
-                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
-                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("최대")
-                .hasMessageContaining("1번 문제");
-    }
-
-    @Test
-    void requirePublishable_segmentBoundaryValues_doNotThrow() {
-        when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 3, "정답1"), item(2, 0, 30, "정답2")));
-
-        validator.requirePublishable(1L);
     }
 
     @Test
     void requirePublishable_blankYoutubeUrl_throwsConflict() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 30, "  ", VALID_VIDEO_ID, "정답")));
+                .thenReturn(List.of(item(1, 0, "  ", VALID_VIDEO_ID, "정답")));
 
         assertThatThrownBy(() -> validator.requirePublishable(1L))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
@@ -115,7 +72,7 @@ class MapPublicationValidatorTest {
     @Test
     void requirePublishable_invalidVideoId_throwsConflict() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 30, VALID_YOUTUBE_URL, "short", "정답")));
+                .thenReturn(List.of(item(1, 0, VALID_YOUTUBE_URL, "short", "정답")));
 
         assertThatThrownBy(() -> validator.requirePublishable(1L))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
@@ -127,7 +84,7 @@ class MapPublicationValidatorTest {
     @Test
     void requirePublishable_blankAnswer_throwsConflict() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(3, 0, 30, "   ")));
+                .thenReturn(List.of(item(3, 0, "   ")));
 
         assertThatThrownBy(() -> validator.requirePublishable(1L))
                 .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
@@ -150,7 +107,7 @@ class MapPublicationValidatorTest {
     @Test
     void requirePublishable_allValid_doesNotThrow() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 30, "정답1"), item(2, 10, 40, "정답2")));
+                .thenReturn(List.of(item(1, 0, "정답1"), item(2, 10, "정답2")));
 
         validator.requirePublishable(1L);
     }
@@ -158,7 +115,7 @@ class MapPublicationValidatorTest {
     @Test
     void isPublishable_returnsTrueWhenValid_falseOtherwise() {
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(1L))
-                .thenReturn(List.of(item(1, 0, 30, "정답")));
+                .thenReturn(List.of(item(1, 0, "정답")));
         when(mapItemJpaRepository.findAllByMapIdAndIsDeletedFalseOrderByOrderNumAsc(2L))
                 .thenReturn(List.of());
 
@@ -166,27 +123,25 @@ class MapPublicationValidatorTest {
         assertThat(validator.isPublishable(2L)).isFalse();
     }
 
-    private MapItem item(int orderNum, int startTime, int endTime, String answer) {
-        return item(orderNum, startTime, endTime, VALID_YOUTUBE_URL, VALID_VIDEO_ID, answer);
+    private MapItem item(int orderNum, int startTime, String answer) {
+        return item(orderNum, startTime, VALID_YOUTUBE_URL, VALID_VIDEO_ID, answer);
     }
 
-    private MapItem item(int orderNum, int startTime, int endTime, String youtubeUrl, String videoId, String answer) {
+    private MapItem item(int orderNum, int startTime, String youtubeUrl, String videoId, String answer) {
         return MapItem.builder()
                 .orderNum(orderNum)
                 .startTime(startTime)
-                .endTime(endTime)
                 .youtubeUrl(youtubeUrl)
                 .videoId(videoId)
                 .answers(answersJson(answer))
                 .build();
     }
 
-    // 비정상 JSON answers를 가진 유효 구간 아이템 (마이그레이션 잔여/수동 조작 데이터 가정)
+    // 비정상 JSON answers를 가진 아이템 (마이그레이션 잔여/수동 조작 데이터 가정)
     private MapItem itemWithRawAnswers(int orderNum, String rawAnswers) {
         return MapItem.builder()
                 .orderNum(orderNum)
                 .startTime(0)
-                .endTime(30)
                 .youtubeUrl(VALID_YOUTUBE_URL)
                 .videoId(VALID_VIDEO_ID)
                 .answers(rawAnswers)

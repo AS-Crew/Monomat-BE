@@ -14,6 +14,7 @@ package io.github.ascrew.monomatbe.domain.lobby.controller;
 
 import io.github.ascrew.monomatbe.domain.lobby.dto.KickLobbyPlayerRequest;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyKickService;
+import io.github.ascrew.monomatbe.domain.lobby.service.LobbyLeaveService;
 import io.github.ascrew.monomatbe.domain.lobby.service.LobbyRealtimeNotifier;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import jakarta.validation.Valid;
@@ -34,6 +35,7 @@ public class LobbyEventController {
 
   private final LobbyRealtimeNotifier lobbyRealtimeNotifier;
   private final LobbyKickService lobbyKickService;
+  private final LobbyLeaveService lobbyLeaveService;
 
   /**
    * 로비 생성 이벤트 수신
@@ -63,6 +65,31 @@ public class LobbyEventController {
   ) {
     String userIdentifier = extractUserIdentifier(accessor);
     lobbyRealtimeNotifier.notifyLobbyInfoRefresh(code, userIdentifier);
+  }
+
+  /**
+   * 로비 퇴장 이벤트 수신
+   *
+   * 클라이언트 송신 경로: /app/lobby/{code}/leave
+   *
+   * [동작]
+   * FE 퇴장 버튼 클릭 시 호출된다.
+   * 실제 퇴장 검증, leave_lobby.lua 실행, LEAVE 메시지/refresh 발행, 세션 키 정리는
+   * LobbyLeaveService가 담당한다.
+   *
+   * [설계 의도]
+   * 기존에는 퇴장 처리가 WebSocket DISCONNECT에만 의존하여,
+   * FE가 전역 STOMP 연결을 유지한 채 화면만 이동하면 인원 수가 즉시 갱신되지 않았다.
+   * 강퇴와 동일하게 명시적 퇴장 경로를 제공하여 실시간으로 반영되도록 한다.
+   */
+  @MessageMapping("/lobby/{code}/leave")
+  public void leaveLobby(
+          @DestinationVariable String code,
+          SimpMessageHeaderAccessor accessor
+  ) {
+    String userIdentifier = extractUserIdentifier(accessor);
+    String wsSessionId = accessor.getSessionId();
+    lobbyLeaveService.leaveByRequest(code, userIdentifier, wsSessionId);
   }
 
   /**

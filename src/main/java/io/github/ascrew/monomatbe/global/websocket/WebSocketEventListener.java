@@ -300,6 +300,9 @@ public class WebSocketEventListener {
             eventPublisher.publishEvent(new PlayerInGameReconnectEvent(lobbyCode, userIdentifier));
             publishEnterMessage(lobbyCode, userIdentifier);
             notifyLobbyInfoRefresh(lobbyCode);
+            // 목록 화면 구독자에게도 current_players 변동을 알린다. (#203)
+            // ALREADY_JOINED/SESSION_REPLACED는 인원 미변동이므로 ENTERED에서만 발행한다.
+            notifyLobbyListRefresh();
             return;
         }
 
@@ -509,6 +512,18 @@ public class WebSocketEventListener {
         messagingTemplate.convertAndSend(
                 StompDestinations.subscribeLobbyRefresh(lobbyCode),
                 StompDestinations.MSG_REFRESH_LOBBY_INFO
+        );
+    }
+
+    /**
+     * 전역 로비 목록 새로고침 신호를 브로드캐스트한다.
+     *
+     * 입장으로 인원 수(current_players)가 변동되면 목록 화면 구독자도 재조회하도록 알린다. (#203)
+     */
+    private void notifyLobbyListRefresh() {
+        messagingTemplate.convertAndSend(
+                StompDestinations.SUBSCRIBE_LOBBY_LIST_REFRESH,
+                StompDestinations.MSG_REFRESH_LOBBY_LIST
         );
     }
 

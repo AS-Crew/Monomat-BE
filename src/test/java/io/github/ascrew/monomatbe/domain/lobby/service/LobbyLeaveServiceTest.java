@@ -49,11 +49,12 @@ class LobbyLeaveServiceTest {
 
         // then
         verify(lobbyRealtimeNotifier).notifyLobbyInfoRefresh(LOBBY_CODE);
-        verify(lobbyRealtimeNotifier, never()).notifyLobbyListRefresh();
+        // 목록 화면 구독자에게도 인원 변동을 알린다. (#203)
+        verify(lobbyRealtimeNotifier).notifyLobbyListRefresh();
     }
 
     @Test
-    @DisplayName("방장 위임 결과이면 HOST_CHANGED 메시지와 로비 내부 refresh를 발행한다")
+    @DisplayName("방장 위임 결과이면 HOST_CHANGED 메시지와 로비 내부 refresh, 목록 refresh를 발행한다")
     void notifyHostChangedAndRefreshWhenHostDelegated() {
         // given
         when(lobbyRepository.executeLeaveLobbyProcess(LOBBY_CODE, USER_IDENTIFIER))
@@ -65,7 +66,8 @@ class LobbyLeaveServiceTest {
         // then
         verify(lobbyRealtimeNotifier).notifyHostChangedMessage(LOBBY_CODE, NEW_HOST_IDENTIFIER);
         verify(lobbyRealtimeNotifier).notifyLobbyInfoRefresh(LOBBY_CODE);
-        verify(lobbyRealtimeNotifier, never()).notifyLobbyListRefresh();
+        // 목록 화면 구독자에게도 인원 변동을 알린다. (#203)
+        verify(lobbyRealtimeNotifier).notifyLobbyListRefresh();
     }
 
     @Test
@@ -133,6 +135,22 @@ class LobbyLeaveServiceTest {
         // then
         verify(lobbyRealtimeNotifier, never()).notifyLeaveMessage(LOBBY_CODE, USER_IDENTIFIER);
         verify(stringRedisTemplate).delete(RedisKeys.wsConnectionKey(WS_SESSION_ID));
+    }
+
+    @Test
+    @DisplayName("퇴장 처리 실패(Error)이면 LEAVE 메시지/ws:connection 정리를 건너뛴다")
+    void doesNotPublishLeaveMessageNorCleanupWsConnectionWhenError() {
+        // given
+        when(lobbyRepository.executeLeaveLobbyProcess(LOBBY_CODE, USER_IDENTIFIER))
+                .thenReturn(new LeaveLobbyResult.Error("Redis Lua execution failed"));
+
+        // when
+        service.leaveByRequest(LOBBY_CODE, USER_IDENTIFIER, WS_SESSION_ID);
+
+        // then
+        // ws:connection 키를 유지해야 이후 실제 DISCONNECT가 퇴장/키 정리를 재시도할 수 있다.
+        verify(stringRedisTemplate, never()).delete(RedisKeys.wsConnectionKey(WS_SESSION_ID));
+        verify(lobbyRealtimeNotifier, never()).notifyLeaveMessage(LOBBY_CODE, USER_IDENTIFIER);
     }
 
     @Test

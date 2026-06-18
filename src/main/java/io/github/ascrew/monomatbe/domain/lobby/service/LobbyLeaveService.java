@@ -104,6 +104,8 @@ public class LobbyLeaveService {
                 }
 
                 lobbyRealtimeNotifier.notifyLobbyInfoRefresh(delegated.lobbyCode());
+                // 목록 화면 구독자에게도 current_players 변동을 알린다. (#203)
+                lobbyRealtimeNotifier.notifyLobbyListRefresh();
             }
 
             case LeaveLobbyResult.Left left -> {
@@ -113,10 +115,17 @@ public class LobbyLeaveService {
                         left.userId()
                 );
                 lobbyRealtimeNotifier.notifyLobbyInfoRefresh(left.lobbyCode());
+                // 목록 화면 구독자에게도 current_players 변동을 알린다. (#203)
+                lobbyRealtimeNotifier.notifyLobbyListRefresh();
             }
 
             case LeaveLobbyResult.Error error -> {
-                log.error("[processLeave] 퇴장 처리 실패 - 사유: {}", error.reason());
+                log.error(
+                        "[processLeave] 퇴장 처리 실패 - 로비: {}, 식별자: {}, 사유: {}",
+                        code,
+                        userIdentifier,
+                        error.reason()
+                );
             }
         }
 
@@ -150,6 +159,20 @@ public class LobbyLeaveService {
         }
 
         LeaveLobbyResult result = processLeave(code, userIdentifier);
+
+        // 퇴장 처리가 실패(Error)하면 Redis 상태가 변경되지 않았을 수 있다.
+        // 이 경우 ws:connection 키를 삭제하면 이후 실제 DISCONNECT가 퇴장/키 정리를 재시도하지 못해
+        // 참가자/세션 키가 orphan으로 남는다. 따라서 LEAVE 메시지 발행과 ws:connection 정리를 모두 건너뛴다.
+        if (result instanceof LeaveLobbyResult.Error) {
+            log.warn(
+                    "[leaveByRequest] 퇴장 처리 실패로 ws:connection 정리 생략 - 이후 DISCONNECT 재시도에 위임. "
+                            + "로비: {}, 식별자: {}, wsSessionId: {}",
+                    code,
+                    userIdentifier,
+                    wsSessionId
+            );
+            return;
+        }
 
         if (result instanceof LeaveLobbyResult.Left
                 || result instanceof LeaveLobbyResult.Delegated) {

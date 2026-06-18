@@ -175,6 +175,8 @@ public class LobbyKickService {
         }
 
         lobbyRealtimeNotifier.notifyLobbyInfoRefresh(lobbyCode);
+        // 목록 화면 구독자에게도 current_players 변동을 알린다. (#203)
+        lobbyRealtimeNotifier.notifyLobbyListRefresh();
 
         log.info(
                 "로비 유저 강퇴 완료 - lobbyCode: {}, targetUserIdentifier: {}, targetWsSessionId: {}",

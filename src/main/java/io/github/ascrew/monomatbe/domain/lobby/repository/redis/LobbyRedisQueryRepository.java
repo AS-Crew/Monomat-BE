@@ -417,6 +417,7 @@ public class LobbyRedisQueryRepository {
             });
         } catch (Exception e) {
             log.warn("빈 로비 reaper lobby:all SSCAN 후보 조회 실패", e);
+            resetReaperScanCursorAfterFailure();
         }
     }
 
@@ -497,6 +498,17 @@ public class LobbyRedisQueryRepository {
         );
     }
 
+    private void resetReaperScanCursorAfterFailure() {
+        try {
+            redisTemplate.opsForValue().set(
+                    RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR,
+                    REDIS_SCAN_CURSOR_INITIAL
+            );
+        } catch (Exception resetException) {
+            log.warn("빈 로비 reaper lobby:all SSCAN cursor 리셋 실패", resetException);
+        }
+    }
+
     private void pushReaperScanBuffer(
             RedisConnection connection,
             String code
@@ -514,6 +526,12 @@ public class LobbyRedisQueryRepository {
     private String normalizeScanCursor(String cursor) {
         if (cursor == null || cursor.isBlank()) {
             return REDIS_SCAN_CURSOR_INITIAL;
+        }
+
+        for (int i = 0; i < cursor.length(); i++) {
+            if (!Character.isDigit(cursor.charAt(i))) {
+                return REDIS_SCAN_CURSOR_INITIAL;
+            }
         }
 
         return cursor;

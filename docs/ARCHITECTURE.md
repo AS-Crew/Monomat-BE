@@ -1182,6 +1182,7 @@ FE는 STOMP ERROR의 `message`를 파싱하지 않습니다.
 - `LobbyReaperScheduler`는 정상 DISCONNECT/leave 경로를 타지 못한 로비를 복구 정리하는 2차 안전망입니다. 삭제 판단은 `current_players` 캐시가 아니라 `lobby:{code}:participants`와 로비별 WebSocket 세션 키(`lobby:{code}:user_session:{userIdentifier}` 및 `ws:connection:{wsSessionId}`)를 기준으로 `reap_lobby.lua` 안에서 원자적으로 수행합니다.
 - 생성 직후 로비는 WebSocket 구독 전까지 참여자가 0명일 수 있으므로 `monomat.lobby.reaper.grace-ms` 기간 동안 `TOO_YOUNG`으로 보존합니다. grace 이후에도 참여자가 0명이거나 참여자 모두가 해당 로비에 대한 유효 WebSocket 세션을 갖지 않으면 `REAPED`로 폭파합니다.
 - reaper 후보 조회는 `lobby:all` Set을 `SSCAN`으로 점진 순회하며, 마지막 cursor를 `lobby:all:reaper:scan-cursor`에 저장해 다음 실행에서 이어서 검사합니다. Redis SCAN `COUNT`가 limit보다 많은 후보를 반환할 수 있으므로 초과 후보는 `lobby:all:reaper:scan-buffer`에 보관해 다음 실행에서 먼저 처리합니다.
+- 단일 로비 폭파는 `reap_lobby.lua` 안에서 원자적·멱등으로 수행되지만, `lobby:all` scan-cursor / scan-buffer 기반 후보 순회는 단일 scheduler 인스턴스 실행을 전제로 합니다. 멀티 인스턴스에서 전수 순회 보장이 필요하면 별도 Redis lock 또는 후보 조회 전용 Lua 원자화가 필요합니다.
 - reaper는 `lobby:all`에 등록된 로비만 후보로 볼 수 있습니다. `lobby:{code}` Hash는 존재하지만 `lobby:all`에서 누락된 로비는 전체 keyspace scan 없이는 발견할 수 없으므로, 운영 중 발견되면 별도 보정 작업으로 `lobby:all`을 복구하거나 follow-up cleanup을 추가해야 합니다.
 
 ## 게임 세션 Redis 키 정리 정책

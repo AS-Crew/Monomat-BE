@@ -32,8 +32,10 @@ import java.util.List;
  * 이 스케줄러는 DISCONNECT 누락을 복구하는 2차 안전망이다.
  *
  * [단일 인스턴스 운영]
- * reap_lobby.lua가 원자적·멱등이므로 별도 분산 락 없이도 안전하다.
- * 다중 인스턴스 동시 실행 시에도 첫 폭파 이후는 STALE_INDEX로 수렴한다.
+ * 단일 로비 폭파는 reap_lobby.lua 안에서 원자적·멱등으로 수행된다. 다만 lobby:all
+ * scan-cursor / scan-buffer 기반 후보 순회는 단일 scheduler 인스턴스 실행을 전제로 한다.
+ * 멀티 인스턴스에서 전수 순회 보장이 필요하면 별도 Redis lock 또는 후보 조회 전용 Lua
+ * 원자화가 필요하다.
  */
 @Slf4j
 @Component

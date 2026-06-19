@@ -80,6 +80,10 @@ class LobbyReaperLifecycleRepositoryTest {
                 RedisKeys.FIELD_CURRENT_PLAYERS,
                 "0"
         );
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, HOST_ID), WS_HOST);
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID), WS_SECOND);
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, HOST_ID), "1");
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID), "2");
         addPublicIndexes(LOBBY_CODE, 2, 2);
 
         // when
@@ -101,6 +105,7 @@ class LobbyReaperLifecycleRepositoryTest {
 
         redisTemplate.opsForValue().set(RedisKeys.userStatusKey(SECOND_USER_ID), "ONLINE");
         redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID), WS_STALE);
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID), "1");
         redisTemplate.opsForHash().put(
                 RedisKeys.wsConnectionKey(WS_STALE),
                 WebSocketHeaders.SESSION_LOBBY_CODE,
@@ -208,6 +213,10 @@ class LobbyReaperLifecycleRepositoryTest {
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyOrderKey(LOBBY_CODE))).isFalse();
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyKickedKey(LOBBY_CODE))).isFalse();
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyReadyKey(LOBBY_CODE))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, HOST_ID))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, HOST_ID))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID))).isFalse();
 
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isFalse();
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_PUBLIC, LOBBY_CODE)).isFalse();
@@ -262,6 +271,8 @@ class LobbyReaperLifecycleRepositoryTest {
                 RedisKeys.lobbyReadyKey(lobbyCode),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, HOST_ID),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, SECOND_USER_ID),
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, HOST_ID),
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, SECOND_USER_ID),
                 RedisKeys.userStatusKey(HOST_ID),
                 RedisKeys.userStatusKey(SECOND_USER_ID),
                 RedisKeys.wsConnectionKey(WS_HOST),

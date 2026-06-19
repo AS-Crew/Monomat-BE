@@ -173,6 +173,23 @@ class LobbyRedisQueryRepositoryTest {
         assertThat(actualCodes).containsAll(expectedCodes);
     }
 
+    @Test
+    @DisplayName("reaper 후보 조회는 저장된 cursor가 비정상 문자열이어도 0으로 보정해 실패하지 않는다")
+    void getAllLobbyCodesForReaping_recoversInvalidStoredCursor() {
+        // given
+        String lobbyCode = newLobbyCode();
+        redisTemplate.opsForSet().add(RedisKeys.LOBBY_ALL, lobbyCode);
+        redisTemplate.opsForValue().set(RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR, "not-a-cursor");
+
+        // when
+        List<String> candidates = lobbyRedisQueryRepository.getAllLobbyCodesForReaping(10);
+
+        // then
+        assertThat(candidates).contains(lobbyCode);
+        assertThat(redisTemplate.opsForValue().get(RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR))
+                .matches("\\d+");
+    }
+
     private String newLobbyCode() {
         String lobbyCode = "TEST_LOBBY_" + UUID.randomUUID();
         usedLobbyCodes.add(lobbyCode);

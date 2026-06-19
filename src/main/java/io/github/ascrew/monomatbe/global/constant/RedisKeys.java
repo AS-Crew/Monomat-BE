@@ -754,6 +754,16 @@ public final class RedisKeys {
     }
 
     /**
+     * 로비 내 사용자별 현재 유효 WebSocket 세션 sequence 키의 prefix를 반환합니다.
+     *
+     * @param code 로비 초대 코드
+     * @return "lobby:{code}:user_session_seq:"
+     */
+    public static String lobbyUserSessionSequenceKeyPrefix(String code) {
+        return LOBBY_PREFIX + code + USER_SESSION_SEQUENCE_SUFFIX;
+    }
+
+    /**
      * 공개 맵 목록 캐시 버전 키를 반환합니다.
      *
      * @return "map:public:list:version"

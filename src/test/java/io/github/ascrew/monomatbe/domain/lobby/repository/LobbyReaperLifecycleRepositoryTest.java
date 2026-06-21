@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import org.junit.jupiter.api.AfterEach;
@@ -169,6 +170,27 @@ class LobbyReaperLifecycleRepositoryTest {
         // then
         assertThat(result).isEqualTo(ReapLobbyResult.TOO_YOUNG);
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
+    }
+
+    @Test
+    @DisplayName("PLAYING 로비는 유효 세션이 없어도 reaper가 삭제하지 않는다")
+    void keepsPlayingLobbyWithoutValidSession() {
+        // given
+        givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
+        redisTemplate.opsForHash().put(
+                RedisKeys.lobbyKey(LOBBY_CODE),
+                RedisKeys.FIELD_STATUS,
+                LobbyStatus.PLAYING.name()
+        );
+
+        // when
+        ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);
+
+        // then
+        assertThat(result).isEqualTo(ReapLobbyResult.ALIVE);
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).isTrue();
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
     }
 

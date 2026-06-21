@@ -48,6 +48,8 @@ local lobbyUserSessionPrefix = ARGV[3]         -- 로비별 현재 세션 키 pr
 local lobbyUserSessionSeqPrefix = ARGV[4]      -- 로비별 세션 sequence 키 prefix ("lobby:{code}:user_session_seq:")
 local wsConnectionPrefix = ARGV[5]             -- WebSocket 세션 매핑 Hash 키 prefix ("ws:connection:")
 local lobbyField = ARGV[6]                      -- ws:connection Hash의 lobbyCode 필드명
+local statusField = ARGV[7]                     -- 로비 Hash의 status 필드명
+local waitingStatus = ARGV[8]                   -- reaper 대상 로비 상태 ("WAITING")
 
 local FIELD_CREATED_AT_EPOCH_MILLIS = 'created_at_epoch_millis'
 
@@ -65,6 +67,11 @@ end
 if redis.call('EXISTS', lobbyKey) == 0 then
     removeAllIndexes()
     return "STALE_INDEX"
+end
+
+local currentStatus = redis.call('HGET', lobbyKey, statusField)
+if currentStatus ~= waitingStatus then
+    return "ALIVE"
 end
 
 -- 2. 생성 후 grace 기간이 지나지 않았으면 보존한다.

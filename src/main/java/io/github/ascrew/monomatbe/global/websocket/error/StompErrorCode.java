@@ -4,17 +4,47 @@ package io.github.ascrew.monomatbe.global.websocket.error;
  * WebSocket / STOMP 실패 코드를 중앙 관리한다.
  *
  * [중요]
- * FE는 message 문자열이 아니라 code/action/recoverable을 기준으로 분기해야 한다.
- * 따라서 enum 이름은 API 계약으로 보고 함부로 변경하지 않는다.
+ * FE는 message 문자열이 아니라 code, action, recoverable 값을
+ * 기준으로 오류 후속 처리를 결정해야 한다.
+ *
+ * enum 이름은 FE와 공유되는 API 계약이므로
+ * 기존 값을 임의로 삭제하거나 이름을 변경하지 않는다.
  */
 public enum StompErrorCode {
 
+    ACCESS_TOKEN_MISSING(
+            "인증 토큰이 없습니다. 토큰을 갱신한 후 다시 연결해주세요.",
+            StompErrorAction.REFRESH_TOKEN,
+            true
+    ),
+
+    ACCESS_TOKEN_INVALID(
+            "유효하지 않은 인증 토큰입니다. 다시 로그인해주세요.",
+            StompErrorAction.RELOGIN,
+            false
+    ),
+
+    ACCESS_TOKEN_EXPIRED(
+            "인증 토큰이 만료되었습니다. 토큰을 갱신한 후 다시 연결해주세요.",
+            StompErrorAction.REFRESH_TOKEN,
+            true
+    ),
+
+    /*
+     * #211 이전 FE와의 오류 코드 호환을 위해 유지한다.
+     *
+     * 신규 STOMP CONNECT 인증에서는 클라이언트의 userIdentifier
+     * native header를 인증 근거로 사용하지 않는다.
+     */
     CONNECT_USER_IDENTIFIER_MISSING(
             "사용자 식별자가 없습니다. 다시 로그인 후 접속해주세요.",
             StompErrorAction.RETRY_CONNECT,
             true
     ),
 
+    /*
+     * #211 이전 FE와의 오류 코드 호환을 위해 유지한다.
+     */
     CONNECT_USER_IDENTIFIER_INVALID(
             "유효하지 않은 사용자 식별자입니다. 다시 로그인 후 접속해주세요.",
             StompErrorAction.RETRY_CONNECT,
@@ -39,10 +69,15 @@ public enum StompErrorCode {
             true
     ),
 
+    /*
+     * 기존 오류 코드 호환을 위해 유지한다.
+     *
+     * 신규 Access Token CONNECT 인증에서는 SESSION_REVOKED를 사용한다.
+     */
     CONNECT_SESSION_REVOKED(
             "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
             StompErrorAction.RELOGIN,
-            true
+            false
     ),
 
     SESSION_UNAUTHENTICATED(
@@ -54,7 +89,7 @@ public enum StompErrorCode {
     SESSION_REVOKED(
             "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인 후 접속해주세요.",
             StompErrorAction.RELOGIN,
-            true
+            false
     ),
 
     LOBBY_ENTER_WS_SESSION_MISSING(
@@ -99,6 +134,12 @@ public enum StompErrorCode {
             false
     ),
 
+    /*
+     * 로비 입장 Lua에서 더 최신 WebSocket 세션이 발견된 경우 사용한다.
+     *
+     * #211에서도 기존 FE 계약과 Lua 결과 매핑을 유지하기 위해
+     * 새로운 STALE_SESSION 코드로 교체하지 않는다.
+     */
     LOBBY_STALE_SESSION(
             "더 최신 WebSocket 세션이 이미 존재합니다. 다시 접속해주세요.",
             StompErrorAction.RECONNECT,

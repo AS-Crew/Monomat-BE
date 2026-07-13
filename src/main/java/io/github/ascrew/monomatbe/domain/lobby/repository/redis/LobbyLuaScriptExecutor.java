@@ -200,8 +200,11 @@ public class LobbyLuaScriptExecutor {
      * ARGV[1] = lobbyCode
      * ARGV[2] = graceMillis (생성 직후 보호 기간)
      * ARGV[3] = lobbyUserSessionPrefix ("lobby:{code}:user_session:")
-     * ARGV[4] = wsConnectionPrefix ("ws:connection:")
-     * ARGV[5] = lobbyField (ws:connection Hash의 lobbyCode 필드명)
+     * ARGV[4] = lobbyUserSessionSeqPrefix ("lobby:{code}:user_session_seq:")
+     * ARGV[5] = wsConnectionPrefix ("ws:connection:")
+     * ARGV[6] = lobbyField (ws:connection Hash의 lobbyCode 필드명)
+     * ARGV[7] = statusField (lobby Hash의 status 필드명)
+     * ARGV[8] = waitingStatus ("WAITING")
      *
      * @param code        대상 로비 코드
      * @param graceMillis 생성 직후 폭파를 보류할 grace 기간(ms)
@@ -227,8 +230,11 @@ public class LobbyLuaScriptExecutor {
                 code,
                 String.valueOf(graceMillis),
                 RedisKeys.lobbyUserSessionKeyPrefix(code),
+                RedisKeys.lobbyUserSessionSequenceKeyPrefix(code),
                 RedisKeys.wsConnectionKeyPrefix(),
-                WebSocketHeaders.SESSION_LOBBY_CODE
+                WebSocketHeaders.SESSION_LOBBY_CODE,
+                RedisKeys.FIELD_STATUS,
+                LobbyStatus.WAITING.name()
         );
     }
 

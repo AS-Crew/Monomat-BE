@@ -1,6 +1,7 @@
 package io.github.ascrew.monomatbe.domain.lobby.repository;
 
 import io.github.ascrew.monomatbe.domain.lobby.ReapLobbyResult;
+import io.github.ascrew.monomatbe.domain.lobby.entity.LobbyStatus;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
 import org.junit.jupiter.api.AfterEach;
@@ -75,6 +76,15 @@ class LobbyReaperLifecycleRepositoryTest {
     void reapsLobbyWhenNoValidSessionForThisLobby() {
         // given: 참여자는 있으나 로비별 세션 키가 없는(=유효 세션 없음) 10분 전 생성 로비
         givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
+        redisTemplate.opsForHash().put(
+                RedisKeys.lobbyKey(LOBBY_CODE),
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                "0"
+        );
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, HOST_ID), WS_HOST);
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID), WS_SECOND);
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, HOST_ID), "1");
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID), "2");
         addPublicIndexes(LOBBY_CODE, 2, 2);
 
         // when
@@ -96,6 +106,7 @@ class LobbyReaperLifecycleRepositoryTest {
 
         redisTemplate.opsForValue().set(RedisKeys.userStatusKey(SECOND_USER_ID), "ONLINE");
         redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID), WS_STALE);
+        redisTemplate.opsForValue().set(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID), "1");
         redisTemplate.opsForHash().put(
                 RedisKeys.wsConnectionKey(WS_STALE),
                 WebSocketHeaders.SESSION_LOBBY_CODE,
@@ -127,6 +138,27 @@ class LobbyReaperLifecycleRepositoryTest {
     }
 
     @Test
+    @DisplayName("current_players가 0이어도 참여자에게 유효 세션이 있으면 삭제하지 않는다")
+    void keepsLobbyWhenCurrentPlayersCacheIsZeroButParticipantHasValidSession() {
+        // given: 표시/정렬용 current_players 캐시가 0으로 어긋났지만 실제 source of truth에는 유효 참여자가 있음
+        givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID);
+        redisTemplate.opsForHash().put(
+                RedisKeys.lobbyKey(LOBBY_CODE),
+                RedisKeys.FIELD_CURRENT_PLAYERS,
+                "0"
+        );
+        markValidSessionForLobby(LOBBY_CODE, HOST_ID, WS_HOST);
+
+        // when
+        ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);
+
+        // then
+        assertThat(result).isEqualTo(ReapLobbyResult.ALIVE);
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
+    }
+
+    @Test
     @DisplayName("생성 후 grace가 지나지 않은 로비는 0명이라도 보존한다 (구독 대기 보호)")
     void keepsYoungLobbyWithinGrace() {
         // given: 방금 생성된(=grace 이내) 참여자 0명 로비
@@ -138,6 +170,27 @@ class LobbyReaperLifecycleRepositoryTest {
         // then
         assertThat(result).isEqualTo(ReapLobbyResult.TOO_YOUNG);
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
+        assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
+    }
+
+    @Test
+    @DisplayName("PLAYING 로비는 유효 세션이 없어도 reaper가 삭제하지 않는다")
+    void keepsPlayingLobbyWithoutValidSession() {
+        // given
+        givenLobby(LOBBY_CODE, HOST_ID, false, 4, agedCreatedAt(), HOST_ID, SECOND_USER_ID);
+        redisTemplate.opsForHash().put(
+                RedisKeys.lobbyKey(LOBBY_CODE),
+                RedisKeys.FIELD_STATUS,
+                LobbyStatus.PLAYING.name()
+        );
+
+        // when
+        ReapLobbyResult result = lobbyRepository.reapEmptyLobby(LOBBY_CODE, GRACE_MS);
+
+        // then
+        assertThat(result).isEqualTo(ReapLobbyResult.ALIVE);
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyKey(LOBBY_CODE))).isTrue();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyParticipantsKey(LOBBY_CODE))).isTrue();
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isTrue();
     }
 
@@ -182,6 +235,10 @@ class LobbyReaperLifecycleRepositoryTest {
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyOrderKey(LOBBY_CODE))).isFalse();
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyKickedKey(LOBBY_CODE))).isFalse();
         assertThat(redisTemplate.hasKey(RedisKeys.lobbyReadyKey(LOBBY_CODE))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, HOST_ID))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionKey(LOBBY_CODE, SECOND_USER_ID))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, HOST_ID))).isFalse();
+        assertThat(redisTemplate.hasKey(RedisKeys.lobbyUserSessionSequenceKey(LOBBY_CODE, SECOND_USER_ID))).isFalse();
 
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_ALL, LOBBY_CODE)).isFalse();
         assertThat(redisTemplate.opsForSet().isMember(RedisKeys.LOBBY_PUBLIC, LOBBY_CODE)).isFalse();
@@ -236,6 +293,8 @@ class LobbyReaperLifecycleRepositoryTest {
                 RedisKeys.lobbyReadyKey(lobbyCode),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, HOST_ID),
                 RedisKeys.lobbyUserSessionKey(lobbyCode, SECOND_USER_ID),
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, HOST_ID),
+                RedisKeys.lobbyUserSessionSequenceKey(lobbyCode, SECOND_USER_ID),
                 RedisKeys.userStatusKey(HOST_ID),
                 RedisKeys.userStatusKey(SECOND_USER_ID),
                 RedisKeys.wsConnectionKey(WS_HOST),

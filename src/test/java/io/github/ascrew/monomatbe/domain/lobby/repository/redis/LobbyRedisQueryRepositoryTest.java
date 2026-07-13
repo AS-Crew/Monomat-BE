@@ -9,7 +9,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,7 +34,13 @@ class LobbyRedisQueryRepositoryTest {
                     RedisKeys.lobbyParticipantsKey(lobbyCode),
                     RedisKeys.lobbyOrderKey(lobbyCode)
             ));
+            redisTemplate.opsForSet().remove(RedisKeys.LOBBY_ALL, lobbyCode);
         }
+
+        redisTemplate.delete(List.of(
+                RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR,
+                RedisKeys.LOBBY_ALL_REAPER_SCAN_BUFFER
+        ));
 
         usedLobbyCodes.clear();
     }
@@ -138,6 +146,48 @@ class LobbyRedisQueryRepositoryTest {
 
         // then
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("reaper 후보 조회는 저장된 SSCAN cursor와 buffer를 사용해 lobby:all 전체를 점진 순회한다")
+    void getAllLobbyCodesForReaping_continuesScanWithStoredCursor() {
+        // given
+        Set<String> expectedCodes = new LinkedHashSet<>();
+        for (int i = 0; i < 30; i++) {
+            String lobbyCode = newLobbyCode();
+            expectedCodes.add(lobbyCode);
+            redisTemplate.opsForSet().add(RedisKeys.LOBBY_ALL, lobbyCode);
+        }
+
+        Set<String> actualCodes = new LinkedHashSet<>();
+
+        // when
+        for (int i = 0; i < 30 && !actualCodes.containsAll(expectedCodes); i++) {
+            List<String> candidates = lobbyRedisQueryRepository.getAllLobbyCodesForReaping(3);
+
+            assertThat(candidates).hasSizeLessThanOrEqualTo(3);
+            actualCodes.addAll(candidates);
+        }
+
+        // then
+        assertThat(actualCodes).containsAll(expectedCodes);
+    }
+
+    @Test
+    @DisplayName("reaper 후보 조회는 저장된 cursor가 비정상 문자열이어도 0으로 보정해 실패하지 않는다")
+    void getAllLobbyCodesForReaping_recoversInvalidStoredCursor() {
+        // given
+        String lobbyCode = newLobbyCode();
+        redisTemplate.opsForSet().add(RedisKeys.LOBBY_ALL, lobbyCode);
+        redisTemplate.opsForValue().set(RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR, "not-a-cursor");
+
+        // when
+        List<String> candidates = lobbyRedisQueryRepository.getAllLobbyCodesForReaping(10);
+
+        // then
+        assertThat(candidates).contains(lobbyCode);
+        assertThat(redisTemplate.opsForValue().get(RedisKeys.LOBBY_ALL_REAPER_SCAN_CURSOR))
+                .matches("\\d+");
     }
 
     private String newLobbyCode() {

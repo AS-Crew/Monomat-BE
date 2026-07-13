@@ -45,8 +45,11 @@ local publicMostAvailableIndexKey = KEYS[10]  -- lobby:public:most_available (ZS
 local lobbyCode = ARGV[1]                      -- 대상 로비 코드
 local graceMillis = tonumber(ARGV[2])          -- 생성 직후 보호 기간(ms)
 local lobbyUserSessionPrefix = ARGV[3]         -- 로비별 현재 세션 키 prefix ("lobby:{code}:user_session:")
-local wsConnectionPrefix = ARGV[4]             -- WebSocket 세션 매핑 Hash 키 prefix ("ws:connection:")
-local lobbyField = ARGV[5]                      -- ws:connection Hash의 lobbyCode 필드명
+local lobbyUserSessionSeqPrefix = ARGV[4]      -- 로비별 세션 sequence 키 prefix ("lobby:{code}:user_session_seq:")
+local wsConnectionPrefix = ARGV[5]             -- WebSocket 세션 매핑 Hash 키 prefix ("ws:connection:")
+local lobbyField = ARGV[6]                      -- ws:connection Hash의 lobbyCode 필드명
+local statusField = ARGV[7]                     -- 로비 Hash의 status 필드명
+local waitingStatus = ARGV[8]                   -- reaper 대상 로비 상태 ("WAITING")
 
 local FIELD_CREATED_AT_EPOCH_MILLIS = 'created_at_epoch_millis'
 
@@ -64,6 +67,11 @@ end
 if redis.call('EXISTS', lobbyKey) == 0 then
     removeAllIndexes()
     return "STALE_INDEX"
+end
+
+local currentStatus = redis.call('HGET', lobbyKey, statusField)
+if currentStatus ~= waitingStatus then
+    return "ALIVE"
 end
 
 -- 2. 생성 후 grace 기간이 지나지 않았으면 보존한다.
@@ -110,6 +118,11 @@ end
 -- 4. 0명이거나 전원 오프라인이면 로비를 폭파한다.
 --    leave_lobby.lua의 DESTROYED 경로와 동일하게 모든 로비 키와 인덱스를 제거한다.
 redis.call('DEL', lobbyKey, participantsKey, orderKey, kickedKey, readyKey)
+
+for i = 1, #participants do
+    redis.call('DEL', lobbyUserSessionPrefix .. participants[i], lobbyUserSessionSeqPrefix .. participants[i])
+end
+
 removeAllIndexes()
 
 return "REAPED"

@@ -9,6 +9,50 @@ package io.github.ascrew.monomatbe.global.websocket.error;
  */
 public enum StompErrorCode {
 
+    /**
+     * STOMP CONNECT 시 Authorization 헤더가 없거나 Bearer 형식이 아닌 경우. (#211)
+     *
+     * Access Token 없이는 WebSocket 연결을 인증할 수 없으므로 재로그인이 필요하다.
+     */
+    ACCESS_TOKEN_MISSING(
+            "인증 토큰이 없습니다. 다시 로그인 후 접속해주세요.",
+            StompErrorAction.RELOGIN,
+            true
+    ),
+
+    /**
+     * Access Token 서명이 유효하지 않거나, 필수 claim 누락, 블랙리스트 등록 등으로
+     * 신뢰할 수 없는 토큰인 경우. (#211)
+     */
+    ACCESS_TOKEN_INVALID(
+            "유효하지 않은 인증 토큰입니다. 다시 로그인 후 접속해주세요.",
+            StompErrorAction.RELOGIN,
+            true
+    ),
+
+    /**
+     * Access Token이 만료된 경우. (#211)
+     *
+     * FE는 Refresh Token으로 재발급한 뒤 재연결하거나 재로그인해야 한다.
+     */
+    ACCESS_TOKEN_EXPIRED(
+            "인증 토큰이 만료되었습니다. 토큰 재발급 후 다시 접속해주세요.",
+            StompErrorAction.RELOGIN,
+            true
+    ),
+
+    /**
+     * 더 최신 WebSocket 세션이 이미 존재하는 경우. (#211)
+     *
+     * 현재 최신 세션 판별은 로비 레벨(enter_lobby.lua / lobbyUserSessionKey)에서 수행되며,
+     * 본 코드는 FE 계약 정합을 위해 정의한다.
+     */
+    STALE_SESSION(
+            "더 최신 WebSocket 세션이 이미 존재합니다. 다시 접속해주세요.",
+            StompErrorAction.RECONNECT,
+            true
+    ),
+
     CONNECT_USER_IDENTIFIER_MISSING(
             "사용자 식별자가 없습니다. 다시 로그인 후 접속해주세요.",
             StompErrorAction.RETRY_CONNECT,

@@ -3,8 +3,14 @@ package io.github.ascrew.monomatbe.global.websocket;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.constant.StompDestinations;
 import io.github.ascrew.monomatbe.global.constant.WebSocketHeaders;
+import io.github.ascrew.monomatbe.global.security.jwt.JwtClaims;
+import io.github.ascrew.monomatbe.global.security.jwt.JwtTokenProvider;
+import io.github.ascrew.monomatbe.global.security.jwt.TokenHashUtils;
 import io.github.ascrew.monomatbe.global.websocket.error.StompErrorCode;
 import io.github.ascrew.monomatbe.global.websocket.error.StompErrorException;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +27,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * STOMP 채널 인터셉터
@@ -44,10 +49,11 @@ import java.util.regex.Pattern;
 @Component
 public class StompChannelInterceptor implements ChannelInterceptor {
 
-    private static final Pattern UUID_PATTERN =
-            Pattern.compile(
-                    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-            );
+    /**
+     * STOMP CONNECT native header에서 Access Token을 읽어올 헤더 이름과 Bearer 접두어. (#211)
+     */
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_PREFIX = "Bearer ";
 
     private static final String ENTER_FAILURE_NULL_RESULT = "Lua result is null";
     private static final String ENTER_FAILURE_EXCEPTION = "Lua execution exception";
@@ -67,6 +73,7 @@ public class StompChannelInterceptor implements ChannelInterceptor {
     private final StringRedisTemplate stringRedisTemplate;
     private final WebSocketMetric webSocketMetric;
     private final RedisScript<String> enterLobbyScript;
+    private final JwtTokenProvider jwtTokenProvider;
     private final LobbyEnterResultMapper lobbyEnterResultMapper = new LobbyEnterResultMapper();
 
     /**
@@ -102,11 +109,13 @@ public class StompChannelInterceptor implements ChannelInterceptor {
             StringRedisTemplate stringRedisTemplate,
             WebSocketMetric webSocketMetric,
             @Qualifier("enterLobbyScript") RedisScript<String> enterLobbyScript,
+            JwtTokenProvider jwtTokenProvider,
             @Value("${monomat.websocket.user-status.ttl:PT2H}") Duration userStatusTtl
     ) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.webSocketMetric = webSocketMetric;
         this.enterLobbyScript = enterLobbyScript;
+        this.jwtTokenProvider = jwtTokenProvider;
         this.userStatusTtl = userStatusTtl;
     }
 
@@ -136,22 +145,31 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
     /**
      * CONNECT 명령 처리
+     *
+     * [인증 정책 (#211)]
+     * REST API의 {@code JwtAuthenticationFilter}와 동일하게 Access Token(JWT)을 검증한다.
+     * 클라이언트가 native header로 전달하는 {@code userIdentifier}는 신뢰하지 않고,
+     * 검증된 JWT claim의 {@code userIdentifier}만 인증 근거로 사용한다.
+     *
+     * [검증 순서]
+     * 1. Authorization: Bearer {accessToken} 헤더 존재/형식 검증
+     * 2. JWT 서명/만료 검증 (만료와 그 외를 구분)
+     * 3. access token 필수 claim(subject/userIdentifier/userType) 존재 검증
+     * 4. access token 블랙리스트(로그아웃) 검증 - fail-closed
+     * 5. JWT userIdentifier로 Redis 활성 세션 검증 - fail-closed
      */
     private void handleConnect(
             StompHeaderAccessor accessor,
             Map<String, Object> sessionAttributes
     ) {
-        String userIdentifier = accessor.getFirstNativeHeader(WebSocketHeaders.USER_IDENTIFIER);
+        String accessToken = extractAccessToken(accessor);
+        Claims claims = parseAccessToken(accessToken);
+        String userIdentifier = extractAuthenticatedUserIdentifier(claims);
 
-        if (userIdentifier == null || userIdentifier.isBlank()) {
-            log.warn("STOMP CONNECT 거부: 사용자 식별자 없음");
-            throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_MISSING);
-        }
-
-        if (!UUID_PATTERN.matcher(userIdentifier).matches()) {
-            log.warn("STOMP CONNECT 거부: 유효하지 않은 식별자 형식 = {}",
+        if (isBlacklistedAccessToken(accessToken)) {
+            log.warn("STOMP CONNECT 거부: 블랙리스트 처리된 Access Token - userIdentifier: {}",
                     sanitizeForLog(userIdentifier));
-            throw new StompErrorException(StompErrorCode.CONNECT_USER_IDENTIFIER_INVALID);
+            throw new StompErrorException(StompErrorCode.ACCESS_TOKEN_INVALID);
         }
 
         if (!isActiveAuthSession(userIdentifier)) {
@@ -190,6 +208,85 @@ public class StompChannelInterceptor implements ChannelInterceptor {
 
         log.info("STOMP CONNECT 성공 - userIdentifier: {}, wsSessionId: {}, sessionSequence: {}",
                 userIdentifier, wsSessionId, sessionSequence);
+    }
+
+    /**
+     * CONNECT native header에서 Bearer Access Token을 추출한다. (#211)
+     *
+     * Authorization 헤더가 없거나 Bearer 형식이 아니면 인증 근거가 없으므로 연결을 거부한다.
+     */
+    private String extractAccessToken(StompHeaderAccessor accessor) {
+        String authorization = accessor.getFirstNativeHeader(AUTHORIZATION_HEADER);
+
+        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
+            log.warn("STOMP CONNECT 거부: Authorization Bearer 헤더 없음");
+            throw new StompErrorException(StompErrorCode.ACCESS_TOKEN_MISSING);
+        }
+
+        String token = authorization.substring(BEARER_PREFIX.length()).trim();
+
+        if (token.isEmpty()) {
+            log.warn("STOMP CONNECT 거부: Bearer 토큰이 비어 있음");
+            throw new StompErrorException(StompErrorCode.ACCESS_TOKEN_MISSING);
+        }
+
+        return token;
+    }
+
+    /**
+     * Access Token 서명/만료를 검증하고 claim을 반환한다. (#211)
+     *
+     * 만료(ExpiredJwtException)와 그 외 검증 실패를 구분하여 FE가 재발급/재로그인을 판단하게 한다.
+     */
+    private Claims parseAccessToken(String accessToken) {
+        try {
+            return jwtTokenProvider.parseClaims(accessToken);
+        } catch (ExpiredJwtException e) {
+            log.warn("STOMP CONNECT 거부: 만료된 Access Token");
+            throw new StompErrorException(StompErrorCode.ACCESS_TOKEN_EXPIRED);
+        } catch (JwtException | IllegalArgumentException e) {
+            log.warn("STOMP CONNECT 거부: 유효하지 않은 Access Token - {}", e.getMessage());
+            throw new StompErrorException(StompErrorCode.ACCESS_TOKEN_INVALID);
+        }
+    }
+
+    /**
+     * 검증된 JWT claim이 Access Token으로서 유효한지 확인하고 userIdentifier를 추출한다. (#211)
+     *
+     * [검증 기준]
+     * JwtAuthenticationFilter.isValidClaims와 동일하게 subject/userIdentifier/userType 존재를 요구한다.
+     * userIdentifier claim이 없는 토큰(예: Refresh Token)은 CONNECT 인증 근거로 사용하지 않는다.
+     */
+    private String extractAuthenticatedUserIdentifier(Claims claims) {
+        String subject = claims.getSubject();
+        String userIdentifier = claims.get(JwtClaims.USER_IDENTIFIER, String.class);
+        String userType = claims.get(JwtClaims.USER_TYPE, String.class);
+
+        if (subject == null || subject.isBlank()
+                || userIdentifier == null || userIdentifier.isBlank()
+                || userType == null || userType.isBlank()) {
+            log.warn("STOMP CONNECT 거부: Access Token claim 누락 또는 유효하지 않음");
+            throw new StompErrorException(StompErrorCode.ACCESS_TOKEN_INVALID);
+        }
+
+        return userIdentifier;
+    }
+
+    /**
+     * 로그아웃 등으로 블랙리스트 처리된 Access Token인지 확인한다. (#211)
+     *
+     * JwtAuthenticationFilter와 동일하게 조회 실패 시 fail-closed(블랙리스트로 간주)로 처리한다.
+     */
+    private boolean isBlacklistedAccessToken(String accessToken) {
+        try {
+            String tokenHash = TokenHashUtils.sha256(accessToken);
+            return Boolean.TRUE.equals(
+                    stringRedisTemplate.hasKey(RedisKeys.accessTokenBlacklistKey(tokenHash))
+            );
+        } catch (RuntimeException e) {
+            log.warn("STOMP CONNECT 블랙리스트 조회 실패 - fail-closed 적용", e);
+            return true;
+        }
     }
 
     /**

@@ -25,6 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -242,12 +243,20 @@ public class MapManageService {
     }
 
     private List<PreparedManageItem> prepareItemSources(List<MapItemPrepareSource> sources) {
+        /*
+         * 여러 문제의 YouTube URL을 한 번에 검증한다. 동일 videoId 중복 제거, Redis 캐시 batch 조회,
+         * cache miss oEmbed 병렬 호출로 대량 문제 저장 성능을 개선한다.
+         * URL 하나라도 검증 실패 시 전체 batch가 실패해 상위 트랜잭션이 rollback된다.
+         */
+        Map<String, YoutubeMetadata> metadataByUrl = youtubeValidationService.validateYoutubeUrls(
+                sources.stream().map(MapItemPrepareSource::youtubeUrl).toList());
+
         List<PreparedManageItem> preparedItems = new ArrayList<>();
 
         for (MapItemPrepareSource source : sources) {
             validateStartTime(source.startTime());
 
-            YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(source.youtubeUrl());
+            YoutubeMetadata metadata = metadataByUrl.get(source.youtubeUrl());
             validateStartTimeWithinDuration(source.startTime(), metadata.durationSeconds());
 
             preparedItems.add(new PreparedManageItem(

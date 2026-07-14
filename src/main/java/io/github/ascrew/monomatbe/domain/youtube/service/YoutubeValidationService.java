@@ -7,9 +7,9 @@ import io.github.ascrew.monomatbe.domain.youtube.exception.YoutubeEmbedNotAllowe
 import io.github.ascrew.monomatbe.domain.youtube.model.YoutubeMetadata;
 import io.github.ascrew.monomatbe.global.constant.RedisKeys;
 import io.github.ascrew.monomatbe.global.security.jwt.CustomPrincipal;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -20,12 +20,22 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class YoutubeValidationService {
 
     private static final String ERROR_REGISTERED_ONLY = "정식 회원만 맵 문제를 관리할 수 있습니다.";
@@ -38,8 +48,21 @@ public class YoutubeValidationService {
     private static final Duration OEMBED_FAILURE_TTL = Duration.ofMinutes(30);
 
     private final StringRedisTemplate redisTemplate;
-    @Qualifier("pubSubJsonMapper") private final JsonMapper jsonMapper;
+    private final JsonMapper jsonMapper;
     private final YoutubeOEmbedClient youtubeOEmbedClient;
+    private final int batchConcurrency;
+
+    public YoutubeValidationService(
+            StringRedisTemplate redisTemplate,
+            @Qualifier("pubSubJsonMapper") JsonMapper jsonMapper,
+            YoutubeOEmbedClient youtubeOEmbedClient,
+            @Value("${youtube.oembed.batch-concurrency:8}") int batchConcurrency
+    ) {
+        this.redisTemplate = redisTemplate;
+        this.jsonMapper = jsonMapper;
+        this.youtubeOEmbedClient = youtubeOEmbedClient;
+        this.batchConcurrency = Math.max(1, batchConcurrency);
+    }
 
     public YoutubeMetadata validateForAuthoring(CustomPrincipal principal, String youtubeUrl) {
         validateRegisteredPrincipal(principal);
@@ -47,33 +70,130 @@ public class YoutubeValidationService {
     }
 
     public YoutubeMetadata validateYoutubeUrl(String youtubeUrl) {
-        String normalizedUrl = normalizeUrl(youtubeUrl);
-        String videoId = extractVideoId(normalizedUrl)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_URL));
+        String videoId = resolveVideoId(youtubeUrl);
 
-        String successKey = RedisKeys.youtubeOembedSuccessKey(videoId);
-        String failureKey = RedisKeys.youtubeOembedFailureKey(videoId);
-
-        String successCached = redisTemplate.opsForValue().get(successKey);
+        String successCached = redisTemplate.opsForValue().get(RedisKeys.youtubeOembedSuccessKey(videoId));
         if (successCached != null) {
             return deserializeMetadata(successCached);
         }
 
         // Negative cache hit 시 외부 호출을 차단하고 즉시 거절한다.
-        if (Boolean.TRUE.equals(redisTemplate.hasKey(failureKey))) {
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(videoId)))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
         }
 
+        return fetchValidateAndCache(videoId);
+    }
+
+    /**
+     * 여러 YouTube URL을 한 번에 검증한다. 단건 {@link #validateYoutubeUrl(String)}과 동일한 예외 정책을 따른다.
+     *
+     * <p>동일 요청 내 중복 videoId는 한 번만 검증하고, success/failure 캐시는 Redis {@code multiGet}으로 일괄 조회하며,
+     * cache miss videoId에 대해서만 제한된 동시성으로 oEmbed API를 병렬 호출한다.
+     * URL 하나라도 검증에 실패하면 전체 batch가 실패한다.</p>
+     *
+     * @param youtubeUrls 검증할 원본 YouTube URL 목록
+     * @return 원본 URL → 검증된 메타데이터 매핑 (입력에 중복 URL이 있으면 같은 메타데이터를 공유)
+     */
+    public Map<String, YoutubeMetadata> validateYoutubeUrls(List<String> youtubeUrls) {
+        if (youtubeUrls == null || youtubeUrls.isEmpty()) {
+            return Map.of();
+        }
+
+        // 1. 원본 URL → videoId 매핑 구성 (유효하지 않으면 단건과 동일하게 즉시 BAD_REQUEST).
+        //    LinkedHashMap/LinkedHashSet으로 요청 순서를 보존하고 중복 videoId를 제거한다.
+        Map<String, String> urlToVideoId = new LinkedHashMap<>();
+        for (String youtubeUrl : youtubeUrls) {
+            urlToVideoId.computeIfAbsent(youtubeUrl, this::resolveVideoId);
+        }
+        List<String> distinctVideoIds = new ArrayList<>(new LinkedHashSet<>(urlToVideoId.values()));
+
+        // 2. success 캐시 일괄 조회 후 hit 복원.
+        Map<String, YoutubeMetadata> metadataByVideoId = new LinkedHashMap<>();
+        List<String> successMissVideoIds = new ArrayList<>();
+        List<String> successValues = redisTemplate.opsForValue()
+                .multiGet(distinctVideoIds.stream().map(RedisKeys::youtubeOembedSuccessKey).toList());
+        for (int i = 0; i < distinctVideoIds.size(); i++) {
+            String cached = successValues == null ? null : successValues.get(i);
+            if (cached != null) {
+                metadataByVideoId.put(distinctVideoIds.get(i), deserializeMetadata(cached));
+            } else {
+                successMissVideoIds.add(distinctVideoIds.get(i));
+            }
+        }
+
+        // 3. failure 캐시 일괄 조회 - hit이 하나라도 있으면 전체 batch 실패.
+        if (!successMissVideoIds.isEmpty()) {
+            List<String> failureValues = redisTemplate.opsForValue()
+                    .multiGet(successMissVideoIds.stream().map(RedisKeys::youtubeOembedFailureKey).toList());
+            if (failureValues != null && failureValues.stream().anyMatch(Objects::nonNull)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
+            }
+        }
+
+        // 4. cache miss videoId만 oEmbed 병렬 호출 (Semaphore로 동시성 제한).
+        List<String> missVideoIds = successMissVideoIds;
+        if (!missVideoIds.isEmpty()) {
+            Semaphore semaphore = new Semaphore(batchConcurrency);
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                Map<String, Future<YoutubeMetadata>> futures = new LinkedHashMap<>();
+                for (String videoId : missVideoIds) {
+                    futures.put(videoId, executor.submit(() -> {
+                        semaphore.acquire();
+                        try {
+                            return fetchValidateAndCache(videoId);
+                        } finally {
+                            semaphore.release();
+                        }
+                    }));
+                }
+                for (Map.Entry<String, Future<YoutubeMetadata>> entry : futures.entrySet()) {
+                    metadataByVideoId.put(entry.getKey(), resolveFuture(entry.getValue()));
+                }
+            }
+        }
+
+        // 5. 원본 URL → metadata 최종 매핑 조립 (요청 순서 보존).
+        Map<String, YoutubeMetadata> result = new LinkedHashMap<>();
+        urlToVideoId.forEach((url, videoId) -> result.put(url, metadataByVideoId.get(videoId)));
+        return result;
+    }
+
+    private YoutubeMetadata resolveFuture(Future<YoutubeMetadata> future) {
+        try {
+            return future.get();
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            // fetchValidateAndCache가 던진 원본 예외(ResponseStatusException/YoutubeEmbedNotAllowedException)를
+            // 그대로 전파해 단건 검증과 예외 정책을 동일하게 유지한다.
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, ERROR_UPSTREAM_RESPONSE, cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "YouTube 검증 요청이 중단되었습니다.", e);
+        }
+    }
+
+    private String resolveVideoId(String youtubeUrl) {
+        String normalizedUrl = normalizeUrl(youtubeUrl);
+        return extractVideoId(normalizedUrl)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_URL));
+    }
+
+    private YoutubeMetadata fetchValidateAndCache(String videoId) {
         try {
             String body = youtubeOEmbedClient.fetchByVideoId(videoId);
             YoutubeMetadata metadata = parseMetadata(videoId, body);
-            redisTemplate.opsForValue().set(successKey, serializeMetadata(metadata), OEMBED_SUCCESS_TTL);
+            redisTemplate.opsForValue()
+                    .set(RedisKeys.youtubeOembedSuccessKey(videoId), serializeMetadata(metadata), OEMBED_SUCCESS_TTL);
             return metadata;
         } catch (YoutubeEmbedNotAllowedException e) {
             // 401/403/404 같은 영구적 임베드 불가만 Negative Cache 에 기록한다.
             // 5xx/타임아웃/파싱 실패/빈 메타데이터 등 일시적 또는 불확실한 오류는 캐싱하지 않아
             // 업스트림 회복 후 재시도 시점에서 정상 응답을 받을 수 있도록 한다.
-            redisTemplate.opsForValue().set(failureKey, "1", OEMBED_FAILURE_TTL);
+            redisTemplate.opsForValue().set(RedisKeys.youtubeOembedFailureKey(videoId), "1", OEMBED_FAILURE_TTL);
             throw e;
         } catch (JacksonException e) {
             log.warn("YouTube oEmbed 응답 파싱 실패 - videoId: {}", videoId, e);

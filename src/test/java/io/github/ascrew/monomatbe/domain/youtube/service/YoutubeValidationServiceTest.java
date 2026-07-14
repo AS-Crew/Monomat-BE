@@ -13,6 +13,9 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.List;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -20,6 +23,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -50,7 +54,8 @@ class YoutubeValidationServiceTest {
         youtubeValidationService = new YoutubeValidationService(
                 redisTemplate,
                 jsonMapper,
-                youtubeOEmbedClient
+                youtubeOEmbedClient,
+                8
         );
 
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -272,6 +277,125 @@ class YoutubeValidationServiceTest {
                 .hasMessageContaining("유효한 YouTube URL이 아닙니다.");
 
         verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
+    }
+
+    // ─────────────────────────────────────────────
+    // batch 검증 (validateYoutubeUrls)
+    // ─────────────────────────────────────────────
+
+    @Test
+    void validateYoutubeUrls_emptyList_returnsEmptyWithoutRedisOrOembed() {
+        assertThat(youtubeValidationService.validateYoutubeUrls(List.of())).isEmpty();
+
+        verify(redisTemplate, never()).opsForValue();
+        verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
+    }
+
+    @Test
+    void validateYoutubeUrls_duplicateVideoId_validatesOnceAndMapsAllUrls() {
+        // 같은 videoId를 가리키는 서로 다른 URL 형식은 한 번만 검증되어야 한다.
+        String watchUrl = "https://www.youtube.com/watch?v=" + MIXED_CASE_ID;
+        String shortUrl = "https://youtu.be/" + MIXED_CASE_ID;
+
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedSuccessKey(MIXED_CASE_ID))))
+                .thenReturn(singletonNullList());
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedFailureKey(MIXED_CASE_ID))))
+                .thenReturn(singletonNullList());
+        when(youtubeOEmbedClient.fetchByVideoId(MIXED_CASE_ID)).thenReturn(OEMBED_RESPONSE);
+
+        Map<String, YoutubeMetadata> result =
+                youtubeValidationService.validateYoutubeUrls(List.of(watchUrl, shortUrl));
+
+        assertThat(result).containsOnlyKeys(watchUrl, shortUrl);
+        assertThat(result.get(watchUrl).videoId()).isEqualTo(MIXED_CASE_ID);
+        assertThat(result.get(shortUrl)).isSameAs(result.get(watchUrl));
+        verify(youtubeOEmbedClient, times(1)).fetchByVideoId(MIXED_CASE_ID);
+    }
+
+    @Test
+    void validateYoutubeUrls_successCacheHit_restoresWithoutOembed() {
+        YoutubeMetadata cached = new YoutubeMetadata(TEST_VIDEO_ID, "title", "artist", "thumb", null);
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))))
+                .thenReturn(List.of(jsonMapper.writeValueAsString(cached)));
+
+        Map<String, YoutubeMetadata> result =
+                youtubeValidationService.validateYoutubeUrls(List.of(TEST_YOUTUBE_URL));
+
+        assertThat(result.get(TEST_YOUTUBE_URL).title()).isEqualTo("title");
+        verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
+    }
+
+    @Test
+    void validateYoutubeUrls_failureCacheHit_failsEntireBatch() {
+        // 한 videoId라도 negative cache hit이면 전체 batch가 실패해야 한다.
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))))
+                .thenReturn(singletonNullList());
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID))))
+                .thenReturn(List.of("1"));
+
+        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrls(List.of(TEST_YOUTUBE_URL)))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("임베드 가능한 YouTube 영상이 아닙니다.");
+
+        verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
+    }
+
+    @Test
+    void validateYoutubeUrls_mixedCacheState_callsOembedOnlyForMiss() {
+        String cachedUrl = "https://www.youtube.com/watch?v=" + TEST_VIDEO_ID;
+        String missUrl = "https://www.youtube.com/watch?v=" + MIXED_CASE_ID;
+        YoutubeMetadata cached = new YoutubeMetadata(TEST_VIDEO_ID, "cached", "artist", "thumb", null);
+
+        // distinct videoId 순서: [TEST_VIDEO_ID(hit), MIXED_CASE_ID(miss)]
+        when(valueOperations.multiGet(List.of(
+                RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID),
+                RedisKeys.youtubeOembedSuccessKey(MIXED_CASE_ID))))
+                .thenReturn(java.util.Arrays.asList(jsonMapper.writeValueAsString(cached), null));
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedFailureKey(MIXED_CASE_ID))))
+                .thenReturn(singletonNullList());
+        when(youtubeOEmbedClient.fetchByVideoId(MIXED_CASE_ID)).thenReturn(OEMBED_RESPONSE);
+
+        Map<String, YoutubeMetadata> result =
+                youtubeValidationService.validateYoutubeUrls(List.of(cachedUrl, missUrl));
+
+        assertThat(result.get(cachedUrl).title()).isEqualTo("cached");
+        assertThat(result.get(missUrl).videoId()).isEqualTo(MIXED_CASE_ID);
+        verify(youtubeOEmbedClient, never()).fetchByVideoId(TEST_VIDEO_ID);
+        verify(youtubeOEmbedClient, times(1)).fetchByVideoId(MIXED_CASE_ID);
+    }
+
+    @Test
+    void validateYoutubeUrls_invalidUrl_failsBeforeRedis() {
+        assertThatThrownBy(() -> youtubeValidationService
+                .validateYoutubeUrls(List.of("https://example.com/watch?v=abc")))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("유효한 YouTube URL이 아닙니다.");
+
+        verify(valueOperations, never()).multiGet(any());
+        verify(youtubeOEmbedClient, never()).fetchByVideoId(anyString());
+    }
+
+    @Test
+    void validateYoutubeUrls_embedNotAllowedDuringFetch_propagatesAndCachesFailure() {
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedSuccessKey(TEST_VIDEO_ID))))
+                .thenReturn(singletonNullList());
+        when(valueOperations.multiGet(List.of(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID))))
+                .thenReturn(singletonNullList());
+        when(youtubeOEmbedClient.fetchByVideoId(TEST_VIDEO_ID))
+                .thenThrow(new io.github.ascrew.monomatbe.domain.youtube.exception
+                        .YoutubeEmbedNotAllowedException("임베드 가능한 YouTube 영상이 아닙니다."));
+
+        assertThatThrownBy(() -> youtubeValidationService.validateYoutubeUrls(List.of(TEST_YOUTUBE_URL)))
+                .isInstanceOf(io.github.ascrew.monomatbe.domain.youtube.exception.YoutubeEmbedNotAllowedException.class);
+
+        verify(valueOperations).set(eq(RedisKeys.youtubeOembedFailureKey(TEST_VIDEO_ID)), anyString(), any());
+    }
+
+    /** Mockito가 {@code List.of(null)}을 허용하지 않으므로 null 하나를 담는 헬퍼. */
+    private java.util.List<String> singletonNullList() {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        list.add(null);
+        return list;
     }
 
     /**

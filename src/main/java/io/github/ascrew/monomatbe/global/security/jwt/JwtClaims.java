@@ -12,6 +12,12 @@ public final class JwtClaims {
     private JwtClaims() {
     }
 
+    /**
+     * JWT 사용 목적을 구분하는 Claim 키
+     * 저장 값 : ACCESS, REFRESH
+     */
+    public static final String TOKEN_TYPE = "tokenType";
+
     // 게스트/회원 공통 UUID 식별자 클레임 키
     public static final String USER_IDENTIFIER = "userIdentifier";
 

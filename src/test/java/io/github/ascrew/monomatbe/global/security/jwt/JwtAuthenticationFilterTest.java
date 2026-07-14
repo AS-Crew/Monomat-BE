@@ -2,50 +2,53 @@ package io.github.ascrew.monomatbe.global.security.jwt;
 
 import io.github.ascrew.monomatbe.domain.auth.entity.UserRole;
 import io.github.ascrew.monomatbe.domain.auth.entity.UserType;
-import io.github.ascrew.monomatbe.global.constant.RedisKeys;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
+import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.mock.web.MockFilterChain;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.Date;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+@ExtendWith(MockitoExtension.class)
 class JwtAuthenticationFilterTest {
 
-    private static final String SECRET =
-            "01234567890123456789012345678901";
     private static final Long USER_ID = 1L;
+
     private static final String USER_IDENTIFIER =
             "11111111-1111-1111-1111-111111111111";
 
-    private StringRedisTemplate redisTemplate;
+    private static final String ACCESS_TOKEN =
+            "access-token";
+
+    @Mock
+    private AccessTokenAuthenticator accessTokenAuthenticator;
+
+    @Mock
+    private FilterChain filterChain;
+
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @BeforeEach
     void setUp() {
-        redisTemplate = mock(StringRedisTemplate.class);
-        jwtAuthenticationFilter = new JwtAuthenticationFilter(
-                SECRET,
-                redisTemplate
-        );
+        jwtAuthenticationFilter =
+                new JwtAuthenticationFilter(
+                        accessTokenAuthenticator
+                );
 
         SecurityContextHolder.clearContext();
     }
@@ -56,174 +59,252 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    @DisplayName("userRole claim이 없는 기존 Access Token은 ROLE_USER로 인증된다")
-    void doFilterInternal_withoutUserRoleClaim_authenticatesAsUser()
+    @DisplayName("정상 USER Access Token은 ROLE_USER로 인증된다")
+    void validUserTokenAuthenticatesAsUser()
             throws ServletException, IOException {
-        // given
-        String token = createAccessTokenWithoutUserRole();
 
-        when(redisTemplate.hasKey(RedisKeys.accessTokenBlacklistKey(TokenHashUtils.sha256(token))))
-                .thenReturn(false);
-        when(redisTemplate.hasKey(RedisKeys.activeSessionKey(USER_IDENTIFIER)))
-                .thenReturn(true);
+        when(accessTokenAuthenticator.authenticate(ACCESS_TOKEN))
+                .thenReturn(
+                        authentication(UserRole.USER)
+                );
 
-        MockHttpServletRequest request = authenticatedRequest(token);
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        MockFilterChain filterChain = new MockFilterChain();
+        MockHttpServletRequest request =
+                authenticatedRequest();
 
-        // when
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
         jwtAuthenticationFilter.doFilter(
                 request,
                 response,
                 filterChain
         );
 
-        // then
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Authentication springAuthentication =
+                SecurityContextHolder.getContext()
+                        .getAuthentication();
 
-        assertThat(authentication).isNotNull();
-        assertThat(authentication.isAuthenticated()).isTrue();
-        assertThat(authentication.getAuthorities())
+        assertThat(springAuthentication)
+                .isNotNull();
+
+        assertThat(springAuthentication.isAuthenticated())
+                .isTrue();
+
+        assertThat(springAuthentication.getAuthorities())
                 .extracting("authority")
                 .containsExactly("ROLE_USER");
 
-        assertThat(authentication.getPrincipal())
+        assertThat(springAuthentication.getPrincipal())
                 .isInstanceOf(CustomPrincipal.class);
 
-        CustomPrincipal principal = (CustomPrincipal) authentication.getPrincipal();
+        CustomPrincipal principal =
+                (CustomPrincipal) springAuthentication.getPrincipal();
 
-        assertThat(principal.userId()).isEqualTo(USER_ID);
-        assertThat(principal.userIdentifier()).isEqualTo(USER_IDENTIFIER);
-        assertThat(principal.userType()).isEqualTo(UserType.REGISTERED);
-        assertThat(principal.role()).isEqualTo(UserRole.USER);
+        assertThat(principal.userId())
+                .isEqualTo(USER_ID);
+
+        assertThat(principal.userIdentifier())
+                .isEqualTo(USER_IDENTIFIER);
+
+        assertThat(principal.userType())
+                .isEqualTo(UserType.REGISTERED);
+
+        assertThat(principal.role())
+                .isEqualTo(UserRole.USER);
+
+        verify(filterChain)
+                .doFilter(request, response);
     }
 
     @Test
-    @DisplayName("userRole=ADMIN Access Token은 ROLE_ADMIN으로 인증된다")
-    void doFilterInternal_withAdminUserRoleClaim_authenticatesAsAdmin()
+    @DisplayName("정상 ADMIN Access Token은 ROLE_ADMIN으로 인증된다")
+    void validAdminTokenAuthenticatesAsAdmin()
             throws ServletException, IOException {
-        // given
-        String token = createAccessTokenWithUserRole(UserRole.ADMIN.name());
 
-        when(redisTemplate.hasKey(RedisKeys.accessTokenBlacklistKey(TokenHashUtils.sha256(token))))
-                .thenReturn(false);
-        when(redisTemplate.hasKey(RedisKeys.activeSessionKey(USER_IDENTIFIER)))
-                .thenReturn(true);
+        when(accessTokenAuthenticator.authenticate(ACCESS_TOKEN))
+                .thenReturn(
+                        authentication(UserRole.ADMIN)
+                );
 
-        MockHttpServletRequest request = authenticatedRequest(token);
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        MockFilterChain filterChain = new MockFilterChain();
+        MockHttpServletRequest request =
+                authenticatedRequest();
 
-        // when
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
         jwtAuthenticationFilter.doFilter(
                 request,
                 response,
                 filterChain
         );
 
-        // then
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Authentication springAuthentication =
+                SecurityContextHolder.getContext()
+                        .getAuthentication();
 
-        assertThat(authentication).isNotNull();
-        assertThat(authentication.isAuthenticated()).isTrue();
-        assertThat(authentication.getAuthorities())
+        assertThat(springAuthentication)
+                .isNotNull();
+
+        assertThat(springAuthentication.getAuthorities())
                 .extracting("authority")
                 .containsExactly("ROLE_ADMIN");
 
-        CustomPrincipal principal = (CustomPrincipal) authentication.getPrincipal();
+        CustomPrincipal principal =
+                (CustomPrincipal) springAuthentication.getPrincipal();
 
-        assertThat(principal.role()).isEqualTo(UserRole.ADMIN);
+        assertThat(principal.role())
+                .isEqualTo(UserRole.ADMIN);
+
+        verify(filterChain)
+                .doFilter(request, response);
     }
 
     @Test
-    @DisplayName("userRole claim 값이 잘못되면 인증되지 않는다")
-    void doFilterInternal_invalidUserRoleClaim_doesNotAuthenticate()
+    @DisplayName("Access Token 인증 실패 시 SecurityContext를 비우고 필터 체인은 계속 진행한다")
+    void authenticationFailureClearsContextAndContinues()
             throws ServletException, IOException {
-        // given
-        String token = createAccessTokenWithUserRole("SUPER_ADMIN");
 
-        when(redisTemplate.hasKey(RedisKeys.accessTokenBlacklistKey(TokenHashUtils.sha256(token))))
-                .thenReturn(false);
+        when(accessTokenAuthenticator.authenticate(ACCESS_TOKEN))
+                .thenThrow(
+                        new AccessTokenAuthenticationException(
+                                AccessTokenFailureReason.INVALID
+                        )
+                );
 
-        MockHttpServletRequest request = authenticatedRequest(token);
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        MockFilterChain filterChain = new MockFilterChain();
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new org.springframework.security.authentication
+                                .UsernamePasswordAuthenticationToken(
+                                "stale-principal",
+                                null
+                        )
+                );
 
-        // when
+        MockHttpServletRequest request =
+                authenticatedRequest();
+
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
         jwtAuthenticationFilter.doFilter(
                 request,
                 response,
                 filterChain
         );
 
-        // then
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(
+                SecurityContextHolder.getContext()
+                        .getAuthentication()
+        ).isNull();
 
-        assertThat(authentication).isNull();
+        verify(filterChain)
+                .doFilter(request, response);
     }
 
     @Test
-    @DisplayName("active session이 Redis에 없으면 인증되지 않는다")
-    void doFilterInternal_inactiveSession_doesNotAuthenticate()
+    @DisplayName("Authorization 헤더가 없으면 인증을 시도하지 않고 필터 체인을 진행한다")
+    void missingAuthorizationSkipsAuthentication()
             throws ServletException, IOException {
-        // given
-        String token = createAccessTokenWithUserRole(UserRole.USER.name());
 
-        when(redisTemplate.hasKey(RedisKeys.accessTokenBlacklistKey(TokenHashUtils.sha256(token))))
-                .thenReturn(false);
-        when(redisTemplate.hasKey(RedisKeys.activeSessionKey(USER_IDENTIFIER)))
-                .thenReturn(false);
+        MockHttpServletRequest request =
+                new MockHttpServletRequest();
 
-        MockHttpServletRequest request = authenticatedRequest(token);
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        MockFilterChain filterChain = new MockFilterChain();
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
 
-        // when
         jwtAuthenticationFilter.doFilter(
                 request,
                 response,
                 filterChain
         );
 
-        // then
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        assertThat(
+                SecurityContextHolder.getContext()
+                        .getAuthentication()
+        ).isNull();
 
-        assertThat(authentication).isNull();
+        verifyNoInteractions(accessTokenAuthenticator);
+
+        verify(filterChain)
+                .doFilter(request, response);
     }
 
-    private MockHttpServletRequest authenticatedRequest(String token) {
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader("Authorization", "Bearer " + token);
+    @Test
+    @DisplayName("Bearer 형식이 아니면 인증을 시도하지 않는다")
+    void invalidAuthorizationSchemeSkipsAuthentication()
+            throws ServletException, IOException {
+
+        MockHttpServletRequest request =
+                new MockHttpServletRequest();
+
+        request.addHeader(
+                HttpHeaders.AUTHORIZATION,
+                ACCESS_TOKEN
+        );
+
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        jwtAuthenticationFilter.doFilter(
+                request,
+                response,
+                filterChain
+        );
+
+        verifyNoInteractions(accessTokenAuthenticator);
+
+        verify(filterChain)
+                .doFilter(request, response);
+    }
+
+    @Test
+    @DisplayName("Bearer 뒤의 Token 값이 비어 있으면 인증을 시도하지 않는다")
+    void blankBearerTokenSkipsAuthentication()
+            throws ServletException, IOException {
+
+        MockHttpServletRequest request =
+                new MockHttpServletRequest();
+
+        request.addHeader(
+                HttpHeaders.AUTHORIZATION,
+                "Bearer "
+        );
+
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        jwtAuthenticationFilter.doFilter(
+                request,
+                response,
+                filterChain
+        );
+
+        verifyNoInteractions(accessTokenAuthenticator);
+
+        verify(filterChain)
+                .doFilter(request, response);
+    }
+
+    private MockHttpServletRequest authenticatedRequest() {
+        MockHttpServletRequest request =
+                new MockHttpServletRequest();
+
+        request.addHeader(
+                HttpHeaders.AUTHORIZATION,
+                "Bearer " + ACCESS_TOKEN
+        );
+
         return request;
     }
 
-    private String createAccessTokenWithoutUserRole() {
-        return createToken(Map.of(
-                JwtClaims.USER_IDENTIFIER, USER_IDENTIFIER,
-                JwtClaims.USER_TYPE, UserType.REGISTERED.name()
-        ));
-    }
-
-    private String createAccessTokenWithUserRole(String userRole) {
-        return createToken(Map.of(
-                JwtClaims.USER_IDENTIFIER, USER_IDENTIFIER,
-                JwtClaims.USER_TYPE, UserType.REGISTERED.name(),
-                JwtClaims.USER_ROLE, userRole
-        ));
-    }
-
-    private String createToken(Map<String, Object> claims) {
-        Instant now = Instant.now();
-        SecretKey secretKey = Keys.hmacShaKeyFor(
-                SECRET.getBytes(StandardCharsets.UTF_8)
+    private AccessTokenAuthentication authentication(
+            UserRole userRole
+    ) {
+        return new AccessTokenAuthentication(
+                USER_ID,
+                USER_IDENTIFIER,
+                UserType.REGISTERED,
+                userRole
         );
-
-        return Jwts.builder()
-                .subject(String.valueOf(USER_ID))
-                .claims(claims)
-                .issuedAt(Date.from(now))
-                .expiration(Date.from(now.plusSeconds(600)))
-                .signWith(secretKey)
-                .compact();
     }
 }

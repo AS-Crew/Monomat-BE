@@ -2,10 +2,10 @@ package io.github.ascrew.monomatbe.domain.map.controller;
 
 import io.github.ascrew.monomatbe.domain.map.service.MapManageService;
 import io.github.ascrew.monomatbe.domain.map.service.MapService;
+import io.github.ascrew.monomatbe.global.security.jwt.AccessTokenAuthenticator;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -34,28 +34,49 @@ class MapManageControllerSecurityTest {
     @MockitoBean
     private MapManageService mapManageService;
 
+    /**
+     * JwtAuthenticationFilter가 공통 Access Token 검증 컴포넌트를
+     * 생성자 주입받으므로 WebMvc 슬라이스 테스트에서는 Mock Bean으로 제공한다.
+     *
+     * 이 테스트는 토큰 검증 구현이 아니라
+     * 미인증 요청의 HTTP 401 응답만 검증한다.
+     */
     @MockitoBean
-    private StringRedisTemplate stringRedisTemplate;
+    private AccessTokenAuthenticator accessTokenAuthenticator;
 
     @Test
-    void updateManagedMap_withoutAuthentication_returns401() throws Exception {
-        mockMvc.perform(put("/api/maps/{mapId}/manage", 1L)
-                        // PUT 요청에서 CSRF 403이 먼저 발생하지 않도록 CSRF 검증은 통과시키고,
-                        // 인증 정보 부재로 인한 401만 검증한다.
-                        .with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "title": "J-POP 퀴즈",
-                                  "description": "J-POP 중심 퀴즈 맵",
-                                  "category": "J-POP",
-                                  "isPublic": false,
-                                  "items": [],
-                                  "deletedItemIds": []
-                                }
-                                """))
+    void updateManagedMap_withoutAuthentication_returns401()
+            throws Exception {
+
+        mockMvc.perform(
+                        put("/api/maps/{mapId}/manage", 1L)
+                                /*
+                                 * PUT 요청에서 CSRF 403이 먼저 발생하지 않도록
+                                 * CSRF 검증은 통과시키고 인증 정보 부재에 따른
+                                 * HTTP 401 응답만 검증한다.
+                                 */
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {
+                                          "title": "J-POP 퀴즈",
+                                          "description": "J-POP 중심 퀴즈 맵",
+                                          "category": "J-POP",
+                                          "isPublic": false,
+                                          "items": [],
+                                          "deletedItemIds": []
+                                        }
+                                        """)
+                )
                 .andExpect(status().isUnauthorized());
 
-        verify(mapManageService, never()).updateManagedMap(anyLong(), any(), any());
+        verify(
+                mapManageService,
+                never()
+        ).updateManagedMap(
+                anyLong(),
+                any(),
+                any()
+        );
     }
 }

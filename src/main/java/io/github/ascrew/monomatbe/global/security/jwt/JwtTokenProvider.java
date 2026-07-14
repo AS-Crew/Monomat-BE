@@ -74,6 +74,7 @@ public class JwtTokenProvider {
      * - userIdentifier : UUID (Redis/WebSocket 식별자)
      * - userType       : GUEST | REGISTERED
      * - userRole       : USER | ADMIN
+     * - tokenType      : ACCESS
      */
     public TokenWithExpiry createAccessToken(
             Long userId,
@@ -92,6 +93,7 @@ public class JwtTokenProvider {
         String token = Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claims(Map.of(
+                        JwtClaims.TOKEN_TYPE, JwtTokenType.ACCESS.name(),
                         JwtClaims.USER_TYPE, userType.name(),
                         JwtClaims.USER_ROLE, userRole.name(),
                         JwtClaims.USER_IDENTIFIER, userIdentifier
@@ -111,6 +113,7 @@ public class JwtTokenProvider {
      * - subject   : userId (DB PK)
      * - userType  : GUEST | REGISTERED
      * - sessionId : UUID (Redis refresh key와 동일 식별자)
+     * - tokenType : REFRESH
      *
      * [주의]
      * Refresh Token에는 userRole을 넣지 않는다.
@@ -128,6 +131,7 @@ public class JwtTokenProvider {
         String token = Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claims(Map.of(
+                        JwtClaims.TOKEN_TYPE, JwtTokenType.REFRESH.name(),
                         JwtClaims.USER_TYPE, userType.name(),
                         JwtClaims.SESSION_ID, sessionId
                 ))

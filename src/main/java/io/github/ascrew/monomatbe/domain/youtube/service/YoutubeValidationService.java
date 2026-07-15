@@ -28,7 +28,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletionService;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -50,7 +52,10 @@ public class YoutubeValidationService {
     private final StringRedisTemplate redisTemplate;
     private final JsonMapper jsonMapper;
     private final YoutubeOEmbedClient youtubeOEmbedClient;
-    private final int batchConcurrency;
+
+    // 애플리케이션 전역으로 공유되는 oEmbed 동시 호출 제한. 싱글턴 서비스에서 한 번만 생성해
+    // 동시 요청 전체의 oEmbed 호출 수를 batch-concurrency 값으로 제한한다.
+    private final Semaphore oembedConcurrencyLimiter;
 
     public YoutubeValidationService(
             StringRedisTemplate redisTemplate,
@@ -61,7 +66,7 @@ public class YoutubeValidationService {
         this.redisTemplate = redisTemplate;
         this.jsonMapper = jsonMapper;
         this.youtubeOEmbedClient = youtubeOEmbedClient;
-        this.batchConcurrency = Math.max(1, batchConcurrency);
+        this.oembedConcurrencyLimiter = new Semaphore(Math.max(1, batchConcurrency));
     }
 
     public YoutubeMetadata validateForAuthoring(CustomPrincipal principal, String youtubeUrl) {
@@ -131,24 +136,38 @@ public class YoutubeValidationService {
             }
         }
 
-        // 4. cache miss videoId만 oEmbed 병렬 호출 (Semaphore로 동시성 제한).
+        // 4. cache miss videoId만 oEmbed 병렬 호출.
+        //    - 실제 동시 호출 수는 전역 공유 Semaphore(oembedConcurrencyLimiter)로 제한한다.
+        //    - 완료 순서로 결과를 회수해 하나라도 실패하면 즉시 남은 작업을 취소하고 중단한다.
         List<String> missVideoIds = successMissVideoIds;
         if (!missVideoIds.isEmpty()) {
-            Semaphore semaphore = new Semaphore(batchConcurrency);
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                Map<String, Future<YoutubeMetadata>> futures = new LinkedHashMap<>();
+                CompletionService<OEmbedResult> completionService = new ExecutorCompletionService<>(executor);
+                List<Future<OEmbedResult>> futures = new ArrayList<>(missVideoIds.size());
                 for (String videoId : missVideoIds) {
-                    futures.put(videoId, executor.submit(() -> {
-                        semaphore.acquire();
+                    futures.add(completionService.submit(() -> {
+                        oembedConcurrencyLimiter.acquire();
                         try {
-                            return fetchValidateAndCache(videoId);
+                            return new OEmbedResult(videoId, fetchValidateAndCache(videoId));
                         } finally {
-                            semaphore.release();
+                            oembedConcurrencyLimiter.release();
                         }
                     }));
                 }
-                for (Map.Entry<String, Future<YoutubeMetadata>> entry : futures.entrySet()) {
-                    metadataByVideoId.put(entry.getKey(), resolveFuture(entry.getValue()));
+                try {
+                    for (int i = 0; i < missVideoIds.size(); i++) {
+                        OEmbedResult result = completionService.take().get();
+                        metadataByVideoId.put(result.videoId(), result.metadata());
+                    }
+                } catch (ExecutionException e) {
+                    cancelOutstanding(futures, executor);
+                    // fetchValidateAndCache가 던진 원본 예외(ResponseStatusException/YoutubeEmbedNotAllowedException)를
+                    // 그대로 전파해 단건 검증과 예외 정책을 동일하게 유지한다.
+                    throw toRuntimeFailure(e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    cancelOutstanding(futures, executor);
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "YouTube 검증 요청이 중단되었습니다.", e);
                 }
             }
         }
@@ -159,21 +178,21 @@ public class YoutubeValidationService {
         return result;
     }
 
-    private YoutubeMetadata resolveFuture(Future<YoutubeMetadata> future) {
-        try {
-            return future.get();
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            // fetchValidateAndCache가 던진 원본 예외(ResponseStatusException/YoutubeEmbedNotAllowedException)를
-            // 그대로 전파해 단건 검증과 예외 정책을 동일하게 유지한다.
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, ERROR_UPSTREAM_RESPONSE, cause);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "YouTube 검증 요청이 중단되었습니다.", e);
+    private void cancelOutstanding(List<Future<OEmbedResult>> futures, ExecutorService executor) {
+        // 아직 완료되지 않은 작업을 인터럽트로 취소하고 실행기를 종료해
+        // 첫 실패 이후의 불필요한 oEmbed 호출을 즉시 중단한다.
+        futures.forEach(future -> future.cancel(true));
+        executor.shutdownNow();
+    }
+
+    private RuntimeException toRuntimeFailure(Throwable cause) {
+        if (cause instanceof RuntimeException runtimeException) {
+            return runtimeException;
         }
+        return new ResponseStatusException(HttpStatus.BAD_GATEWAY, ERROR_UPSTREAM_RESPONSE, cause);
+    }
+
+    private record OEmbedResult(String videoId, YoutubeMetadata metadata) {
     }
 
     private String resolveVideoId(String youtubeUrl) {

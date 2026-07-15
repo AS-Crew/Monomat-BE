@@ -279,6 +279,74 @@ class MapManageServiceTest {
 
 
     @Test
+    void updateManagedMap_nullStartTime_failsBeforeYoutubeValidation() {
+        User owner = registeredUser(10L, "owner");
+        QuizMap quizMap = quizMap(owner);
+
+        ManageMapRequest request = new ManageMapRequest(
+                "title",
+                "description",
+                MapCategory.JPOP,
+                false,
+                List.of(new ManageMapItemRequest(
+                        100L,
+                        1,
+                        "https://www.youtube.com/watch?v=new1",
+                        null,
+                        List.of("answer"),
+                        "hint",
+                        15
+                )),
+                List.of()
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+
+        assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("재생 시작 시간은 필수입니다.");
+
+        // 로컬 검증이 외부 I/O보다 먼저 수행되어 oEmbed 호출이 발생하지 않아야 한다.
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void createMapWithItems_nullStartTime_failsBeforeYoutubeValidation() {
+        User owner = registeredUser(10L, "owner");
+
+        CreateMapWithItemsRequest request = new CreateMapWithItemsRequest(
+                "J-POP 퀴즈",
+                "J-POP 중심 퀴즈 맵",
+                MapCategory.JPOP,
+                false,
+                List.of(new CreateMapWithItemsItemRequest(
+                        1,
+                        "https://www.youtube.com/watch?v=video1",
+                        null,
+                        List.of("ditto"),
+                        "ㄷㅌ",
+                        15
+                ))
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        when(userRepository.findById(10L)).thenReturn(Optional.of(owner));
+
+        assertThatThrownBy(() -> mapManageService.createMapWithItems(request, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("재생 시작 시간은 필수입니다.");
+
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
+        verify(mapManageTransactionService, never()).createMapWithItemsInTransaction(any(), any(), any());
+    }
+
+    @Test
     void createMapWithItems_withoutPrincipal_returns401() {
         CreateMapWithItemsRequest request = createMapWithItemsRequest();
 

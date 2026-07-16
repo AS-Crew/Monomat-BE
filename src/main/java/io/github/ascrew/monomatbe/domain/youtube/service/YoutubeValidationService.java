@@ -35,6 +35,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -45,6 +46,8 @@ public class YoutubeValidationService {
     private static final String ERROR_INVALID_YOUTUBE_URL = "유효한 YouTube URL이 아닙니다.";
     private static final String ERROR_INVALID_YOUTUBE_VIDEO = "임베드 가능한 YouTube 영상이 아닙니다.";
     private static final String ERROR_UPSTREAM_RESPONSE = "YouTube 검증 서버 응답이 비정상입니다.";
+    private static final String ERROR_OEMBED_BUSY = "YouTube 검증 요청이 많아 잠시 후 다시 시도해주세요.";
+    private static final String ERROR_VALIDATION_INTERRUPTED = "YouTube 검증 요청이 중단되었습니다.";
 
     private static final Duration OEMBED_SUCCESS_TTL = Duration.ofHours(6);
     private static final Duration OEMBED_FAILURE_TTL = Duration.ofMinutes(30);
@@ -54,19 +57,25 @@ public class YoutubeValidationService {
     private final YoutubeOEmbedClient youtubeOEmbedClient;
 
     // 애플리케이션 전역으로 공유되는 oEmbed 동시 호출 제한. 싱글턴 서비스에서 한 번만 생성해
-    // 동시 요청 전체의 oEmbed 호출 수를 batch-concurrency 값으로 제한한다.
+    // 단건/batch 모든 cache-miss 경로의 oEmbed 호출 수를 batch-concurrency 값으로 제한한다.
     private final Semaphore oembedConcurrencyLimiter;
+
+    // permit 획득 대기 상한. 초과 시 외부 호출을 시작하지 않고 503으로 빠르게 실패해
+    // 트래픽 급증/YouTube 장애 시 대기 스레드·요청 컨텍스트가 무한정 누적되는 것을 막는다.
+    private final Duration queueTimeout;
 
     public YoutubeValidationService(
             StringRedisTemplate redisTemplate,
             @Qualifier("pubSubJsonMapper") JsonMapper jsonMapper,
             YoutubeOEmbedClient youtubeOEmbedClient,
-            @Value("${youtube.oembed.batch-concurrency:8}") int batchConcurrency
+            @Value("${youtube.oembed.batch-concurrency:8}") int batchConcurrency,
+            @Value("${youtube.oembed.queue-timeout:10s}") Duration queueTimeout
     ) {
         this.redisTemplate = redisTemplate;
         this.jsonMapper = jsonMapper;
         this.youtubeOEmbedClient = youtubeOEmbedClient;
         this.oembedConcurrencyLimiter = new Semaphore(Math.max(1, batchConcurrency));
+        this.queueTimeout = queueTimeout;
     }
 
     public YoutubeMetadata validateForAuthoring(CustomPrincipal principal, String youtubeUrl) {
@@ -87,7 +96,7 @@ public class YoutubeValidationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
         }
 
-        return fetchValidateAndCache(videoId);
+        return acquirePermitAndFetch(videoId);
     }
 
     /**
@@ -145,14 +154,8 @@ public class YoutubeValidationService {
                 CompletionService<OEmbedResult> completionService = new ExecutorCompletionService<>(executor);
                 List<Future<OEmbedResult>> futures = new ArrayList<>(missVideoIds.size());
                 for (String videoId : missVideoIds) {
-                    futures.add(completionService.submit(() -> {
-                        oembedConcurrencyLimiter.acquire();
-                        try {
-                            return new OEmbedResult(videoId, fetchValidateAndCache(videoId));
-                        } finally {
-                            oembedConcurrencyLimiter.release();
-                        }
-                    }));
+                    futures.add(completionService.submit(
+                            () -> new OEmbedResult(videoId, acquirePermitAndFetch(videoId))));
                 }
                 try {
                     for (int i = 0; i < missVideoIds.size(); i++) {
@@ -167,7 +170,7 @@ public class YoutubeValidationService {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     cancelOutstanding(futures, executor);
-                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "YouTube 검증 요청이 중단되었습니다.", e);
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERROR_VALIDATION_INTERRUPTED, e);
                 }
             }
         }
@@ -199,6 +202,31 @@ public class YoutubeValidationService {
         String normalizedUrl = normalizeUrl(youtubeUrl);
         return extractVideoId(normalizedUrl)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_URL));
+    }
+
+    /**
+     * 전역 공유 Semaphore permit을 획득한 뒤 단건/batch 공통 oEmbed 호출을 수행한다.
+     *
+     * <p>단건 검증과 batch task가 모두 이 helper를 거치므로 애플리케이션 전체 동시 oEmbed 호출 수가
+     * 하나의 상한을 공유한다. permit을 {@code queueTimeout} 안에 얻지 못하면 외부 호출을 시작하지 않고
+     * 즉시 503으로 실패해 대기 스레드/요청 컨텍스트가 무한정 누적되는 것을 막는다.</p>
+     */
+    private YoutubeMetadata acquirePermitAndFetch(String videoId) {
+        boolean acquired;
+        try {
+            acquired = oembedConcurrencyLimiter.tryAcquire(queueTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERROR_VALIDATION_INTERRUPTED, e);
+        }
+        if (!acquired) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERROR_OEMBED_BUSY);
+        }
+        try {
+            return fetchValidateAndCache(videoId);
+        } finally {
+            oembedConcurrencyLimiter.release();
+        }
     }
 
     private YoutubeMetadata fetchValidateAndCache(String videoId) {

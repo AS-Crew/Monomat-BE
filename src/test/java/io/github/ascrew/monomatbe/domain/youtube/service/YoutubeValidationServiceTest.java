@@ -13,6 +13,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -55,7 +56,8 @@ class YoutubeValidationServiceTest {
                 redisTemplate,
                 jsonMapper,
                 youtubeOEmbedClient,
-                8
+                8,
+                Duration.ofSeconds(10)
         );
 
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);

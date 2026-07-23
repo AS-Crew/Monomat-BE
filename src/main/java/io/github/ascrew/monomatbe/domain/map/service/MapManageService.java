@@ -25,6 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -242,18 +243,39 @@ public class MapManageService {
     }
 
     private List<PreparedManageItem> prepareItemSources(List<MapItemPrepareSource> sources) {
-        List<PreparedManageItem> preparedItems = new ArrayList<>();
-
+        /*
+         * 외부 oEmbed/Redis 검증(맵당 최대 MAX_ITEMS_PER_MAP건)을 시작하기 전에
+         * 서비스 계층 로컬 검증(startTime, answers)을 먼저 수행한다.
+         * Controller Bean Validation을 우회해 서비스가 직접 호출되더라도 잘못된 입력이
+         * 대량 외부 호출을 유발하지 않고 기존 오류 반환 우선순위를 유지한다.
+         * answersJson은 여기서 만들어 두고 아래에서 재사용해 이중 계산을 피한다.
+         */
+        List<String> answersJsons = new ArrayList<>(sources.size());
         for (MapItemPrepareSource source : sources) {
             validateStartTime(source.startTime());
+            answersJsons.add(serializeAnswers(source.answers()));
+        }
 
-            YoutubeMetadata metadata = youtubeValidationService.validateYoutubeUrl(source.youtubeUrl());
+        /*
+         * 여러 문제의 YouTube URL을 한 번에 검증한다. 동일 videoId 중복 제거, Redis 캐시 batch 조회,
+         * cache miss oEmbed 병렬 호출로 대량 문제 저장 성능을 개선한다.
+         * URL 하나라도 검증 실패 시 전체 batch가 실패해 상위 트랜잭션이 rollback된다.
+         */
+        Map<String, YoutubeMetadata> metadataByUrl = youtubeValidationService.validateYoutubeUrls(
+                sources.stream().map(MapItemPrepareSource::youtubeUrl).toList());
+
+        List<PreparedManageItem> preparedItems = new ArrayList<>(sources.size());
+
+        for (int i = 0; i < sources.size(); i++) {
+            MapItemPrepareSource source = sources.get(i);
+
+            YoutubeMetadata metadata = metadataByUrl.get(source.youtubeUrl());
             validateStartTimeWithinDuration(source.startTime(), metadata.durationSeconds());
 
             preparedItems.add(new PreparedManageItem(
                     source,
                     metadata,
-                    serializeAnswers(source.answers()),
+                    answersJsons.get(i),
                     source.hint().trim(),
                     source.hintTime() == null ? DEFAULT_HINT_TIME : source.hintTime()
             ));

@@ -28,6 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -116,8 +117,10 @@ class MapManageServiceTest {
         CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
-        when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=new1"))
-                .thenReturn(new YoutubeMetadata("new1", "YouTube title", "YouTube author", "https://thumbnail", null));
+        when(youtubeValidationService.validateYoutubeUrls(List.of("https://www.youtube.com/watch?v=new1")))
+                .thenReturn(Map.of(
+                        "https://www.youtube.com/watch?v=new1",
+                        new YoutubeMetadata("new1", "YouTube title", "YouTube author", "https://thumbnail", null)));
         when(jsonMapper.writeValueAsString(List.of("ditto"))).thenReturn("[\"ditto\"]");
         when(mapManageTransactionService.updateManagedMapInTransaction(eq(1L), eq(request), eq(principal), any()))
                 .thenReturn(expectedResponse);
@@ -141,7 +144,7 @@ class MapManageServiceTest {
         assertThat(preparedItems.get(0).hint()).isEqualTo("ㄷㅌ");
         assertThat(preparedItems.get(0).hintTime()).isEqualTo(15);
 
-        verify(youtubeValidationService).validateYoutubeUrl("https://www.youtube.com/watch?v=new1");
+        verify(youtubeValidationService).validateYoutubeUrls(List.of("https://www.youtube.com/watch?v=new1"));
     }
 
     @Test
@@ -211,7 +214,7 @@ class MapManageServiceTest {
                         assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
                 .hasMessageContaining("중복된 문제 순서가 있습니다.");
 
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
         verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
@@ -234,7 +237,7 @@ class MapManageServiceTest {
                 .hasMessageContaining("중복된 삭제 문제 ID가 있습니다.");
 
         verify(quizMapJpaRepository, never()).findByIdAndIsDeletedFalse(anyLong());
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
         verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
     }
 
@@ -263,7 +266,7 @@ class MapManageServiceTest {
         CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
 
         when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
-        when(youtubeValidationService.validateYoutubeUrl("https://www.youtube.com/watch?v=invalid"))
+        when(youtubeValidationService.validateYoutubeUrls(List.of("https://www.youtube.com/watch?v=invalid")))
                 .thenThrow(new ResponseStatusException(HttpStatus.BAD_REQUEST, "YouTube URL 검증 실패"));
 
         assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
@@ -276,6 +279,74 @@ class MapManageServiceTest {
 
 
     @Test
+    void updateManagedMap_nullStartTime_failsBeforeYoutubeValidation() {
+        User owner = registeredUser(10L, "owner");
+        QuizMap quizMap = quizMap(owner);
+
+        ManageMapRequest request = new ManageMapRequest(
+                "title",
+                "description",
+                MapCategory.JPOP,
+                false,
+                List.of(new ManageMapItemRequest(
+                        100L,
+                        1,
+                        "https://www.youtube.com/watch?v=new1",
+                        null,
+                        List.of("answer"),
+                        "hint",
+                        15
+                )),
+                List.of()
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        when(quizMapJpaRepository.findByIdAndIsDeletedFalse(1L)).thenReturn(Optional.of(quizMap));
+
+        assertThatThrownBy(() -> mapManageService.updateManagedMap(1L, request, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("재생 시작 시간은 필수입니다.");
+
+        // 로컬 검증이 외부 I/O보다 먼저 수행되어 oEmbed 호출이 발생하지 않아야 한다.
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
+        verify(mapManageTransactionService, never()).updateManagedMapInTransaction(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void createMapWithItems_nullStartTime_failsBeforeYoutubeValidation() {
+        User owner = registeredUser(10L, "owner");
+
+        CreateMapWithItemsRequest request = new CreateMapWithItemsRequest(
+                "J-POP 퀴즈",
+                "J-POP 중심 퀴즈 맵",
+                MapCategory.JPOP,
+                false,
+                List.of(new CreateMapWithItemsItemRequest(
+                        1,
+                        "https://www.youtube.com/watch?v=video1",
+                        null,
+                        List.of("ditto"),
+                        "ㄷㅌ",
+                        15
+                ))
+        );
+
+        CustomPrincipal principal = new CustomPrincipal(10L, "u-10", UserType.REGISTERED);
+
+        when(userRepository.findById(10L)).thenReturn(Optional.of(owner));
+
+        assertThatThrownBy(() -> mapManageService.createMapWithItems(request, principal))
+                .isInstanceOfSatisfying(ResponseStatusException.class, ex ->
+                        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
+                .hasMessageContaining("재생 시작 시간은 필수입니다.");
+
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
+        verify(mapManageTransactionService, never()).createMapWithItemsInTransaction(any(), any(), any());
+    }
+
+    @Test
     void createMapWithItems_withoutPrincipal_returns401() {
         CreateMapWithItemsRequest request = createMapWithItemsRequest();
 
@@ -285,7 +356,7 @@ class MapManageServiceTest {
                 .hasMessageContaining("유효하지 않은 인증 정보입니다.");
 
         verify(userRepository, never()).findById(anyLong());
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
         verify(mapManageTransactionService, never()).createMapWithItemsInTransaction(any(), any(), any());
     }
 
@@ -300,7 +371,7 @@ class MapManageServiceTest {
                 .hasMessageContaining("정식 회원만 맵을 관리할 수 있습니다.");
 
         verify(userRepository, never()).findById(anyLong());
-        verify(youtubeValidationService, never()).validateYoutubeUrl(any());
+        verify(youtubeValidationService, never()).validateYoutubeUrls(any());
         verify(mapManageTransactionService, never()).createMapWithItemsInTransaction(any(), any(), any());
     }
 

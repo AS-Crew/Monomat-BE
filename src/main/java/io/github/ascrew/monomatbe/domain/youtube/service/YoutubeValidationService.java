@@ -28,14 +28,16 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CompletionService;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Service
@@ -60,6 +62,10 @@ public class YoutubeValidationService {
     // 단건/batch 모든 cache-miss 경로의 oEmbed 호출 수를 batch-concurrency 값으로 제한한다.
     private final Semaphore oembedConcurrencyLimiter;
 
+    // 한 batch 요청에서 동시에 실행할 worker 수 상한. permit 수와 동일하게 맞춰,
+    // 단일 batch가 자기 backlog 때문에 permit 대기(전역 경합)에 진입하지 않도록 한다.
+    private final int batchConcurrency;
+
     // permit 획득 대기 상한. 초과 시 외부 호출을 시작하지 않고 503으로 빠르게 실패해
     // 트래픽 급증/YouTube 장애 시 대기 스레드·요청 컨텍스트가 무한정 누적되는 것을 막는다.
     private final Duration queueTimeout;
@@ -74,7 +80,8 @@ public class YoutubeValidationService {
         this.redisTemplate = redisTemplate;
         this.jsonMapper = jsonMapper;
         this.youtubeOEmbedClient = youtubeOEmbedClient;
-        this.oembedConcurrencyLimiter = new Semaphore(Math.max(1, batchConcurrency));
+        this.batchConcurrency = Math.max(1, batchConcurrency);
+        this.oembedConcurrencyLimiter = new Semaphore(this.batchConcurrency);
         this.queueTimeout = queueTimeout;
     }
 
@@ -146,33 +153,58 @@ public class YoutubeValidationService {
         }
 
         // 4. cache miss videoId만 oEmbed 병렬 호출.
-        //    - 실제 동시 호출 수는 전역 공유 Semaphore(oembedConcurrencyLimiter)로 제한한다.
-        //    - 완료 순서로 결과를 회수해 하나라도 실패하면 즉시 남은 작업을 취소하고 중단한다.
+        //    - 한 요청에서 실행하는 worker 수를 min(batchConcurrency, miss 개수)로 제한하고,
+        //      각 worker가 공유 큐에서 다음 videoId를 가져가 처리한다. worker 수 = permit 수이므로
+        //      단일 batch는 자기 backlog 때문에 permit 대기(전역 경합)에 진입하지 않는다.
+        //    - 실제 동시 oEmbed 호출 수는 여전히 전역 공유 Semaphore(oembedConcurrencyLimiter)로 제한한다.
+        //    - 하나라도 실패하면 남은 worker는 새 videoId를 poll하지 않고 종료해 불필요한 호출을 중단한다.
         List<String> missVideoIds = successMissVideoIds;
         if (!missVideoIds.isEmpty()) {
+            Queue<String> pending = new ConcurrentLinkedQueue<>(missVideoIds);
+            Map<String, YoutubeMetadata> fetched = new ConcurrentHashMap<>();
+            AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+            int workerCount = Math.min(batchConcurrency, missVideoIds.size());
+
             try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                CompletionService<OEmbedResult> completionService = new ExecutorCompletionService<>(executor);
-                List<Future<OEmbedResult>> futures = new ArrayList<>(missVideoIds.size());
-                for (String videoId : missVideoIds) {
-                    futures.add(completionService.submit(
-                            () -> new OEmbedResult(videoId, acquirePermitAndFetch(videoId))));
+                List<Future<?>> workers = new ArrayList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    workers.add(executor.submit(() -> {
+                        String videoId;
+                        while (firstFailure.get() == null && (videoId = pending.poll()) != null) {
+                            try {
+                                fetched.put(videoId, acquirePermitAndFetch(videoId));
+                            } catch (Throwable t) {
+                                // 첫 실패만 보관하고 worker를 종료한다. 남은 worker는 루프 조건에서
+                                // firstFailure를 보고 새 작업을 poll하지 않는다.
+                                firstFailure.compareAndSet(null, t);
+                                return;
+                            }
+                        }
+                    }));
                 }
-                try {
-                    for (int i = 0; i < missVideoIds.size(); i++) {
-                        OEmbedResult result = completionService.take().get();
-                        metadataByVideoId.put(result.videoId(), result.metadata());
+                for (Future<?> worker : workers) {
+                    try {
+                        worker.get();
+                    } catch (ExecutionException e) {
+                        // worker 본문이 예외를 firstFailure로 흡수하므로 정상적으로는 도달하지 않는다.
+                        // 예기치 못한 예외에 대비한 방어적 처리.
+                        firstFailure.compareAndSet(null, e.getCause());
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        executor.shutdownNow();
+                        throw new ResponseStatusException(
+                                HttpStatus.SERVICE_UNAVAILABLE, ERROR_VALIDATION_INTERRUPTED, e);
                     }
-                } catch (ExecutionException e) {
-                    cancelOutstanding(futures, executor);
-                    // fetchValidateAndCache가 던진 원본 예외(ResponseStatusException/YoutubeEmbedNotAllowedException)를
-                    // 그대로 전파해 단건 검증과 예외 정책을 동일하게 유지한다.
-                    throw toRuntimeFailure(e.getCause());
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    cancelOutstanding(futures, executor);
-                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERROR_VALIDATION_INTERRUPTED, e);
                 }
             }
+
+            Throwable failure = firstFailure.get();
+            if (failure != null) {
+                // fetchValidateAndCache가 던진 원본 예외(ResponseStatusException/YoutubeEmbedNotAllowedException)를
+                // 그대로 전파해 단건 검증과 예외 정책을 동일하게 유지한다.
+                throw toRuntimeFailure(failure);
+            }
+            metadataByVideoId.putAll(fetched);
         }
 
         // 5. 원본 URL → metadata 최종 매핑 조립 (요청 순서 보존).
@@ -181,21 +213,11 @@ public class YoutubeValidationService {
         return result;
     }
 
-    private void cancelOutstanding(List<Future<OEmbedResult>> futures, ExecutorService executor) {
-        // 아직 완료되지 않은 작업을 인터럽트로 취소하고 실행기를 종료해
-        // 첫 실패 이후의 불필요한 oEmbed 호출을 즉시 중단한다.
-        futures.forEach(future -> future.cancel(true));
-        executor.shutdownNow();
-    }
-
     private RuntimeException toRuntimeFailure(Throwable cause) {
         if (cause instanceof RuntimeException runtimeException) {
             return runtimeException;
         }
         return new ResponseStatusException(HttpStatus.BAD_GATEWAY, ERROR_UPSTREAM_RESPONSE, cause);
-    }
-
-    private record OEmbedResult(String videoId, YoutubeMetadata metadata) {
     }
 
     private String resolveVideoId(String youtubeUrl) {
@@ -210,6 +232,10 @@ public class YoutubeValidationService {
      * <p>단건 검증과 batch task가 모두 이 helper를 거치므로 애플리케이션 전체 동시 oEmbed 호출 수가
      * 하나의 상한을 공유한다. permit을 {@code queueTimeout} 안에 얻지 못하면 외부 호출을 시작하지 않고
      * 즉시 503으로 실패해 대기 스레드/요청 컨텍스트가 무한정 누적되는 것을 막는다.</p>
+     *
+     * <p>permit 획득 직후 success/failure 캐시를 재확인한다. permit을 기다리는 동안 동일 videoId를
+     * 먼저 검증한 다른 요청이 이미 캐싱했을 수 있으므로, 여전히 miss일 때만 실제 oEmbed 호출을 수행해
+     * 동일 영상에 대한 중복 외부 호출을 줄인다.</p>
      */
     private YoutubeMetadata acquirePermitAndFetch(String videoId) {
         boolean acquired;
@@ -223,6 +249,14 @@ public class YoutubeValidationService {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ERROR_OEMBED_BUSY);
         }
         try {
+            // permit 대기 중 다른 요청이 이미 동일 videoId를 검증했을 수 있으므로 캐시를 재확인한다.
+            String successCached = redisTemplate.opsForValue().get(RedisKeys.youtubeOembedSuccessKey(videoId));
+            if (successCached != null) {
+                return deserializeMetadata(successCached);
+            }
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(RedisKeys.youtubeOembedFailureKey(videoId)))) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_YOUTUBE_VIDEO);
+            }
             return fetchValidateAndCache(videoId);
         } finally {
             oembedConcurrencyLimiter.release();
